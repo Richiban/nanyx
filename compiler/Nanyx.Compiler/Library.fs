@@ -177,6 +177,7 @@ module Compiler =
             | IfExpr(cond, thenExpr, elseExpr) ->
                 IfExpr(desugarExpr cond, desugarExpr thenExpr, desugarExpr elseExpr)
             | MemberAccess(baseExpr, field, rangeOpt) -> MemberAccess(desugarExpr baseExpr, field, rangeOpt)
+            | ContextMemberAccess(ctxType, field) -> ContextMemberAccess(ctxType, field)
             | UseIn(binding, body) ->
                 let binding' = desugarUseBinding binding
                 UseIn(binding', desugarExpr body)
@@ -199,6 +200,7 @@ module Compiler =
         and desugarUseBinding binding =
             match binding with
             | UseValue expr -> UseValue (desugarExpr expr)
+            | UseContextInstance(ctxType, expr) -> UseContextInstance(ctxType, desugarExpr expr)
         and desugarStatement stmt =
             match stmt with
             | DefStatement(isExport, name, typeOpt, expr) ->

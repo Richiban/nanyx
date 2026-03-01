@@ -88,6 +88,7 @@ let rec private collectExprLocalNames (expr: Expression) : string list =
         valueLocals @ armLocals
     | UseIn(_, body) -> collectExprLocalNames body
     | MemberAccess(inner, _, _) -> collectExprLocalNames inner
+    | ContextMemberAccess(_, _) -> []
     | TagExpr(_, payload) -> payload |> Option.map collectExprLocalNames |> Option.defaultValue []
     | InterpolatedString parts ->
         parts
@@ -242,9 +243,11 @@ let private collectContextUseBindings (expr: Expression) : (string * Expression)
             let bindingBindings =
                 match binding with
                 | UseValue inner -> collectFromExpr localDefs inner
+                | UseContextInstance(_, inner) -> collectFromExpr localDefs inner
             bindingBindings @ collectFromExpr localDefs body
         | TagExpr(_, payload) -> payload |> Option.map (collectFromExpr localDefs) |> Option.defaultValue []
         | MemberAccess(inner, _, _) -> collectFromExpr localDefs inner
+        | ContextMemberAccess(_, _) -> []
         | InterpolatedString parts ->
             parts
             |> List.collect (function
@@ -294,6 +297,7 @@ let rec private countMatchExpressions (expr: Expression) : int =
             | PositionalField value -> countMatchExpressions value)
     | UseIn(_, body) -> countMatchExpressions body
     | MemberAccess(value, _, _) -> countMatchExpressions value
+    | ContextMemberAccess(_, _) -> 0
     | TagExpr(_, payload) -> payload |> Option.map countMatchExpressions |> Option.defaultValue 0
     | InterpolatedString parts ->
         parts
@@ -347,6 +351,7 @@ and countMatchArity (expr: Expression) : int =
         |> maxOrZero
     | WorkflowBindExpr(_, value)
     | WorkflowReturnExpr value -> countMatchArity value
+    | ContextMemberAccess(_, _) -> 0
     | UnitExpr
     | LiteralExpr _
     | IdentifierExpr _ -> 0
@@ -381,6 +386,7 @@ let rec private containsDbgCallExpr (expr: Expression) : bool =
             | StringExpr inner -> containsDbgCallExpr inner)
     | WorkflowBindExpr(_, value)
     | WorkflowReturnExpr value -> containsDbgCallExpr value
+    | ContextMemberAccess(_, _) -> false
     | UnitExpr
     | LiteralExpr _
     | IdentifierExpr _ -> false
@@ -419,6 +425,7 @@ let rec private usesHeapAllocationExpr (expr: Expression) : bool =
             | StringExpr inner -> usesHeapAllocationExpr inner)
     | WorkflowBindExpr(_, value)
     | WorkflowReturnExpr value -> usesHeapAllocationExpr value
+    | ContextMemberAccess(_, _) -> false
     | UnitExpr
     | LiteralExpr _
     | IdentifierExpr _ -> false
@@ -471,6 +478,7 @@ let rec private collectDbgTagNamesExpr (expr: Expression) : string list =
             | StringExpr value -> collectDbgTagNamesExpr value)
     | WorkflowBindExpr(_, value)
     | WorkflowReturnExpr value -> collectDbgTagNamesExpr value
+    | ContextMemberAccess(_, _) -> []
     | UnitExpr
     | LiteralExpr _
     | IdentifierExpr _ -> []
@@ -502,6 +510,7 @@ and private collectStringLiteralsExpr (expr: Expression) : string list =
     | InterpolatedString _
     | WorkflowBindExpr _
     | WorkflowReturnExpr _
+    | ContextMemberAccess(_, _) -> []
     | UnitExpr
     | LiteralExpr _
     | IdentifierExpr _ -> []
@@ -563,6 +572,7 @@ let rec private collectDbgTagPayloadNamesExpr (expr: Expression) : string list =
             | StringExpr value -> collectDbgTagPayloadNamesExpr value)
     | WorkflowBindExpr(_, value)
     | WorkflowReturnExpr value -> collectDbgTagPayloadNamesExpr value
+    | ContextMemberAccess(_, _) -> []
     | UnitExpr
     | LiteralExpr _
     | IdentifierExpr _ -> []
@@ -614,6 +624,7 @@ let rec private containsRegularDbgExpr (expr: Expression) : bool =
             | StringExpr value -> containsRegularDbgExpr value)
     | WorkflowBindExpr(_, value)
     | WorkflowReturnExpr value -> containsRegularDbgExpr value
+    | ContextMemberAccess(_, _) -> false
     | UnitExpr
     | LiteralExpr _
     | IdentifierExpr _ -> false
@@ -661,6 +672,7 @@ and private containsDbgStringLiteralExpr (expr: Expression) : bool =
             | StringExpr inner -> containsDbgStringLiteralExpr inner)
     | WorkflowBindExpr(_, value)
     | WorkflowReturnExpr value -> containsDbgStringLiteralExpr value
+    | ContextMemberAccess(_, _) -> false
     | UnitExpr
     | LiteralExpr _
     | IdentifierExpr _ -> false
@@ -710,6 +722,7 @@ let rec private collectTagNamesExpr (expr: Expression) : string list =
             | StringExpr value -> collectTagNamesExpr value)
     | WorkflowBindExpr(_, value)
     | WorkflowReturnExpr value -> collectTagNamesExpr value
+    | ContextMemberAccess(_, _) -> []
     | UnitExpr
     | LiteralExpr _
     | IdentifierExpr _ -> []
@@ -1604,6 +1617,7 @@ let transpileModuleToWat (module': Module) : string =
                         | StringExpr value -> collectPayloadLocals value)
                 | WorkflowBindExpr(_, value)
                 | WorkflowReturnExpr value -> collectPayloadLocals value
+                | ContextMemberAccess(_, _) -> []
                 | UnitExpr
                 | LiteralExpr _
                 | IdentifierExpr _ -> []

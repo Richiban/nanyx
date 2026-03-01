@@ -1156,10 +1156,18 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                     match rangeOpt with
                     | Some (line, col) -> Error [ Diagnostics.errorAt ($"Unknown member '{memberName}'") (line, col) ]
                     | None -> Error [ Diagnostics.error ($"Unknown member '{memberName}'") ]
+    | ContextMemberAccess(ctxType, memberName) ->
+        // TODO: Look up the context type and find the member's type
+        // For now, return a fresh type variable
+        let ty, next = freshVar state
+        Ok (mkTypedExpr expr ty None None None, next)
 
 and inferUseBinding (env: TypeEnv) (state: InferState) (binding: UseBinding) : Result<TypedExpr * InferState, Diagnostic list> =
     match binding with
     | UseValue expr -> inferExpr env state expr
+    | UseContextInstance(ctxType, expr) -> 
+        // TODO: Validate that expr satisfies the context type
+        inferExpr env state expr
 
 and inferLambdaWithExpected (env: TypeEnv) (state: InferState) (args: (Identifier * TypeExpr option) list) (body: Expression) (expectedInputOpt: Ty option) (expectedReturnOpt: Ty option) : Result<TypedExpr * InferState, Diagnostic list> =
     let mutable current = state

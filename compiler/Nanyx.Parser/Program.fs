@@ -64,6 +64,7 @@ and Expression =
     | TagExpr of Identifier * Expression option  // #tagName or #tagName(expr)
     | IfExpr of Expression * Expression * Expression  // if condition then trueExpr else falseExpr
     | MemberAccess of Expression * Identifier * SourceRange option  // expr.field
+    | ContextMemberAccess of TypeExpr * Identifier  // C(T).field - qualified context access
     | UseIn of UseBinding * Expression
     | WorkflowBindExpr of Identifier * Expression
     | WorkflowReturnExpr of Expression
@@ -103,6 +104,7 @@ and Statement =
 
 and UseBinding =
     | UseValue of Expression
+    | UseContextInstance of TypeExpr * Expression  // use C(T) = expr
 
 // Helper type for parsing list patterns
 type ListPatternElement =
@@ -850,9 +852,20 @@ let workflowReturnExpr =
         |>> WorkflowReturnExpr)
     <?> "workflow return"
 
-// Use binding parser: `use expr`
+// Use binding parser: `use expr` or `use C(T) = expr`
 let useBinding =
-    expression |>> UseValue
+    // First try context instance: C(T) = expr or C = expr
+    let contextInstance =
+        pipe2
+            (attempt (identifierNoWs .>>. opt (between (pstring "(") (pstring ")") (sepBy1 (ws >>. typeExpr) (pstring "," .>> ws)))))
+            (ws >>. pstring "=" >>. ws >>. expression)
+            (fun (name, typeArgsOpt) expr ->
+                let contextType = 
+                    match typeArgsOpt with
+                    | Some args -> TypeApply(name, args)
+                    | None -> TypeName name
+                UseContextInstance(contextType, expr))
+    attempt contextInstance <|> (expression |>> UseValue)
 
 // Use-in expression: use X in expr
 let useInExpr =
@@ -864,6 +877,21 @@ let useInExpr =
 
 // Primary expression (literals, identifiers, function calls, lambdas, parenthesized expressions)
 // Version without trailing whitespace consumption (for use in block contexts)
+
+// Context member access: C(T).field - qualified access to context functions
+// ONLY matches when type parameters are present (parens required)
+let contextMemberAccess =
+    // Parse a context type application with required type args: C(T)
+    let contextTypeApply = 
+        pipe2
+            identifierNoWs
+            (between (pstring "(") (pstring ")") (sepBy1 (ws >>. typeExpr) (pstring "," .>> ws)))
+            (fun name args -> TypeApply(name, args))
+    pipe2
+        (contextTypeApply .>> pstring ".")
+        identifierNoWs
+        (fun ctxType field -> ContextMemberAccess(ctxType, field))
+
 let primaryExprNoWs =
     choice [
         attempt interpolatedStringExprNoWs
@@ -874,6 +902,7 @@ let primaryExprNoWs =
         attempt ifExpr  // if-then-else must be early to avoid partial matches
         attempt matchExpr
         attempt lambda
+        attempt contextMemberAccess  // C(T).field - must come before functionCall
         attempt functionCall
         attempt tagExpr  // #tag or #tag(expr)
         literalNoWs |>> LiteralExpr
@@ -1319,7 +1348,12 @@ let private rewriteExpressionInModule (valueMap: Map<string, string>) (typeMap: 
                         let mappedParams = typeParams |> List.map (fun (paramName, paramTypeOpt) -> paramName, paramTypeOpt |> Option.map (rewriteTypeExprInModule typeMap))
                         TypeDefStatement(name, modifiers, mappedParams, rewriteTypeExprInModule typeMap typeExpr)
                     | ImportStatement items -> ImportStatement items
-                    | UseStatement binding -> UseStatement (match binding with | UseValue boundExpr -> UseValue (rewrite boundExpr))
+                    | UseStatement binding -> 
+                        let mapped = 
+                            match binding with 
+                            | UseValue boundExpr -> UseValue (rewrite boundExpr)
+                            | UseContextInstance(ctxType, boundExpr) -> UseContextInstance(rewriteTypeExprInModule typeMap ctxType, rewrite boundExpr)
+                        UseStatement mapped
                     | ExprStatement bodyExpr -> ExprStatement (rewrite bodyExpr)))
         | Match(values, arms) -> Match(values |> List.map rewrite, arms |> List.map (fun (patterns, body) -> patterns, rewrite body))
         | TupleExpr items -> TupleExpr (items |> List.map rewrite)
@@ -1333,10 +1367,12 @@ let private rewriteExpressionInModule (valueMap: Map<string, string>) (typeMap: 
         | TagExpr(name, payload) -> TagExpr(name, payload |> Option.map rewrite)
         | IfExpr(cond, ifTrue, ifFalse) -> IfExpr(rewrite cond, rewrite ifTrue, rewrite ifFalse)
         | MemberAccess(baseExpr, field, range) -> MemberAccess(rewrite baseExpr, field, range)
+        | ContextMemberAccess(ctxType, field) -> ContextMemberAccess(rewriteTypeExprInModule typeMap ctxType, field)
         | UseIn(binding, body) ->
             let mappedBinding =
                 match binding with
                 | UseValue value -> UseValue (rewrite value)
+                | UseContextInstance(ctxType, value) -> UseContextInstance(rewriteTypeExprInModule typeMap ctxType, rewrite value)
             UseIn(mappedBinding, rewrite body)
         | WorkflowBindExpr(name, value) -> WorkflowBindExpr(name, rewrite value)
         | WorkflowReturnExpr value -> WorkflowReturnExpr (rewrite value)
