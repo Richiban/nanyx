@@ -12,16 +12,35 @@ let private ctxFnName (name: string, _, _) = name
 let private ctxFnSlot (_, slot: int, _) = slot
 let private ctxFnArity (_, _, arity: int) = arity
 
+// Convert a TypeExpr to a string key (e.g., TypeApply("ToString", [TypeVar "a"]) -> "ToString_a")
+let rec private typeExprToKey (t: TypeExpr) =
+    match t with
+    | TypeName name -> name
+    | TypeVar name -> name
+    | TypeApply(name, typeArgs) -> 
+        let argsStr = typeArgs |> List.map typeExprToKey |> String.concat "_"
+        $"{name}_{argsStr}"
+    | _ -> "unknown"
+
+// Extract context type expressions from a TypeWithContext or TypeContext annotation
+let private extractContextTypes (typeExpr: TypeExpr option) : TypeExpr list =
+    match typeExpr with
+    | Some (TypeWithContext(contexts, _)) -> contexts
+    | Some (TypeContext contexts) -> contexts
+    | _ -> []
+
 // Extract context type names from a TypeWithContext or TypeContext annotation
 let private extractContextTypeNames (typeExpr: TypeExpr option) : string list =
     match typeExpr with
     | Some (TypeWithContext(contexts, _)) ->
         contexts |> List.choose (function
             | TypeName name -> Some name
+            | TypeApply(name, _) -> Some name
             | _ -> None)
     | Some (TypeContext contexts) ->
         contexts |> List.choose (function
             | TypeName name -> Some name
+            | TypeApply(name, _) -> Some name
             | _ -> None)
     | _ -> []
 
@@ -89,6 +108,7 @@ let rec private collectExprLocalNames (expr: Expression) : string list =
     | UseIn(_, body) -> collectExprLocalNames body
     | MemberAccess(inner, _, _) -> collectExprLocalNames inner
     | ContextMemberAccess(_, _) -> []
+    | ContextMemberCall(_, _, args) -> args |> List.collect collectExprLocalNames
     | TagExpr(_, payload) -> payload |> Option.map collectExprLocalNames |> Option.defaultValue []
     | InterpolatedString parts ->
         parts
@@ -196,6 +216,15 @@ let private collectContextUseBindings (expr: Expression) : (string * Expression)
             | _ -> None)
         |> Map.ofList
 
+    let rec typeExprToKey (t: TypeExpr) =
+        match t with
+        | TypeName name -> name
+        | TypeVar name -> name
+        | TypeApply(name, typeArgs) -> 
+            let argsStr = typeArgs |> List.map typeExprToKey |> String.concat "_"
+            $"{name}_{argsStr}"
+        | _ -> "unknown"
+
     let rec collectFromStatement (localDefs: Map<string, Expression>) (stmt: Statement) =
         match stmt with
         | UseStatement (UseValue (RecordExpr fields)) ->
@@ -210,6 +239,18 @@ let private collectContextUseBindings (expr: Expression) : (string * Expression)
             match args with
             | [RecordExpr fields] -> [extractRecordBindings fields]
             | _ -> []
+        | UseStatement (UseContextInstance(ctxType, RecordExpr fields)) ->
+            // Parameterized context instance: use ToString(int) = (toString = ...)
+            let ctxKey = typeExprToKey ctxType
+            let qualifiedFields = 
+                fields
+                |> List.choose (function
+                    | NamedField(name, value) -> Some ($"{ctxKey}_{name}", value)
+                    | PositionalField _ -> None)
+            [qualifiedFields]
+        | UseStatement (UseContextInstance(_, _)) ->
+            // Other parameterized context forms not yet supported
+            []
         | DefStatement(_, _, _, rhs) -> collectFromExpr localDefs rhs
         | ExprStatement value -> collectFromExpr localDefs value
         | ImportStatement _
@@ -248,6 +289,7 @@ let private collectContextUseBindings (expr: Expression) : (string * Expression)
         | TagExpr(_, payload) -> payload |> Option.map (collectFromExpr localDefs) |> Option.defaultValue []
         | MemberAccess(inner, _, _) -> collectFromExpr localDefs inner
         | ContextMemberAccess(_, _) -> []
+        | ContextMemberCall(_, _, args) -> args |> List.collect (collectFromExpr localDefs)
         | InterpolatedString parts ->
             parts
             |> List.collect (function
@@ -298,6 +340,7 @@ let rec private countMatchExpressions (expr: Expression) : int =
     | UseIn(_, body) -> countMatchExpressions body
     | MemberAccess(value, _, _) -> countMatchExpressions value
     | ContextMemberAccess(_, _) -> 0
+    | ContextMemberCall(_, _, args) -> args |> List.sumBy countMatchExpressions
     | TagExpr(_, payload) -> payload |> Option.map countMatchExpressions |> Option.defaultValue 0
     | InterpolatedString parts ->
         parts
@@ -352,6 +395,7 @@ and countMatchArity (expr: Expression) : int =
     | WorkflowBindExpr(_, value)
     | WorkflowReturnExpr value -> countMatchArity value
     | ContextMemberAccess(_, _) -> 0
+    | ContextMemberCall(_, _, args) -> args |> List.map countMatchArity |> maxOrZero
     | UnitExpr
     | LiteralExpr _
     | IdentifierExpr _ -> 0
@@ -387,6 +431,7 @@ let rec private containsDbgCallExpr (expr: Expression) : bool =
     | WorkflowBindExpr(_, value)
     | WorkflowReturnExpr value -> containsDbgCallExpr value
     | ContextMemberAccess(_, _) -> false
+    | ContextMemberCall(_, _, args) -> args |> List.exists containsDbgCallExpr
     | UnitExpr
     | LiteralExpr _
     | IdentifierExpr _ -> false
@@ -426,6 +471,7 @@ let rec private usesHeapAllocationExpr (expr: Expression) : bool =
     | WorkflowBindExpr(_, value)
     | WorkflowReturnExpr value -> usesHeapAllocationExpr value
     | ContextMemberAccess(_, _) -> false
+    | ContextMemberCall(_, _, args) -> args |> List.exists usesHeapAllocationExpr
     | UnitExpr
     | LiteralExpr _
     | IdentifierExpr _ -> false
@@ -479,6 +525,7 @@ let rec private collectDbgTagNamesExpr (expr: Expression) : string list =
     | WorkflowBindExpr(_, value)
     | WorkflowReturnExpr value -> collectDbgTagNamesExpr value
     | ContextMemberAccess(_, _) -> []
+    | ContextMemberCall(_, _, args) -> args |> List.collect collectDbgTagNamesExpr
     | UnitExpr
     | LiteralExpr _
     | IdentifierExpr _ -> []
@@ -511,6 +558,7 @@ and private collectStringLiteralsExpr (expr: Expression) : string list =
     | WorkflowBindExpr _
     | WorkflowReturnExpr _
     | ContextMemberAccess(_, _) -> []
+    | ContextMemberCall(_, _, args) -> args |> List.collect collectStringLiteralsExpr
     | UnitExpr
     | LiteralExpr _
     | IdentifierExpr _ -> []
@@ -573,6 +621,7 @@ let rec private collectDbgTagPayloadNamesExpr (expr: Expression) : string list =
     | WorkflowBindExpr(_, value)
     | WorkflowReturnExpr value -> collectDbgTagPayloadNamesExpr value
     | ContextMemberAccess(_, _) -> []
+    | ContextMemberCall(_, _, args) -> args |> List.collect collectDbgTagPayloadNamesExpr
     | UnitExpr
     | LiteralExpr _
     | IdentifierExpr _ -> []
@@ -625,6 +674,7 @@ let rec private containsRegularDbgExpr (expr: Expression) : bool =
     | WorkflowBindExpr(_, value)
     | WorkflowReturnExpr value -> containsRegularDbgExpr value
     | ContextMemberAccess(_, _) -> false
+    | ContextMemberCall(_, _, args) -> args |> List.exists containsRegularDbgExpr
     | UnitExpr
     | LiteralExpr _
     | IdentifierExpr _ -> false
@@ -673,6 +723,7 @@ and private containsDbgStringLiteralExpr (expr: Expression) : bool =
     | WorkflowBindExpr(_, value)
     | WorkflowReturnExpr value -> containsDbgStringLiteralExpr value
     | ContextMemberAccess(_, _) -> false
+    | ContextMemberCall(_, _, args) -> args |> List.exists containsDbgStringLiteralExpr
     | UnitExpr
     | LiteralExpr _
     | IdentifierExpr _ -> false
@@ -723,6 +774,7 @@ let rec private collectTagNamesExpr (expr: Expression) : string list =
     | WorkflowBindExpr(_, value)
     | WorkflowReturnExpr value -> collectTagNamesExpr value
     | ContextMemberAccess(_, _) -> []
+    | ContextMemberCall(_, _, args) -> args |> List.collect collectTagNamesExpr
     | UnitExpr
     | LiteralExpr _
     | IdentifierExpr _ -> []
@@ -1105,30 +1157,103 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                 else
                     // Check if this function requires contexts - if so, pass them
                     let requiredCtxFns = env.FunctionContextRequirements |> Map.tryFind name |> Option.defaultValue []
-                    let ctxArgsCode =
+                    
+                    // Helper to find a compatible context for a required context function, excluding already-used ones
+                    // Required might be "ToString_a_toString" (with type param), available might be "ToString_int_toString"
+                    let findCompatibleContext (usedContexts: Set<string>) (requiredCtxFnName: string) : string option =
+                        // Extract base context name and member from qualified key like "ToString_a_toString"
+                        let parts = requiredCtxFnName.Split('_')
+                        if parts.Length < 2 then None
+                        else
+                            let baseName = parts.[0]
+                            let memberName = parts.[parts.Length - 1]
+                            // Look for an available context with same base name and member name, not already used
+                            let allAvailable = 
+                                (env.ContextFunctions |> Map.toList |> List.map fst) @
+                                (env.ContextParams |> Map.toList |> List.map fst)
+                            allAvailable
+                            |> List.tryFind (fun availKey ->
+                                not (usedContexts.Contains availKey) &&
+                                let availParts = availKey.Split('_')
+                                availParts.Length >= 2 &&
+                                availParts.[0] = baseName &&
+                                availParts.[availParts.Length - 1] = memberName)
+                    
+                    // Use fold to process required contexts while tracking which have been used
+                    let (ctxArgsCode, _) =
                         requiredCtxFns
-                        |> List.map (fun ctxFnName ->
+                        |> List.fold (fun (codeAcc, usedCtxs) ctxFnName ->
+                            // Try exact match first, then try compatible match
+                            let resolvedName = 
+                                match env.ContextFunctions |> Map.tryFind ctxFnName, env.ContextParams |> Map.tryFind ctxFnName with
+                                | Some _, _ | _, Some _ -> ctxFnName
+                                | None, None ->
+                                    match findCompatibleContext usedCtxs ctxFnName with
+                                    | Some compatible -> compatible
+                                    | None -> ctxFnName  // Will fail below with better error
+                            
                             // Get the context value - either from ContextFunctions (use statement) or ContextParams (passed in)
-                            match env.ContextFunctions |> Map.tryFind ctxFnName with
-                            | Some ctxFn when ctxFnSlot ctxFn >= 0 ->
-                                // Fixed slot from a use statement
-                                $"i32.const {ctxFnSlot ctxFn}"
-                            | Some _ ->
-                                // Slot from param - look in ContextParams
-                                match env.ContextParams |> Map.tryFind ctxFnName with
-                                | Some paramName -> $"local.get ${paramName}"
-                                | None -> failwith $"Context function {ctxFnName} not found"
-                            | None ->
-                                // Not in ContextFunctions - check ContextParams
-                                match env.ContextParams |> Map.tryFind ctxFnName with
-                                | Some paramName -> $"local.get ${paramName}"
-                                | None -> failwith $"Context function {ctxFnName} not available in current scope")
+                            let code = 
+                                match env.ContextFunctions |> Map.tryFind resolvedName with
+                                | Some ctxFn when ctxFnSlot ctxFn >= 0 ->
+                                    // Fixed slot from a use statement
+                                    $"i32.const {ctxFnSlot ctxFn}"
+                                | Some _ ->
+                                    // Slot from param - look in ContextParams
+                                    match env.ContextParams |> Map.tryFind resolvedName with
+                                    | Some paramName -> $"local.get ${paramName}"
+                                    | None -> failwith $"Context function {resolvedName} not found"
+                                | None ->
+                                    // Not in ContextFunctions - check ContextParams
+                                    match env.ContextParams |> Map.tryFind resolvedName with
+                                    | Some paramName -> $"local.get ${paramName}"
+                                    | None -> 
+                                        let available = 
+                                            (env.ContextFunctions |> Map.toList |> List.map fst) @
+                                            (env.ContextParams |> Map.toList |> List.map fst)
+                                        let availableStr = String.concat ", " available
+                                        failwith $"Context function {ctxFnName} not available in current scope. Available: [{availableStr}]"
+                            (codeAcc @ [code], usedCtxs.Add resolvedName)) ([], Set.empty)
                     let allArgsCode = argsCode @ ctxArgsCode
                     match allArgsCode with
                     | [] -> $"call ${sanitizeIdentifier name}"
                     | _ ->
                         let prefix = allArgsCode |> String.concat "\n    "
                         $"{prefix}\n    call ${sanitizeIdentifier name}"
+    | ContextMemberCall(ctxType, memberName, args) ->
+        // Context member call: C(T).f(args) - look up the param for this specific context instantiation
+        let rec typeExprToKey (t: TypeExpr) =
+            match t with
+            | TypeName name -> name
+            | TypeVar name -> name
+            | TypeApply(name, typeArgs) -> 
+                let argsStr = typeArgs |> List.map typeExprToKey |> String.concat "_"
+                $"{name}_{argsStr}"
+            | _ -> failwith $"Unsupported type expression in context access: {t}"
+        let ctxKey = typeExprToKey ctxType
+        let paramKey = $"{ctxKey}_{memberName}"
+        let flatArgs = flattenCallArgs args
+        let argsCode = flatArgs |> List.map (transpileExpression env)
+        // Look up the context param for this qualified member
+        match env.ContextParams |> Map.tryFind paramKey with
+        | Some paramName ->
+            let prefix = argsCode |> String.concat "\n    "
+            if prefix = "" then
+                $"local.get ${paramName}\n    call_indirect (type $ctx_fn_{flatArgs.Length})"
+            else
+                $"{prefix}\n    local.get ${paramName}\n    call_indirect (type $ctx_fn_{flatArgs.Length})"
+        | None ->
+            // Also check in ContextFunctions for direct use statements
+            match env.ContextFunctions |> Map.tryFind paramKey with
+            | Some ctxFn ->
+                let prefix = argsCode |> String.concat "\n    "
+                let slot = ctxFnSlot ctxFn
+                if prefix = "" then
+                    $"i32.const {slot}\n    call_indirect (type $ctx_fn_{ctxFnArity ctxFn})"
+                else
+                    $"{prefix}\n    i32.const {slot}\n    call_indirect (type $ctx_fn_{ctxFnArity ctxFn})"
+            | None ->
+                failwith $"Context member {memberName} from {ctxKey} not found in scope. Available: {env.ContextParams |> Map.toList |> List.map fst}, {env.ContextFunctions |> Map.toList |> List.map fst}"
     | Pipe(value, funcName, _, args) ->
         // Pipe x \f(a, b) translates to f(x, a, b)
         let valueCode = transpileExpression env value
@@ -1353,17 +1478,33 @@ let transpileModuleToWat (module': Module) : string =
         |> Map.ofList
 
     // Calculate context requirements for each function based on TypeWithContext annotations
+    // For parameterized contexts like ToString(a), generate qualified keys like "ToString_a_toString"
+    // For simple contexts like Println, keep simple member names like "println"
     let functionContextRequirements =
         defs
         |> List.choose (fun (name, typeOpt, _) ->
-            let contextTypeNames = extractContextTypeNames typeOpt
-            if contextTypeNames.IsEmpty then None
+            let contextTypes = extractContextTypes typeOpt
+            if contextTypes.IsEmpty then None
             else
-                // For each context type, get its field names (function members)
+                // For each context type, get its field names and generate appropriate keys
                 let contextFnNames =
-                    contextTypeNames
-                    |> List.collect (fun ctxTypeName ->
-                        typeLayouts |> Map.tryFind ctxTypeName |> Option.defaultValue [])
+                    contextTypes
+                    |> List.collect (fun ctxType ->
+                        let baseName = match ctxType with
+                                       | TypeName n -> n
+                                       | TypeApply(n, _) -> n
+                                       | _ -> "unknown"
+                        let needsQualified = match ctxType with
+                                             | TypeApply _ -> true  // Parameterized - need qualified
+                                             | _ -> false           // Simple - keep simple names
+                        typeLayouts |> Map.tryFind baseName 
+                        |> Option.defaultValue []
+                        |> List.map (fun memberName ->
+                            if needsQualified then
+                                let ctxKey = typeExprToKey ctxType
+                                $"{ctxKey}_{memberName}"
+                            else
+                                memberName))
                 if contextFnNames.IsEmpty then None
                 else Some (name, contextFnNames))
         |> Map.ofList
@@ -1526,11 +1667,15 @@ let transpileModuleToWat (module': Module) : string =
                 contextParamNames
                 |> List.mapi (fun _ (ctxFnName, paramName) ->
                     // Look up the context function's arity from the type field definitions
+                    // ctxFnName is qualified like "ToString_a_toString" - extract base context name and member
                     let arity =
+                        // Try to find by splitting on last underscore to get member name
+                        let lastUnderscoreIdx = ctxFnName.LastIndexOf('_')
+                        let memberName = if lastUnderscoreIdx > 0 then ctxFnName.Substring(lastUnderscoreIdx + 1) else ctxFnName
                         typeFieldTypes
                         |> Map.toList
                         |> List.tryPick (fun (_, fieldTypes) ->
-                            fieldTypes |> Map.tryFind ctxFnName
+                            fieldTypes |> Map.tryFind memberName
                             |> Option.bind (fun typeStr ->
                                 // Parse arity from type like "(string) -> (())" or "(int, int) -> (int)"
                                 // Count commas in the param section to determine arity
@@ -1618,6 +1763,7 @@ let transpileModuleToWat (module': Module) : string =
                 | WorkflowBindExpr(_, value)
                 | WorkflowReturnExpr value -> collectPayloadLocals value
                 | ContextMemberAccess(_, _) -> []
+                | ContextMemberCall(_, _, _) -> []
                 | UnitExpr
                 | LiteralExpr _
                 | IdentifierExpr _ -> []

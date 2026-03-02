@@ -1161,6 +1161,20 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
         // For now, return a fresh type variable
         let ty, next = freshVar state
         Ok (mkTypedExpr expr ty None None None, next)
+    | ContextMemberCall(ctxType, memberName, args) ->
+        // TODO: Look up the context, find the member function type, check args
+        // For now, infer args and return a fresh type variable
+        let mutable current = state
+        let mutable errors: Diagnostic list = []
+        for arg in args do
+            match inferExpr env current arg with
+            | Ok (_, next) -> current <- next
+            | Error err -> errors <- errors @ err
+        if errors.IsEmpty then
+            let ty, next = freshVar current
+            Ok (mkTypedExpr expr ty None None None, next)
+        else
+            Error errors
 
 and inferUseBinding (env: TypeEnv) (state: InferState) (binding: UseBinding) : Result<TypedExpr * InferState, Diagnostic list> =
     match binding with

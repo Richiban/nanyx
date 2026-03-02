@@ -64,7 +64,8 @@ and Expression =
     | TagExpr of Identifier * Expression option  // #tagName or #tagName(expr)
     | IfExpr of Expression * Expression * Expression  // if condition then trueExpr else falseExpr
     | MemberAccess of Expression * Identifier * SourceRange option  // expr.field
-    | ContextMemberAccess of TypeExpr * Identifier  // C(T).field - qualified context access
+    | ContextMemberAccess of TypeExpr * Identifier  // C(T).field - qualified context access (as value)
+    | ContextMemberCall of TypeExpr * Identifier * Expression list  // C(T).field(args) - qualified context call
     | UseIn of UseBinding * Expression
     | WorkflowBindExpr of Identifier * Expression
     | WorkflowReturnExpr of Expression
@@ -878,7 +879,7 @@ let useInExpr =
 // Primary expression (literals, identifiers, function calls, lambdas, parenthesized expressions)
 // Version without trailing whitespace consumption (for use in block contexts)
 
-// Context member access: C(T).field - qualified access to context functions
+// Context member access: C(T).field or C(T).field(args) - qualified access to context functions
 // ONLY matches when type parameters are present (parens required)
 let contextMemberAccess =
     // Parse a context type application with required type args: C(T)
@@ -887,10 +888,19 @@ let contextMemberAccess =
             identifierNoWs
             (between (pstring "(") (pstring ")") (sepBy1 (ws >>. typeExpr) (pstring "," .>> ws)))
             (fun name args -> TypeApply(name, args))
-    pipe2
+    // Parse args as tuple-like: (expr, expr, ...)
+    let callArgs =
+        between (pstring "(") (pstring ")") 
+            (opt (ws >>. (sepBy1 (ws >>. expression) (pstring "," .>> ws)) .>> ws))
+    pipe3
         (contextTypeApply .>> pstring ".")
         identifierNoWs
-        (fun ctxType field -> ContextMemberAccess(ctxType, field))
+        (opt callArgs)
+        (fun ctxType field argsOpt ->
+            match argsOpt with
+            | Some (Some args) -> ContextMemberCall(ctxType, field, args)
+            | Some None -> ContextMemberCall(ctxType, field, [])  // empty parens like f()
+            | None -> ContextMemberAccess(ctxType, field))
 
 let primaryExprNoWs =
     choice [
@@ -1368,6 +1378,7 @@ let private rewriteExpressionInModule (valueMap: Map<string, string>) (typeMap: 
         | IfExpr(cond, ifTrue, ifFalse) -> IfExpr(rewrite cond, rewrite ifTrue, rewrite ifFalse)
         | MemberAccess(baseExpr, field, range) -> MemberAccess(rewrite baseExpr, field, range)
         | ContextMemberAccess(ctxType, field) -> ContextMemberAccess(rewriteTypeExprInModule typeMap ctxType, field)
+        | ContextMemberCall(ctxType, field, args) -> ContextMemberCall(rewriteTypeExprInModule typeMap ctxType, field, args |> List.map rewrite)
         | UseIn(binding, body) ->
             let mappedBinding =
                 match binding with

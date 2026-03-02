@@ -93,3 +93,7 @@ let ``E2E - eighteen - context passing across functions`` () =
 [<Fact>]
 let ``E2E - nineteen - combined context types`` () =
     runE2ETest "nineteen"
+
+[<Fact>]
+let ``E2E - twenty - parameterized context instances`` () =
+    runE2ETest "twenty"
