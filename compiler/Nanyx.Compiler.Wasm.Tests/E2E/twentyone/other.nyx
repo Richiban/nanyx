@@ -1,0 +1,2 @@
+
+export def message = "Hello from other.nyx!"

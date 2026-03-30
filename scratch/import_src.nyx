@@ -1,0 +1,8 @@
+module main
+
+import "import_child.nyx" as child
+
+def main = {
+  def result = child.double(21)
+  dbg("Result: {result}")
+}

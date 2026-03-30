@@ -58,12 +58,10 @@ const Index = () => {
                 <code>
                   <span className="text-purple-400">import</span>{" "}
                   <span className="text-cyan-300">nanyx/io</span>{"\n\n"}
-                  <span className="text-purple-400">pub fn</span>{" "}
+                  <span className="text-purple-400">def</span>{" "}
                   <span className="text-yellow-300">main</span>
-                  <span className="text-white">() {"{"}</span>{"\n"}
+                  <span className="text-white"> = {"{"}</span>{"\n"}
                   <span className="text-white">{"  "}</span>
-                  <span className="text-cyan-300">io</span>
-                  <span className="text-white">.</span>
                   <span className="text-yellow-300">println</span>
                   <span className="text-white">(</span>
                   <span className="text-green-400">"Hello, Nanyx! 🚀"</span>

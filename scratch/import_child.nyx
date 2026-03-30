@@ -1,0 +1,2 @@
+
+export def double: int -> int = { x -> x * 2 }

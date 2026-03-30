@@ -1,0 +1,7 @@
+import "other.nyx" as other
+
+def main = {
+  def msg = other.message
+
+  dbg(msg)
+}
