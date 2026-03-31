@@ -44,7 +44,7 @@ export def makeUser: (UserId, string) -> Result(@User, list(string)) = { id, nam
 
 Nominal types are not assignable to each other, even if their structures are identical. They are, however assignable to their underlying shape for compatibility with existing code.
 
-So, for example given the following definition of `@UserId`:
+So, given the following definition of `@UserId`:
 
 ```nanyx
 type @UserId = int
