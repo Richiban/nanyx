@@ -1,5 +1,6 @@
 import {
   overviewPages,
+  foundationsPages,
   gettingStartedPages,
   tourPages,
   advancedPages,
@@ -22,6 +23,12 @@ export const navSections: NavSection[] = [
     basePath: "/docs/overview",
     icon: "View",
     pages: overviewPages,
+  },
+  {
+    title: "Foundations",
+    basePath: "/docs/foundations",
+    icon: "Landmark",
+    pages: foundationsPages,
   },
   {
     title: "Getting Started",

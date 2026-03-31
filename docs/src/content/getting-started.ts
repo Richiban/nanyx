@@ -65,6 +65,10 @@ const overviewFiles = import.meta.glob("./overview/*.md", {
   query: "?raw",
   eager: true,
 });
+const foundationsFiles = import.meta.glob("./foundations/*.md", {
+  query: "?raw",
+  eager: true,
+});
 const gettingStartedFiles = import.meta.glob("./getting-started/*.md", {
   query: "?raw",
   eager: true,
@@ -91,6 +95,7 @@ const cookbookFiles = import.meta.glob("./cookbook/*.md", {
 });
 
 export const overviewPages = loadSection(overviewFiles as Record<string, { default: string }>);
+export const foundationsPages = loadSection(foundationsFiles as Record<string, { default: string }>);
 export const gettingStartedPages = loadSection(gettingStartedFiles as Record<string, { default: string }>);
 export const tourPages = loadSection(tourFiles as Record<string, { default: string }>);
 export const advancedPages = loadSection(advancedFiles as Record<string, { default: string }>);
