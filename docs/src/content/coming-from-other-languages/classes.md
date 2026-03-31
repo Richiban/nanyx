@@ -1,7 +1,7 @@
 ---
 title: "Classes"
 description: "Object-style programming without inheritance"
-order: 17
+order: 2
 ---
 
 # Classes

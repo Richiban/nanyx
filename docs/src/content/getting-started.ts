@@ -77,6 +77,10 @@ const advancedFiles = import.meta.glob("./advanced/*.md", {
   query: "?raw",
   eager: true,
 });
+const comingFromOtherLanguagesFiles = import.meta.glob("./coming-from-other-languages/*.md", {
+  query: "?raw",
+  eager: true,
+});
 const stdlibFiles = import.meta.glob("./stdlib/*.md", {
   query: "?raw",
   eager: true,
@@ -90,5 +94,8 @@ export const overviewPages = loadSection(overviewFiles as Record<string, { defau
 export const gettingStartedPages = loadSection(gettingStartedFiles as Record<string, { default: string }>);
 export const tourPages = loadSection(tourFiles as Record<string, { default: string }>);
 export const advancedPages = loadSection(advancedFiles as Record<string, { default: string }>);
+export const comingFromOtherLanguagesPages = loadSection(
+  comingFromOtherLanguagesFiles as Record<string, { default: string }>
+);
 export const stdlibPages = loadSection(stdlibFiles as Record<string, { default: string }>);
 export const cookbookPages = loadSection(cookbookFiles as Record<string, { default: string }>);
