@@ -11,22 +11,6 @@ interface MarkdownRendererProps {
   className?: string;
 }
 
-const bundledLanguages = [
-  "bash",
-  "json",
-  "yaml",
-  "markdown",
-  "javascript",
-  "typescript",
-  "jsx",
-  "tsx",
-  "python",
-  "csharp",
-  "fsharp",
-  "html",
-  "css",
-];
-
 const languageAliases: Record<string, string> = {
   nyx: "nyx",
   nanyx: "nyx",
@@ -65,7 +49,6 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
       const instance = await createHighlighter({
         themes: ["github-dark"],
         langs: [
-          ...bundledLanguages,
           {
             id: "nyx",
             scopeName: "source.nyx",
