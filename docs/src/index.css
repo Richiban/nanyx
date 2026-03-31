@@ -1,8 +1,8 @@
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap');
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap");
 
 @font-face {
-  font-family: 'Hasklig';
-  src: url('/src/assets/fonts/Hasklig-Regular.ttf') format('truetype');
+  font-family: "Hasklig";
+  src: url("/src/assets/fonts/Hasklig-Regular.ttf") format("truetype");
   font-weight: 400;
   font-style: normal;
   font-display: swap;
@@ -109,15 +109,21 @@
 
   body {
     @apply bg-background text-foreground font-sans;
-    font-family: 'Inter', system-ui, sans-serif;
+    font-family: "Inter", system-ui, sans-serif;
   }
 
-  h1, h2, h3, h4, h5, h6 {
-    font-family: 'Space Grotesk', system-ui, sans-serif;
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: "Space Grotesk", system-ui, sans-serif;
   }
 
-  code, pre {
-    font-family: 'Hasklig', 'JetBrains Mono', monospace;
+  code,
+  pre {
+    font-family: "Hasklig", "JetBrains Mono", monospace;
   }
 }
 
@@ -128,35 +134,35 @@
 
 .prose h1 {
   @apply text-3xl font-bold mb-4 mt-8 first:mt-0;
-  font-family: 'Space Grotesk', system-ui, sans-serif;
+  font-family: "Space Grotesk", system-ui, sans-serif;
 }
 
 .prose h2 {
   @apply text-2xl font-semibold mb-3 mt-8;
-  font-family: 'Space Grotesk', system-ui, sans-serif;
+  font-family: "Space Grotesk", system-ui, sans-serif;
 }
 
 .prose h3 {
   @apply text-xl font-semibold mb-2 mt-6;
-  font-family: 'Space Grotesk', system-ui, sans-serif;
+  font-family: "Space Grotesk", system-ui, sans-serif;
 }
 
 .doc-description {
   position: relative;
   padding-left: 1em;
   display: flex;
-}
 
-.doc-description::before {
-  content: "";
-  display: inline-block;
-  width: 3em;
-  height: 1.5ex;
-  margin-right: .5em;
-  border: currentColor 1px solid;
-  border-right: none;
-  border-top: none;
-  border-bottom-left-radius: .25em;
+  &::before {
+    content: "";
+    display: inline-block;
+    width: 3em;
+    height: 1.5ex;
+    margin-right: 0.5em;
+    border: currentColor 1px solid;
+    border-right: none;
+    border-top: none;
+    border-bottom-left-radius: 0.25em;
+  }
 }
 
 .prose p {

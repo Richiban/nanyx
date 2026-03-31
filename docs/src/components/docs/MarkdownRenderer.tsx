@@ -1,7 +1,7 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { createHighlighter } from "shiki/bundle/web";
-import nyxGrammar from "../../../../extension/syntaxes/nyx.tmLanguage.json";
+import nyxGrammar from "../../../../extension/src/syntaxes/nyx.tmLanguage.json";
 import { Check, Copy } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
@@ -40,7 +40,9 @@ const paperWhiteTheme = {
       settings: { foreground: "#098658" },
     },
     { scope: ["keyword.control.nanyx"], settings: { foreground: "#c244b1" } },
+    { scope: ["keyword.control"], settings: { foreground: "#c244b1" } },
     { scope: ["keyword.declaration.nanyx"], settings: { foreground: "#2b579a" } },
+    { scope: ["keyword.nanyx"], settings: { foreground: "#2b579a" } },
     {
       scope: ["entity.name.function", "support.function"],
       settings: { foreground: "#795e26" },
@@ -64,6 +66,8 @@ const paperWhiteTheme = {
         "punctuation.section.parens",
         "punctuation.section.block",
         "punctuation.definition.group",
+        "keyword.symbol.nanyx",
+        "keyword.symbol.arrow.nanyx",
       ],
       settings: { foreground: "#4a4a4a" },
     },
@@ -93,7 +97,9 @@ const inkNightTheme = {
       settings: { foreground: "#55c99b" },
     },
     { scope: ["keyword.control.nanyx"], settings: { foreground: "#f07ad8" } },
+    { scope: ["keyword.control"], settings: { foreground: "#f07ad8" } },
     { scope: ["keyword.declaration.nanyx"], settings: { foreground: "#82b1ff" } },
+    { scope: ["keyword.nanyx"], settings: { foreground: "#82b1ff" } },
     {
       scope: ["entity.name.function", "support.function"],
       settings: { foreground: "#f4bf75" },
@@ -177,6 +183,8 @@ export function MarkdownRenderer({
       }
     };
 
+          "keyword.symbol.nanyx",
+          "keyword.symbol.arrow.nanyx",
     loadHighlighter();
 
     return () => {
