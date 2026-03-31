@@ -27,14 +27,36 @@ const paperWhiteTheme = {
   },
   settings: [
     { settings: { foreground: "#2b2b2b" } },
-    { scope: ["comment", "punctuation.definition.comment"], settings: { foreground: "#7a7a7a" } },
-    { scope: ["string", "punctuation.definition.string"], settings: { foreground: "#c94c12" } },
-    { scope: ["constant.numeric", "constant.language"], settings: { foreground: "#098658" } },
-    { scope: ["keyword", "storage", "storage.type"], settings: { foreground: "#c244b1" } },
-    { scope: ["entity.name.function", "support.function"], settings: { foreground: "#795e26" } },
-    { scope: ["entity.name.type", "support.type"], settings: { foreground: "#23a87c" } },
-    { scope: ["variable", "variable.parameter"], settings: { foreground: "#001080" } },
-    { scope: ["entity.name.tag", "support.class"], settings: { foreground: "#448eca" } },
+    {
+      scope: ["comment", "punctuation.definition.comment"],
+      settings: { foreground: "#7a7a7a" },
+    },
+    {
+      scope: ["string", "punctuation.definition.string"],
+      settings: { foreground: "#c94c12" },
+    },
+    {
+      scope: ["constant.numeric", "constant.language"],
+      settings: { foreground: "#098658" },
+    },
+    { scope: ["keyword.control.nanyx"], settings: { foreground: "#c244b1" } },
+    { scope: ["keyword.declaration.nanyx"], settings: { foreground: "#2b579a" } },
+    {
+      scope: ["entity.name.function", "support.function"],
+      settings: { foreground: "#795e26" },
+    },
+    {
+      scope: ["entity.name.type", "support.type"],
+      settings: { foreground: "#23a87c" },
+    },
+    {
+      scope: ["variable", "variable.parameter"],
+      settings: { foreground: "#001080" },
+    },
+    {
+      scope: ["entity.name.tag", "support.class"],
+      settings: { foreground: "#448eca" },
+    },
     { scope: ["keyword.operator"], settings: { foreground: "#000000" } },
   ],
 } as const;
@@ -54,15 +76,22 @@ function CopyButton({ code }: { code: string }) {
       className="absolute top-3 right-3 p-1.5 rounded-md bg-muted/50 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
       aria-label="Copy code"
     >
-      {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+      {copied ? (
+        <Check className="h-3.5 w-3.5" />
+      ) : (
+        <Copy className="h-3.5 w-3.5" />
+      )}
     </button>
   );
 }
 
-export function MarkdownRenderer({ content, className }: MarkdownRendererProps) {
-  const [highlighter, setHighlighter] = useState<Awaited<ReturnType<typeof createHighlighter>> | null>(
-    null
-  );
+export function MarkdownRenderer({
+  content,
+  className,
+}: MarkdownRendererProps) {
+  const [highlighter, setHighlighter] = useState<Awaited<
+    ReturnType<typeof createHighlighter>
+  > | null>(null);
   const [isDark, setIsDark] = useState(false);
 
   useEffect(() => {
@@ -74,7 +103,7 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
           {
             ...(nyxGrammar as Record<string, unknown>),
             name: "nyx",
-            scopeName: "source.nyx",
+            scopeName: (nyxGrammar as { scopeName?: string }).scopeName || "source.nanyx",
             aliases: ["nanyx"],
           },
         ],
@@ -126,7 +155,8 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
             if (!inline && match) {
               const rawLang = match[1].toLowerCase();
               const normalizedLang = languageAliases[rawLang] ?? rawLang;
-              const canHighlight = highlighter && loadedLanguages.has(normalizedLang);
+              const canHighlight =
+                highlighter && loadedLanguages.has(normalizedLang);
               const theme = isDark ? "github-dark" : "paper-white";
 
               return (
