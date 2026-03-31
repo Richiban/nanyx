@@ -55,28 +55,14 @@ def result = sqrt(16)  -- No need for Math. prefix
 Give modules shorter names:
 
 ```nyx
-import DataProcessing as DP
+import dataProcessing as dp
 
-def result = DP.process(data)
+def result = dp.process(data)
 ```
 
 ## Exports
 
-By default, all top-level definitions are exported:
-
-```nyx
-module utils
-
--- Exported (public)
-def double: int -> int = { x -> x * 2 }
-
--- Also exported
-def triple: int -> int = { x -> x * 3 }
-```
-
-## Public vs private Definitions
-
-Use `export` to make a type or definition available to other modules.
+By default, all definitions are accessible only in their own scope. Use `export` to make a type or definition available to other modules.
 
 ```nyx
 module Utils
@@ -109,7 +95,7 @@ export def fold: (list(a), b, (b, a) -> b) -> b = { ... }
 ```
 
 ```nyx
-module Collections.Map
+module collections.map
 
 def empty: map(k, v) = { ... }
 def insert: (map(k, v), k, v) -> map(k, v) = { ... }
@@ -129,14 +115,17 @@ def validateAge: int -> Result(Age, ValidationError) = { ... }
 
 ## Re-exporting
 
-Export items from other modules:
+When writing a package for publication, individual modules can be exported too. It is common to re-export items from other modules:
 
 ```nyx
-module Collections
+-- Export the collections module outside the package
+export module collections
 
 -- Re-export from sub-modules
-export Collections.List (map, filter, fold)
-export Collections.Map (empty, insert, lookup)
+export collections.list
+
+-- Re-export specific items
+export collections.map (empty, insert, lookup)
 ```
 
 ## Module-Level Constants
@@ -165,21 +154,21 @@ Instead, extract shared code to a third module:
 
 ```nyx
 -- Bad: circular dependency
-module A
-import B  -- A imports B
+module a
+import b  -- A imports B
 
-module B  
-import A  -- B imports A (circular!)
+module b  
+import a  -- B imports A (circular!)
 
 -- Good: extract shared code
-module Shared
+module shared
 -- Common definitions
 
-module A
-import Shared
+module a
+import shared
 
-module B
-import Shared
+module b
+import shared
 ```
 
 ## Standard Library Modules
