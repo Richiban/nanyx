@@ -18,24 +18,23 @@ cd word_counter
 ## The Code
 
 ```nanyx
-module main
+import (
+  nanyx/file
+  nanyx/string
+  nanyx/list
+)
 
-import file
-import string
-import list
+match file.read("input.txt")
+  | #ok(content) ->
+    def words = content
+      \string.split(" ")
+      \list.filter { != "" }
+    
+    def count = list.length(words)
+    println("Word count: {count}")
+  | #error(err) ->
+    println("Error reading file: {err}")
 
-def main = {
-  match file.read("input.txt")
-    | #ok(content) ->
-      def words = content
-        \string.split(" ")
-        \list.filter { != "" }
-      
-      def count = list.length(words)
-      println("Word count: {count}")
-    | #error(err) ->
-      println("Error reading file: {err}")
-}
 ```
 
 ## Run It

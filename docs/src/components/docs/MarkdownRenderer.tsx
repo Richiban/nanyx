@@ -5,6 +5,7 @@ import nyxGrammar from "../../../../extension/src/syntaxes/nanyx.tmLanguage.json
 import { Check, Copy } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
+import { set } from "date-fns";
 
 interface MarkdownRendererProps {
   content: string;
@@ -14,8 +15,8 @@ interface MarkdownRendererProps {
 const languageAliases: Record<string, string> = {
   nyx: "nyx",
   nanyx: "nyx",
-  "c#": "csharp",
-  "f#": "fsharp",
+  bash: "bash",
+  sh: "bash",
 };
 
 const paperWhiteTheme = {
@@ -41,7 +42,10 @@ const paperWhiteTheme = {
     },
     { scope: ["keyword.control.nanyx"], settings: { foreground: "#c244b1" } },
     { scope: ["keyword.control"], settings: { foreground: "#c244b1" } },
-    { scope: ["keyword.declaration.nanyx"], settings: { foreground: "#2b579a" } },
+    {
+      scope: ["keyword.declaration.nanyx"],
+      settings: { foreground: "#2b579a" },
+    },
     { scope: ["keyword.nanyx"], settings: { foreground: "#2b579a" } },
     {
       scope: ["entity.name.function", "support.function"],
@@ -102,7 +106,10 @@ const inkNightTheme = {
     },
     { scope: ["keyword.control.nanyx"], settings: { foreground: "#f07ad8" } },
     { scope: ["keyword.control"], settings: { foreground: "#f07ad8" } },
-    { scope: ["keyword.declaration.nanyx"], settings: { foreground: "#82b1ff" } },
+    {
+      scope: ["keyword.declaration.nanyx"],
+      settings: { foreground: "#82b1ff" },
+    },
     { scope: ["keyword.nanyx"], settings: { foreground: "#82b1ff" } },
     {
       scope: ["entity.name.function", "support.function"],
@@ -113,12 +120,12 @@ const inkNightTheme = {
       settings: { foreground: "#6ee7b7" },
     },
     {
-      scope: ["variable", "variable.parameter"],
-      settings: { foreground: "#a5b4fc" },
+      scope: ["entity.name.tag", "tag.nanyx"],
+      settings: { foreground: "#7dfce7" },
     },
     {
-      scope: ["entity.name.tag","tag.nanyx"],
-      settings: { foreground: "#7dfce7" },
+      scope: ["punctuation.definition.tag.nanyx"],
+      settings: { foreground: "#85beb4" },
     },
     {
       scope: ["support.type.nanyx"],
@@ -179,10 +186,13 @@ export function MarkdownRenderer({
       const instance = await createHighlighter({
         themes: [inkNightTheme, paperWhiteTheme],
         langs: [
+          "bash",
           {
             ...(nyxGrammar as Record<string, unknown>),
             name: "nyx",
-            scopeName: (nyxGrammar as { scopeName?: string }).scopeName || "source.nanyx",
+            scopeName:
+              (nyxGrammar as { scopeName?: string }).scopeName ||
+              "source.nanyx",
             aliases: ["nanyx"],
           },
         ],
