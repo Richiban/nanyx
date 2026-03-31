@@ -1,0 +1,127 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "nyx",
+  "scopeName": "source.nanyx",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#tags" },
+    { "include": "#punctuation" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.block.nanyx",
+          "begin": "^(---)",
+          "end": "^(---)"
+        },
+        {
+          "name": "comment.line.double-dash.nanyx",
+          "match": "--.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.nanyx",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            { "name": "constant.character.escape.nanyx", "match": "\\\\." },
+            { "name": "constant.other.placeholder.nanyx", "match": "\\{[^}]*\\}" }
+          ]
+        },
+        {
+          "name": "string.quoted.single.nanyx",
+          "begin": "'",
+          "end": "'",
+          "patterns": [
+            { "name": "constant.character.escape.nanyx", "match": "\\\\." }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.nanyx",
+          "match": "\\b-?[0-9][0-9_]*\\.[0-9][0-9_]*(?:[eE][+-]?[0-9][0-9_]*)?\\b"
+        },
+        {
+          "name": "constant.numeric.integer.nanyx",
+          "match": "\\b-?[0-9][0-9_]*\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.nanyx",
+          "match": "\\b(if|else|match|with|return|except|then)\\b"
+        },
+        {
+          "name": "keyword.declaration.nanyx",
+          "match": "\\b(def|type|context|module|import|export|use|in|as|rec|private)\\b"
+        },
+        {
+          "name": "constant.language.boolean.nanyx",
+          "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "constant.language.null.nanyx",
+          "match": "\\b(null|unit)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "entity.name.type.nanyx",
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+        }
+      ]
+    },
+    "tags": {
+      "patterns": [
+        {
+          "name": "entity.name.tag.nanyx",
+          "match": "#[A-Za-z_][A-Za-z0-9_]*"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.nanyx",
+          "match": "(\\|->|=|\\+|\\-|\\*|/|\\||&&|\\|\\||==|!=|<=|>=|<|>)"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.section.parens.nanyx",
+          "match": "[()]"
+        },
+        {
+          "name": "punctuation.section.brackets.nanyx",
+          "match": "[\\[\\]]"
+        },
+        {
+          "name": "punctuation.section.braces.nanyx",
+          "match": "[{}]"
+        },
+        {
+          "name": "punctuation.separator.comma.nanyx",
+          "match": ","
+        }
+      ]
+    }
+  }
+}

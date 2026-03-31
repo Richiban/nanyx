@@ -1,7 +1,7 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { createHighlighter } from "shiki/bundle/web";
-import nyxGrammar from "../../../../extension/src/syntaxes/nyx.tmLanguage.json";
+import nyxGrammar from "../../../../extension/src/syntaxes/nanyx.tmLanguage.json";
 import { Check, Copy } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
@@ -123,6 +123,8 @@ const inkNightTheme = {
         "punctuation.section.parens",
         "punctuation.section.block",
         "punctuation.definition.group",
+        "keyword.symbol.nanyx",
+        "keyword.symbol.arrow.nanyx",
       ],
       settings: { foreground: "#999797" },
     },
@@ -183,8 +185,6 @@ export function MarkdownRenderer({
       }
     };
 
-          "keyword.symbol.nanyx",
-          "keyword.symbol.arrow.nanyx",
     loadHighlighter();
 
     return () => {

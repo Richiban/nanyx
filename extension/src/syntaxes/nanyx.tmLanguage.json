@@ -460,9 +460,6 @@
 							"name": "keyword.nanyx"
 						},
 						"3": {
-							"name": "support.function.attribute.nanyx"
-						},
-						"4": {
 							"name": "variable.nanyx"
 						}
 					},

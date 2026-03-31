@@ -38,7 +38,7 @@
       {
         "language": "nyx",
         "scopeName": "source.nyx",
-        "path": "./syntaxes/nyx.tmLanguage.json"
+        "path": "./syntaxes/nanyx.tmLanguage.json"
       }
     ],
     "commands": [
