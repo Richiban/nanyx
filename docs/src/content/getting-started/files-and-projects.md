@@ -56,6 +56,30 @@ That means shared files should avoid top-level statements and only define values
 
 For larger projects, introduce a project file. In that mode, modules are imported by their declared names instead of by file paths. This keeps imports stable as the project grows and clarifies ownership of modules.
 
+### Project file format (TOML)
+
+Use a `nanyx.toml` file at the project root to declare the entrypoint, source roots, and build options. This is a simple, declarative format that works well for tooling.
+
+```toml
+[project]
+name = "word_counter"
+version = "0.1.0"
+entry = "src/main.nyx"
+source_roots = ["src"]
+
+[module]
+path_style = "module"
+
+[build]
+target = "wasm"
+output = "dist/word_counter.wasm"
+
+[compiler]
+opt_level = "debug"
+```
+
+When a project file is present, prefer module imports over file-path imports.
+
 As a rule of thumb:
 
 - Use single files for quick scripts or experiments.

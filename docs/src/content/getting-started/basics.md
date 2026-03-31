@@ -123,11 +123,11 @@ Table literals are a shorthand for lists of records with the same shape:
 
 ```nanyx
 def namesAndAges =
-  [| name    | age |
-   | "Felix" | 22  |
-   | "Taylor" | 30 |
-   | "Peter" | 28  |
-   | "Sean"  | 45  |]
+  [| name     | age |
+   | "Alex"   | 22  |
+   | "Taylor" | 30  |
+   | "Sam"    | 28  |
+   | "Morgan" | 45  |]
 ```
 
 ## Conditionals

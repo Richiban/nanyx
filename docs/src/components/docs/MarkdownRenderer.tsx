@@ -1,6 +1,7 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { createHighlighter } from "shiki/bundle/web";
+import toml from "shiki/langs/toml";
 import nyxGrammar from "../../../../extension/src/syntaxes/nanyx.tmLanguage.json";
 import { Check, Copy } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -17,6 +18,7 @@ const languageAliases: Record<string, string> = {
   nanyx: "nyx",
   bash: "bash",
   sh: "bash",
+  toml: "toml",
 };
 
 const paperWhiteTheme = {
@@ -187,6 +189,7 @@ export function MarkdownRenderer({
         themes: [inkNightTheme, paperWhiteTheme],
         langs: [
           "bash",
+          toml,
           {
             ...(nyxGrammar as Record<string, unknown>),
             name: "nyx",
