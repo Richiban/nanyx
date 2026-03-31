@@ -25,12 +25,6 @@ export const navSections: NavSection[] = [
     pages: overviewPages,
   },
   {
-    title: "Foundations",
-    basePath: "/docs/foundations",
-    icon: "Landmark",
-    pages: foundationsPages,
-  },
-  {
     title: "Getting Started",
     basePath: "/docs/getting-started",
     icon: "Rocket",
@@ -59,6 +53,12 @@ export const navSections: NavSection[] = [
     basePath: "/docs/stdlib",
     icon: "Library",
     pages: stdlibPages,
+  },
+  {
+    title: "Foundations",
+    basePath: "/docs/foundations",
+    icon: "Landmark",
+    pages: foundationsPages,
   },
   {
     title: "Cookbook",
