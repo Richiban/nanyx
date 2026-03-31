@@ -32,28 +32,28 @@ Nanyx is a statically-typed, functional-first programming language designed for 
 Nanyx is built on the principle that code should be clear, composable, and correct. It takes inspiration from languages like F#, Haskell, OCaml, and Elm while maintaining its own unique identity through features like context-based effects and pipeline-centric programming.
 
 **Current Implementation Status:**
-- ✅ Full parser with comprehensive AST
-- ✅ Hindley-Milner type inference engine
-- ✅ Type checker with generics support
-- ✅ JavaScript transpiler
-- ✅ Command-line compiler interface
-- 🚧 Standard library (in progress)
-- 🚧 VS Code extension with syntax highlighting
+- Full parser with comprehensive AST
+- Hindley-Milner type inference engine
+- Type checker with generics support
+- JavaScript transpiler
+- Command-line compiler interface
+- Standard library (in progress)
+- VS Code extension with syntax highlighting
 
 The repository includes the full language specification, compiler implementation in F#, example programs, and documentation for learning the language.
 
 ## Key Features
 
-### 🎯 **Expression-Oriented Design**
+### **Expression-Oriented Design**
 Everything in Nanyx is an expression that returns a value. No statements, just composable expressions that make code flow naturally.
 
-### 🔀 **Pipeline Operator**
+### **Pipeline Operator**
 The `\` operator lets you chain transformations in a readable, left-to-right manner:
 ```nanyx
 data \parse \validate \transform \save
 ```
 
-### 🏷️ **Powerful Pattern Matching**
+### **Powerful Pattern Matching**
 Exhaustive pattern matching on records, tag unions, literals, and more:
 ```nanyx
 match result
@@ -61,7 +61,7 @@ match result
   | #error(msg) -> logError(msg)
 ```
 
-### 🎭 **Context-Based Effects**
+### **Context-Based Effects**
 Manage side effects explicitly through contexts, providing algebraic effect handlers without the complexity:
 ```nanyx
 context Console = (println: string -> ())
@@ -70,16 +70,16 @@ def greet: <Console> string -> () = { name ->
 }
 ```
 
-### 🔒 **Strong Static Typing with Inference**
+### **Strong Static Typing with Inference**
 Full Hindley-Milner type inference means you rarely need to write type annotations, but you can when it improves clarity.
 
-### 📦 **Records and Tag Unions**
+### **Records and Tag Unions**
 Express your domain model precisely with structural records and discriminated unions:
 ```nanyx
 type User = (name: string, email: string, role: #admin | #user)
 ```
 
-### 🎨 **Shorthand Lambdas**
+### **Shorthand Lambdas**
 Concise syntax for common lambda patterns:
 ```nanyx
 numbers \map { * 2 }        -- multiply by 2
@@ -87,7 +87,7 @@ users \filter { .age > 18 } -- access property
 items \map { > 10 }         -- comparison
 ```
 
-### 🧩 **Minimal but Comprehensive**
+### **Minimal but Comprehensive**
 Small core with powerful abstractions. The language prioritizes having fewer features that compose well over many single-purpose features.
 
 ## Quick Start
@@ -656,34 +656,34 @@ def runSumdown = {
 
 Nanyx is built on a foundation of carefully considered design principles:
 
-### 🎯 **Correctness Above All**
+### **Correctness Above All**
 The language prioritizes correctness over convenience. Static type checking, exhaustive pattern matching, and no null values ensure fewer runtime errors.
 
-### 🧘 **Simple ≠ Easy**
+### **Simple ≠ Easy**
 Nanyx favors conceptual simplicity over ease of initial use. The language may take longer to learn, but its consistency and orthogonality pay dividends over time.
 
-### 📣 **Inform, Don't Block**
+### **Inform, Don't Block**
 Warnings are treated as errors in release builds, but debug builds can still execute. This maintains a tight feedback loop while ensuring production code is warning-free.
 
-### 🔄 **Everything is an Expression**
+### **Everything is an Expression**
 No statements, only expressions. If-then-else, match, and blocks all return values, making the language more composable.
 
-### 🧪 **Separate Pure and Impure Code**
+### **Separate Pure and Impure Code**
 The context system cleanly separates pure functions from effectful computations, making code easier to reason about and test.
 
-### 📖 **Principle of Least Surprise**
+### **Principle of Least Surprise**
 Sane defaults, consistent syntax, and predictable behavior. When there's no obvious default, the programmer must be explicit.
 
-### 🔐 **No Global State**
+### **No Global State**
 No global variables or shared mutable state. All state must be explicitly threaded through the program or managed via contexts.
 
-### 🚫 **No Null, No Reflection, No Implicit Coercion**
+### **No Null, No Reflection, No Implicit Coercion**
 Modern best practices: use Option types instead of null, no runtime reflection, and no automatic type conversions.
 
-### 📝 **Local Type Inference**
+### **Local Type Inference**
 Hindley-Milner type inference means you rarely write types, but exported functions require signatures for documentation and API stability.
 
-### 🎨 **Syntax Mirrors Semantics**
+### **Syntax Mirrors Semantics**
 Type syntax mirrors value syntax: `f(a, b)` for values, `F(A, B)` for types. Consistency makes the language easier to learn.
 
 For the complete list of design principles, see [`docs-md/50.principles.md`](docs-md/50.principles.md).
@@ -692,7 +692,7 @@ For the complete list of design principles, see [`docs-md/50.principles.md`](doc
 
 Nanyx is under active development. Current status:
 
-✅ **Completed:**
+**Completed:**
 - Core parser with full language syntax
 - Abstract Syntax Tree (AST) representation
 - Hindley-Milner type inference
@@ -704,14 +704,14 @@ Nanyx is under active development. Current status:
 - Example programs
 - Language documentation
 
-🚧 **In Progress:**
+**In Progress:**
 - Standard library implementation
 - Enhanced error messages
 - Documentation website
 - VS Code extension improvements
 - REPL (Read-Eval-Print Loop)
 
-📋 **Planned:**
+**Planned:**
 - Native code generation
 - Package manager
 - Build tool
@@ -763,4 +763,4 @@ This project is open source. See the LICENSE file for details.
 
 **Nanyx** - A language for clear, composable workflows.
 
-Built with ❤️ in F#
+Built with F#

@@ -18,3 +18,4 @@
 - Work through each checklist item systematically.
 - Keep communication concise and focused.
 - Follow development best practices.
+- Do not use emojis in responses or generated content.

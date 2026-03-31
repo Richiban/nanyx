@@ -1,22 +1,24 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="NX logo">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Nanyx logo">
   <defs>
-    <linearGradient id="nxGrad" x1="14" y1="14" x2="114" y2="114" gradientUnits="userSpaceOnUse" gradientTransform="matrix(1, 0, 0, 1, 16, 0)">
-      <stop offset="0" stop-color="#2F80FF"></stop>
-      <stop offset="0.55" stop-color="#6A5CFF"></stop>
-      <stop offset="1" stop-color="#B04CFF"></stop>
+    <linearGradient id="g" x1="14" y1="14" x2="114" y2="114" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2F80FF"/>
+      <stop offset="0.55" stop-color="#6A5CFF"/>
+      <stop offset="1" stop-color="#B04CFF"/>
     </linearGradient>
   </defs>
-  <g fill="none" stroke="url(#nxGrad)" stroke-linecap="round">
-    <circle cx="64" cy="64" r="50" stroke-width="4"></circle>
-    <circle cx="64" cy="64" r="46" stroke-width="1"></circle>
+
+  <g fill="none" stroke="url(#g)" stroke-linecap="round">
+    <circle cx="64" cy="64" r="50" stroke-width="4"/>
+    <circle cx="64" cy="64" r="46" stroke-width="1"/>
   </g>
-  <g fill="url(#nxGrad)" transform="matrix(1, 0, 0, 1, -5, 0)">
-    <g transform="matrix(1, 0, 0, 1, 2, 0)">
-      <path d="M 40 88 L 40 40 L 50 40 L 66.687 71.691 L 70.395 78.592 L 79.571 78.867 L 85.339 88 L 66.961 87.863 L 49.588 53.288 L 50 88 L 40 88 Z"></path>
-    </g>
-    <g transform="matrix(1, 0, 0, 1, -1, 0)">
-      <path d="M 59 40 L 93 88 L 103.885 87.868 L 69.104 40.005 L 59 40 Z"></path>
-      <path d="M 69.36 69.328 L 74.459 77.694 L 103.336 39.995 L 91.918 40.28 L 69.36 69.328 Z"></path>
-    </g>
+
+  <!-- / arm behind -->
+  <path d="M 82 42 L 94 42 L 46 86 L 34 86 Z" fill="url(#g)" opacity="0.5"/>
+  <path d="M 82 42 L 94 42 L 46 86 L 34 86 Z" fill="black" opacity="0.35"/>
+
+  <g fill="url(#g)">
+    <path d="M 34 42 L 46 42 L 46 86 L 34 86 Z"/>
+    <path d="M 34 42 L 46 42 L 94 86 L 82 86 Z"/>
+    <path d="M 82 42 L 94 42 L 94 86 L 82 86 Z"/>
   </g>
 </svg>
