@@ -144,15 +144,15 @@
 .doc-description {
   position: relative;
   padding-left: 1em;
+  display: flex;
 }
 
 .doc-description::before {
   content: "";
   display: inline-block;
   width: 3em;
-  height: .5em;
+  height: 1.5ex;
   margin-right: .5em;
-  margin-bottom: .5ex;
   border: currentColor 1px solid;
   border-right: none;
   border-top: none;
