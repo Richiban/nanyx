@@ -42,17 +42,18 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
   const [highlighter, setHighlighter] = useState<Awaited<ReturnType<typeof createHighlighter>> | null>(
     null
   );
+  const [isDark, setIsDark] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
     const loadHighlighter = async () => {
       const instance = await createHighlighter({
-        themes: ["github-dark"],
+        themes: ["github-dark", "github-light"],
         langs: [
           {
-            id: "nyx",
+            ...(nyxGrammar as Record<string, unknown>),
+            name: "nyx",
             scopeName: "source.nyx",
-            grammar: nyxGrammar,
             aliases: ["nanyx"],
           },
         ],
@@ -70,6 +71,20 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
     };
   }, []);
 
+  useEffect(() => {
+    const root = document.documentElement;
+    const updateTheme = () => {
+      setIsDark(root.classList.contains("dark"));
+    };
+
+    updateTheme();
+
+    const observer = new MutationObserver(updateTheme);
+    observer.observe(root, { attributes: true, attributeFilter: ["class"] });
+
+    return () => observer.disconnect();
+  }, []);
+
   const loadedLanguages = useMemo(() => {
     if (!highlighter) return new Set<string>();
     return new Set(highlighter.getLoadedLanguages());
@@ -80,14 +95,18 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          code({ className, children, ...props }) {
+          pre({ children }) {
+            return <>{children}</>;
+          },
+          code({ className, children, inline, ...props }) {
             const match = /language-(\w+)/.exec(className || "");
             const codeString = String(children).replace(/\n$/, "");
 
-            if (match) {
+            if (!inline && match) {
               const rawLang = match[1].toLowerCase();
               const normalizedLang = languageAliases[rawLang] ?? rawLang;
               const canHighlight = highlighter && loadedLanguages.has(normalizedLang);
+              const theme = isDark ? "github-dark" : "github-light";
 
               return (
                 <div className="relative group">
@@ -97,7 +116,7 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
                       dangerouslySetInnerHTML={{
                         __html: highlighter.codeToHtml(codeString, {
                           lang: normalizedLang,
-                          theme: "github-dark",
+                          theme,
                         }),
                       }}
                     />
