@@ -49,13 +49,13 @@ Everything in Nanyx is an expression that returns a value. No statements, just c
 
 ### 🔀 **Pipeline Operator**
 The `\` operator lets you chain transformations in a readable, left-to-right manner:
-```nyx
+```nanyx
 data \parse \validate \transform \save
 ```
 
 ### 🏷️ **Powerful Pattern Matching**
 Exhaustive pattern matching on records, tag unions, literals, and more:
-```nyx
+```nanyx
 match result
   | #ok(value) -> process(value)
   | #error(msg) -> logError(msg)
@@ -63,7 +63,7 @@ match result
 
 ### 🎭 **Context-Based Effects**
 Manage side effects explicitly through contexts, providing algebraic effect handlers without the complexity:
-```nyx
+```nanyx
 context Console = (println: string -> ())
 def greet: <Console> string -> () = { name ->
   println("Hello, {name}!")
@@ -75,13 +75,13 @@ Full Hindley-Milner type inference means you rarely need to write type annotatio
 
 ### 📦 **Records and Tag Unions**
 Express your domain model precisely with structural records and discriminated unions:
-```nyx
+```nanyx
 type User = (name: string, email: string, role: #admin | #user)
 ```
 
 ### 🎨 **Shorthand Lambdas**
 Concise syntax for common lambda patterns:
-```nyx
+```nanyx
 numbers \map { * 2 }        -- multiply by 2
 users \filter { .age > 18 } -- access property
 items \map { > 10 }         -- comparison
@@ -120,7 +120,7 @@ dotnet test Nanyx.Compiler.sln
 
 Create a file `hello.nyx`:
 
-```nyx
+```nanyx
 module Hello
 
 def message = "Hello, Nanyx!"
@@ -143,7 +143,7 @@ dotnet run --project compiler/Nanyx.Compiler.Cli/NyxCompiler.Cli.fsproj hello.ny
 
 Nanyx uses clean, minimal syntax with significant indentation:
 
-```nyx
+```nanyx
 module MyModule
 
 -- This is a single-line comment
@@ -169,7 +169,7 @@ def add: (int, int) -> int = { x, y ->
 
 Functions are first-class values in Nanyx:
 
-```nyx
+```nanyx
 -- Named function
 def double: int -> int = { x -> x * 2 }
 
@@ -193,7 +193,7 @@ def adults = users \filter { .age > 18 }
 
 The pipeline operator `\` passes the result of one expression as the first argument to the next function:
 
-```nyx
+```nanyx
 -- Simple pipeline
 42 \double \dbg  -- prints 84
 
@@ -221,7 +221,7 @@ def processUser = { user ->
 
 Nanyx features Hindley-Milner type inference with optional type annotations:
 
-```nyx
+```nanyx
 -- Type inference (no annotation needed)
 def add = { x, y -> x + y }  -- inferred as: (number, number) -> number
 
@@ -248,7 +248,7 @@ type Transformer(a, b) = a -> b
 
 Pattern matching is exhaustive and type-safe:
 
-```nyx
+```nanyx
 -- Matching on tag unions
 def describe: Option(int) -> string = { opt ->
   match opt
@@ -287,7 +287,7 @@ def sign: int -> string = { x ->
 
 Records are structural types with named fields:
 
-```nyx
+```nanyx
 -- Record creation
 def user = (
   name = "Alice"
@@ -313,7 +313,7 @@ def (x, y) = point
 
 Tag unions (also known as sum types or discriminated unions) represent values that can be one of several variants:
 
-```nyx
+```nanyx
 -- Simple tag union
 type Result(a) = 
   | #ok(a)
@@ -348,7 +348,7 @@ def findUser: UserId -> Option(User) = { id ->
 
 Contexts provide a way to handle effects explicitly without threading parameters through every function:
 
-```nyx
+```nanyx
 -- Define a context type
 context type Console = (
   println: string -> ()
@@ -411,7 +411,7 @@ def handleDivision = {
 
 Nanyx supports parametric polymorphism with automatic generalization:
 
-```nyx
+```nanyx
 -- Generic function (type parameter α is inferred)
 def identity: a -> a = { x -> x }
 
@@ -445,7 +445,7 @@ def fold: [Monoid(a, `+`, `0`)] (list(a)) -> a = { xs ->
 
 Nanyx supports refinement types for more precise specifications:
 
-```nyx
+```nanyx
 -- Constrained type definition
 type Email = s :: string where isValidEmail(s)
   def isValidEmail(s :: string) = s.contains("@") && s.contains(".")
@@ -550,7 +550,7 @@ The compiler will output:
 ### Example Compilation
 
 Given `example.nyx`:
-```nyx
+```nanyx
 module Example
 
 def add: (int, int) -> int = { x, y -> x + y }
@@ -574,7 +574,7 @@ The `examples/` directory contains numerous Nanyx programs demonstrating various
 
 ### FizzBuzzBaz - Configurable FizzBuzz
 
-```nyx
+```nanyx
 def numberGame: (Map(int, string)) -> (int -> string) = { rules ->
   { i ->
     rules
@@ -595,7 +595,7 @@ def fizzbuzz = numberGame(dict {
 
 ### Caesar Cipher with Frequency Analysis
 
-```nyx
+```nanyx
 def freqs: string -> list(float) = { s ->
   def lowers = list('a', 'z')
   def occurs = lowers \map { c -> s \count(c \string) }
@@ -615,7 +615,7 @@ def uncaesar: string -> string = { s ->
 
 ### String Case Transformations
 
-```nyx
+```nanyx
 type Casing = #camel | #pascal | #kebab | #snake | #title
 
 def rejoin: (list(string), Casing) -> string = { words, casing ->
@@ -631,7 +631,7 @@ def rejoin: (list(string), Casing) -> string = { words, casing ->
 
 ### Context-Based Effect Handlers
 
-```nyx
+```nanyx
 context type State(a) = (
   get: () -> a
   set: a -> ()

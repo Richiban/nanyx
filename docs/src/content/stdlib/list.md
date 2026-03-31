@@ -14,7 +14,7 @@ The `list` module provides functions for working with lists.
 
 Applies a function to every element in a list.
 
-```nyx
+```nanyx
 [1, 2, 3] \list.map { * 2 }
 -- [2, 4, 6]
 ```
@@ -23,7 +23,7 @@ Applies a function to every element in a list.
 
 Keeps only elements that satisfy the predicate.
 
-```nyx
+```nanyx
 [1, 2, 3, 4, 5] \list.filter { > 3 }
 -- [4, 5]
 ```
@@ -32,7 +32,7 @@ Keeps only elements that satisfy the predicate.
 
 Reduces a list to a single value.
 
-```nyx
+```nanyx
 [1, 2, 3] \list.fold(0) { + }
 -- 6
 ```
@@ -41,7 +41,7 @@ Reduces a list to a single value.
 
 Returns the first element matching the predicate.
 
-```nyx
+```nanyx
 [1, 2, 3] \list.find { > 1 }
 -- #some(2)
 ```
@@ -50,7 +50,7 @@ Returns the first element matching the predicate.
 
 Flattens a list of lists into a single list.
 
-```nyx
+```nanyx
 list.flatten([[1, 2], [3, 4]])
 -- [1, 2, 3, 4]
 ```
@@ -59,7 +59,7 @@ list.flatten([[1, 2], [3, 4]])
 
 Returns the number of elements.
 
-```nyx
+```nanyx
 list.length([1, 2, 3])
 -- 3
 ```

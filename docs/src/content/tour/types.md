@@ -11,7 +11,7 @@ Nanyx features a strong static type system with Hindley-Milner type inference. T
 
 Nanyx can infer most types automatically:
 
-```nyx
+```nanyx
 -- Type is inferred as: (number, number) -> number
 def add = { x, y -> x + y }
 
@@ -23,7 +23,7 @@ def length = { s -> s.length }
 
 While inference works well, you can (and should) annotate exported functions:
 
-```nyx
+```nanyx
 -- Explicit type annotation
 def double: int -> int = { x -> x * 2 }
 
@@ -35,7 +35,7 @@ def multiply: (int, int) -> int = { x, y -> x * y }
 
 Nanyx has several built-in primitive types:
 
-```nyx
+```nanyx
 def count: int = 42
 def price: float = 19.99
 def name: string = "Alice"
@@ -46,7 +46,7 @@ def active: bool = true
 
 Records are structural types with named fields:
 
-```nyx
+```nanyx
 -- Record type definition
 type Person = (
   name: string
@@ -66,7 +66,7 @@ def alice: Person = (
 
 Tuples are anonymous records with numbered fields:
 
-```nyx
+```nanyx
 -- Tuple type
 def point: (int, int) = (10, 20)
 
@@ -78,7 +78,7 @@ def coords: (x: int, y: int) = (x = 10, y = 20)
 
 Tag unions (also called sum types or discriminated unions) represent values that can be one of several variants:
 
-```nyx
+```nanyx
 -- Simple tag union
 type Result(a) = #ok(a) | #error(string)
 
@@ -101,7 +101,7 @@ def area: Shape -> float = { shape ->
 
 Nanyx has no null values. Use Option types instead:
 
-```nyx
+```nanyx
 type Option(a) = #some(a) | #none
 
 def findUser: UserId -> Option(User) = { id ->
@@ -114,7 +114,7 @@ def findUser: UserId -> Option(User) = { id ->
 
 Types can be parameterized with type variables:
 
-```nyx
+```nanyx
 -- Generic function (type parameter α is inferred)
 def identity: a -> a = { x -> x }
 
@@ -138,7 +138,7 @@ def zip: (list(a), list(b)) -> list((a, b)) = { xs, ys ->
 
 Create meaningful names for complex types:
 
-```nyx
+```nanyx
 type UserId = int
 type Email = string
 type Age = int
@@ -155,7 +155,7 @@ type UserProfile = (
 
 Sometimes a type's name matters more than its structure. Nanyx supports nominal types using the `@` prefix. These types cannot be constructed (or cloned) outside their home module, so you typically export constructor functions.
 
-```nyx
+```nanyx
 module user
 
 export type @User = (
@@ -170,7 +170,7 @@ export def makeUser: (UserId, string) -> @User = { id, name ->
 
 Protected (opaque) types hide their structure outside the module by using `private`. This is useful for wrapping primitives safely and forcing validation through exported functions.
 
-```nyx
+```nanyx
 module ids
 
 export type @UserId = private string
@@ -184,7 +184,7 @@ export def UserId: string -> @UserId = { value ->
 
 Functions have specific type signatures:
 
-```nyx
+```nanyx
 -- Simple function type
 type Validator(a) = a -> bool
 

@@ -10,7 +10,7 @@ Pattern matching is one of Nanyx's most powerful features. The `match` expressio
 
 ## Basic Matching
 
-```nyx
+```nanyx
 match someValue
   | 0 -> "zero"
   | 1 -> "one"
@@ -19,7 +19,7 @@ match someValue
 
 ## Matching Custom Types
 
-```nyx
+```nanyx
 type Shape =
   | #circle(float)
   | #rectangle(float, float)
@@ -33,7 +33,7 @@ def area: Shape -> float = { shape ->
 
 ## Guards
 
-```nyx
+```nanyx
 def describeNumber: int -> string = { n ->
   match n
     | n if n < 0 -> "negative"
@@ -45,7 +45,7 @@ def describeNumber: int -> string = { n ->
 
 ## Destructuring
 
-```nyx
+```nanyx
 def (x, y) = (10, 20)
 
 match result
@@ -57,7 +57,7 @@ match result
 
 Since pattern matching is so common, you can merge the function definition and match patterns together:
 
-```nyx
+```nanyx
 rec sumList: list(int) -> int = {
   | [] -> 0
   | [head, ...tail] -> head + sumList(tail)
@@ -66,7 +66,7 @@ rec sumList: list(int) -> int = {
 
 ## Multiple Patterns
 
-```nyx
+```nanyx
 match day
   | "Saturday" | "Sunday" -> "Weekend!"
   | _ -> "Weekday"

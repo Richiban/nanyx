@@ -1,15 +1,38 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { coldarkDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { createHighlighter } from "shiki/bundle/web";
+import nyxGrammar from "../../../../extension/syntaxes/nyx.tmLanguage.json";
 import { Check, Copy } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 
 interface MarkdownRendererProps {
   content: string;
   className?: string;
 }
+
+const bundledLanguages = [
+  "bash",
+  "json",
+  "yaml",
+  "markdown",
+  "javascript",
+  "typescript",
+  "jsx",
+  "tsx",
+  "python",
+  "csharp",
+  "fsharp",
+  "html",
+  "css",
+];
+
+const languageAliases: Record<string, string> = {
+  nyx: "nyx",
+  nanyx: "nyx",
+  "c#": "csharp",
+  "f#": "fsharp",
+};
 
 function CopyButton({ code }: { code: string }) {
   const [copied, setCopied] = useState(false);
@@ -32,6 +55,43 @@ function CopyButton({ code }: { code: string }) {
 }
 
 export function MarkdownRenderer({ content, className }: MarkdownRendererProps) {
+  const [highlighter, setHighlighter] = useState<Awaited<ReturnType<typeof createHighlighter>> | null>(
+    null
+  );
+
+  useEffect(() => {
+    let isMounted = true;
+    const loadHighlighter = async () => {
+      const instance = await createHighlighter({
+        themes: ["github-dark"],
+        langs: [
+          ...bundledLanguages,
+          {
+            id: "nyx",
+            scopeName: "source.nyx",
+            grammar: nyxGrammar,
+            aliases: ["nanyx"],
+          },
+        ],
+      });
+
+      if (isMounted) {
+        setHighlighter(instance);
+      }
+    };
+
+    loadHighlighter();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const loadedLanguages = useMemo(() => {
+    if (!highlighter) return new Set<string>();
+    return new Set(highlighter.getLoadedLanguages());
+  }, [highlighter]);
+
   return (
     <div className={cn("prose", className)}>
       <ReactMarkdown
@@ -42,22 +102,27 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
             const codeString = String(children).replace(/\n$/, "");
 
             if (match) {
+              const rawLang = match[1].toLowerCase();
+              const normalizedLang = languageAliases[rawLang] ?? rawLang;
+              const canHighlight = highlighter && loadedLanguages.has(normalizedLang);
+
               return (
                 <div className="relative group">
                   <CopyButton code={codeString} />
-                  <SyntaxHighlighter
-                    style={coldarkDark}
-                    language={match[1] === "nanyx" ? "rust" : match[1]}
-                    PreTag="div"
-                    customStyle={{
-                      margin: 0,
-                      borderRadius: "0.625rem",
-                      fontSize: "0.875rem",
-                      padding: "1rem",
-                    }}
-                  >
-                    {codeString}
-                  </SyntaxHighlighter>
+                  {canHighlight ? (
+                    <div
+                      dangerouslySetInnerHTML={{
+                        __html: highlighter.codeToHtml(codeString, {
+                          lang: normalizedLang,
+                          theme: "github-dark",
+                        }),
+                      }}
+                    />
+                  ) : (
+                    <pre className="rounded-lg p-4 mb-4 overflow-x-auto text-sm border bg-[hsl(var(--code-bg))] border-[hsl(var(--code-border))]">
+                      <code>{codeString}</code>
+                    </pre>
+                  )}
                 </div>
               );
             }

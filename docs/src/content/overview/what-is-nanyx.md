@@ -22,13 +22,13 @@ It compiles to WASM, making it ideal for web development, but it's also great fo
 
 ### Pipeline Operator
 The `\` operator lets you chain transformations in a readable, left-to-right manner:
-```nyx
+```nanyx
 data \parse \validate \transform \save
 ```
 
 ### Context-Based Effects
 Manage side effects explicitly through contexts, providing algebraic effect handlers without the complexity:
-```nyx
+```nanyx
 context Console = (println: string -> ())
 def greet: <Console> string -> () = { name ->
   println("Hello, {name}!")
@@ -37,7 +37,7 @@ def greet: <Console> string -> () = { name ->
 
 ### Powerful Pattern Matching
 Exhaustive pattern matching on records, tag unions, literals, and more:
-```nyx
+```nanyx
 match result
   | #ok(value) -> process(value)
   | #error(msg) -> logError(msg)

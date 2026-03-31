@@ -10,7 +10,7 @@ Nanyx provides a `json` module for encoding and decoding JSON.
 
 ## Decoding JSON
 
-```nyx
+```nanyx
 import json
 
 type User = (name: string, age: int)
@@ -33,7 +33,7 @@ def main = {
 
 ## Encoding JSON
 
-```nyx
+```nanyx
 def jsonString = json.toString(
   json.object([
     ("name", json.string("Alice"))
@@ -46,7 +46,7 @@ def jsonString = json.toString(
 
 ## Working with Arrays
 
-```nyx
+```nanyx
 def usersJson = json.toString(
   json.array(users \map { user ->
     json.object([

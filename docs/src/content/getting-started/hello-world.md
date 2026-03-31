@@ -30,7 +30,7 @@ hello_world/
 
 Open `src/hello_world.nyx` and you'll see:
 
-```nyx
+```nanyx
 module main
 
 def main = {

@@ -11,7 +11,7 @@ Modules in Nanyx help organize code into logical units. They provide namespaces 
 
 Every Nanyx file optionally starts with a module declaration. If you omit it, the module name defaults to the file name:
 
-```nyx
+```nanyx
 module main
 
 def main = {
@@ -23,7 +23,7 @@ def main = {
 
 Module names should be camel-cased and reflect the purpose of the code:
 
-```nyx
+```nanyx
 import userManagement
 import dataProcessing  
 import httpClient
@@ -33,7 +33,7 @@ import httpClient
 
 Import other modules to use their exports:
 
-```nyx
+```nanyx
 module main
 
 -- Notice how we can import multiple modules in a single statement
@@ -50,7 +50,7 @@ def main = {
 
 If we're writing a quick app we can import file paths directly:
 
-```nyx
+```nanyx
 -- If importing a file the module name must be qualified
 import "./utils" as utils
 
@@ -63,7 +63,7 @@ def main = {
 
 Importing packages installed from a package manager:
 
-```nyx
+```nanyx
 -- Notice how the package name and module name are separated by a slash
 import (
   web/http
@@ -75,7 +75,7 @@ import (
 
 Access module members with the module name:
 
-```nyx
+```nanyx
 import nanyx/math as m
 
 def result = m.sqrt(16)  -- 4.0
@@ -86,7 +86,7 @@ def pi = m.pi
 
 Import specific items from a module:
 
-```nyx
+```nanyx
 import nanyx/math as (sqrt, pi, cos)
 
 def result = sqrt(16)  -- No need for Math. prefix
@@ -96,7 +96,7 @@ def result = sqrt(16)  -- No need for Math. prefix
 
 Give modules shorter names:
 
-```nyx
+```nanyx
 import DataProcessing as DP
 
 def result = DP.process(data)
@@ -106,7 +106,7 @@ def result = DP.process(data)
 
 By default, all top-level definitions are exported:
 
-```nyx
+```nanyx
 module utils
 
 -- Exported (public)
@@ -120,7 +120,7 @@ def triple: int -> int = { x -> x * 3 }
 
 Use `export` to make a type or definition available to other modules.
 
-```nyx
+```nanyx
 module Utils
 
 -- Public
@@ -142,7 +142,7 @@ def transform: Data -> Data = { data ->
 
 Organize related functionality:
 
-```nyx
+```nanyx
 module collections.list
 
 export def map: (list(a), (a -> b)) -> list(b) = { ... }
@@ -150,7 +150,7 @@ export def filter: (list(a), (a -> bool)) -> list(a) = { ... }
 export def fold: (list(a), b, (b, a) -> b) -> b = { ... }
 ```
 
-```nyx
+```nanyx
 module Collections.Map
 
 def empty: map(k, v) = { ... }
@@ -162,7 +162,7 @@ def lookup: (map(k, v), k) -> Option(v) = { ... }
 
 Create hierarchies with dot notation:
 
-```nyx
+```nanyx
 module users.validation
 
 def validateEmail: string -> Result(Email, ValidationError) = { ... }
@@ -173,7 +173,7 @@ def validateAge: int -> Result(Age, ValidationError) = { ... }
 
 Export items from other modules:
 
-```nyx
+```nanyx
 module Collections
 
 -- Re-export from sub-modules
@@ -185,7 +185,7 @@ export Collections.Map (empty, insert, lookup)
 
 Define constants at module level:
 
-```nyx
+```nanyx
 module config
 
 def appName = "MyApp"
@@ -205,7 +205,7 @@ Avoid circular module dependencies. If module A imports B, then B cannot import 
 
 Instead, extract shared code to a third module:
 
-```nyx
+```nanyx
 -- Bad: circular dependency
 module A
 import B  -- A imports B
@@ -228,7 +228,7 @@ import Shared
 
 Nanyx's standard library appears as a package called `nanyx` and is organized into modules:
 
-```nyx
+```nanyx
 import (
   nanyx/list
   nanyx/map
@@ -242,7 +242,7 @@ import (
 
 ## Example: User Management Module
 
-```nyx
+```nanyx
 module userManagement
 
 export type User = (
@@ -290,7 +290,7 @@ def generateId: [Random] () -> UserId = {
 
 ## Using Modules
 
-```nyx
+```nanyx
 module myApp
 
 import (

@@ -11,7 +11,7 @@ Functions are first-class values in Nanyx, meaning they can be passed as argumen
 
 All functions in Nanyx take exactly one argument and return exactly one result. The function type signature is `a -> b`, where `a` is the input type and `b` is the output type.
 
-```nyx
+```nanyx
 -- Simple function
 def double: int -> int = { x -> x * 2 }
 
@@ -23,7 +23,7 @@ def result = double(21)  -- 42
 
 Since all functions take one argument, multi-parameter functions actually take a record (tuple):
 
-```nyx
+```nanyx
 def add: (int, int) -> int = { x, y -> x + y }
 -- The type (int, int) -> int means: takes a record of two ints, returns an int
 
@@ -35,7 +35,7 @@ def sum = add(5, 10)  -- 15
 
 The `()` type (unit) represents the absence of a meaningful value. It's used for functions that don't take input or don't return output:
 
-```nyx
+```nanyx
 -- No meaningful return value
 def printHello: () -> () = {
   println("Hello")
@@ -52,7 +52,7 @@ def getMessage: () -> string = {
 
 Lambda expressions (also called anonymous functions) are created with braces:
 
-```nyx
+```nanyx
 -- Explicit lambda
 def print1 = { print("1") }
 
@@ -67,7 +67,7 @@ def names = data \map { item -> item.name }
 
 Nanyx provides convenient shorthand syntax for common lambda patterns:
 
-```nyx
+```nanyx
 -- Property access
 def names = users \map { .name }
 -- Equivalent to: users \map { user -> user.name }
@@ -88,7 +88,7 @@ def adults = users \filter { .age > 18 }
 
 Functions that take other functions as arguments or return functions are called higher-order functions:
 
-```nyx
+```nanyx
 -- Takes a function as an argument
 def apply: ((a -> b), a) -> b = { f, x -> f(x) }
 
@@ -105,7 +105,7 @@ def result = add5(10)  -- 15
 
 Functions can pattern match directly on their arguments:
 
-```nyx
+```nanyx
 -- Simple pattern matching function
 rec sumList: list(int) -> int = {
   | [] -> 0
@@ -131,7 +131,7 @@ def classify: int -> string = {
 
 Use the `rec` keyword to define recursive functions:
 
-```nyx
+```nanyx
 rec factorial: int -> int = { n ->
   if n <= 1
     -> 1
@@ -148,7 +148,7 @@ rec length: list(a) -> int = {
 
 Functions can be composed to create new functions:
 
-```nyx
+```nanyx
 def compose: ((b -> c), (a -> b)) -> (a -> c) = { f, g ->
   { x -> f(g(x)) }
 }
@@ -164,7 +164,7 @@ def result = addOneThenDouble(5)  -- 12
 
 While Nanyx functions naturally take one argument, you can create curried-style functions:
 
-```nyx
+```nanyx
 def add: int -> (int -> int) = { x ->
   { y -> x + y }
 }
@@ -177,7 +177,7 @@ def result = add5(10)  -- 15
 
 With records, you can simulate partial application:
 
-```nyx
+```nanyx
 def process: (config: Config, data: Data) -> Result = { config, data ->
   -- processing logic
 }
@@ -190,7 +190,7 @@ def processWithConfig = { data -> process(myConfig, data) }
 
 While type inference works well, annotating function signatures is recommended for exported functions:
 
-```nyx
+```nanyx
 -- Without annotation (inferred)
 def add = { x, y -> x + y }
 
@@ -204,7 +204,7 @@ Type annotations serve as documentation and help catch errors early.
 
 Functions without effects (no contexts) are pure - they always return the same output for the same input:
 
-```nyx
+```nanyx
 -- Pure function
 def add: (int, int) -> int = { x, y -> x + y }
 
@@ -218,7 +218,7 @@ def greet: <Console> string -> () = { name ->
 
 ### Map Implementation
 
-```nyx
+```nanyx
 rec map: (list(a), (a -> b)) -> list(b) = { xs, f ->
   match xs
     | [] -> []
@@ -228,7 +228,7 @@ rec map: (list(a), (a -> b)) -> list(b) = { xs, f ->
 
 ### Filter Implementation
 
-```nyx
+```nanyx
 rec filter: (list(a), (a -> bool)) -> list(a) = { xs, predicate ->
   match xs
     | [] -> []
@@ -241,7 +241,7 @@ rec filter: (list(a), (a -> bool)) -> list(a) = { xs, predicate ->
 
 ### Fold Implementation
 
-```nyx
+```nanyx
 rec fold: (list(a), b, (b, a) -> b) -> b = { xs, acc, f ->
   match xs
     | [] -> acc
@@ -257,7 +257,7 @@ the types of its argument(s)
 The simplest polymorphic function is probably the identity function, i.e.
 a function that does nothing other than return its input
 
-```nyx
+```nanyx
 def id = { x -> x }
 ```
 
@@ -265,14 +265,14 @@ Thanks to type inference we don't have to write type annotations for this
 function or give it a specification, but if we wanted to it would look like
 this:
 
-```nyx
+```nanyx
 def id: α -> α = { x -> x }
 ```
 
 The lowercase `a`, when used in a type position, is a type variable (equivalent
 to the concept of 'generics' in other languages). 
 
-```nyx
+```nanyx
 def head : list(α) -> #some(α) | #emptyList  = { 
   | []      -> #emptyList
   | [x, ..] -> #some(x) 

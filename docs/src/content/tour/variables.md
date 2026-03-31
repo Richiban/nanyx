@@ -10,7 +10,7 @@ In Nanyx, variables are immutable by default. You declare them using the `def` k
 
 ## Def Bindings
 
-```nyx
+```nanyx
 def name = "Nanyx"
 def version = 4
 def pi = 3.14159
@@ -18,7 +18,7 @@ def pi = 3.14159
 
 Once a value is bound, it cannot be reassigned:
 
-```nyx
+```nanyx
 def x = 10
 x = 20  -- ✗ Compile error: cannot reassign immutable variable
 ```
@@ -27,7 +27,7 @@ x = 20  -- ✗ Compile error: cannot reassign immutable variable
 
 When you need mutation, use the `mut` keyword and `set` for updates:
 
-```nyx
+```nanyx
 mut counter = 0
 set counter++  -- ✓ This works
 set counter = counter + 1  -- Also works
@@ -39,7 +39,7 @@ set counter = counter + 1  -- Also works
 
 Nanyx can infer types, but you can add annotations for clarity:
 
-```nyx
+```nanyx
 def name: string = "Nanyx"
 def count: int = 42
 def ratio: float = 0.75
@@ -50,7 +50,7 @@ def active: bool = true
 
 A block expression returns the value of its last expression:
 
-```nyx
+```nanyx
 def result =
   def a = 10
   def b = 20

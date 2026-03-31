@@ -14,42 +14,42 @@ The `string` module provides functions for working with UTF-8 strings.
 
 Returns the number of grapheme clusters in the string.
 
-```nyx
+```nanyx
 string.length("hello")
 -- 5
 ```
 
 ### `uppercase: string -> string`
 
-```nyx
+```nanyx
 string.uppercase("hello")
 -- "HELLO"
 ```
 
 ### `lowercase: string -> string`
 
-```nyx
+```nanyx
 string.lowercase("HELLO")
 -- "hello"
 ```
 
 ### `split: (string, on: string) -> list(string)`
 
-```nyx
+```nanyx
 string.split("a,b,c", on = ",")
 -- ["a", "b", "c"]
 ```
 
 ### `contains: (string, string) -> bool`
 
-```nyx
+```nanyx
 string.contains("hello world", "world")
 -- true
 ```
 
 ### `replace: (string, pattern: string, with: string) -> string`
 
-```nyx
+```nanyx
 string.replace("hello world", pattern = "world", with = "Nanyx")
 -- "hello Nanyx"
 ```
@@ -58,14 +58,14 @@ string.replace("hello world", pattern = "world", with = "Nanyx")
 
 Removes leading and trailing whitespace.
 
-```nyx
+```nanyx
 string.trim("  hello  ")
 -- "hello"
 ```
 
 ### `concat: list(string) -> string`
 
-```nyx
+```nanyx
 string.concat(["Hello", ", ", "World"])
 -- "Hello, World"
 ```

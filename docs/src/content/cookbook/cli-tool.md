@@ -17,7 +17,7 @@ cd word_counter
 
 ## The Code
 
-```nyx
+```nanyx
 module main
 
 import file

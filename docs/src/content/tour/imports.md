@@ -8,7 +8,7 @@ order: 5
 
 Importing packages installed from a package manager:
 
-```nyx
+```nanyx
 -- Notice how the package name and module name are separated by a slash
 import (
   web/http
@@ -20,7 +20,7 @@ import (
 
 For quick scripts or local utilities, you can import directly from a file path. When importing a file path, use an alias to qualify the module name.
 
-```nyx
+```nanyx
 -- If importing a file the module name must be qualified
 import "./utils" as utils
 
@@ -33,7 +33,7 @@ def main = {
 
 Access module members with the module name:
 
-```nyx
+```nanyx
 import nanyx/math as m
 
 def result = m.sqrt(16)  -- 4.0
@@ -44,7 +44,7 @@ def pi = m.pi
 
 Import specific items from a module by deconstructuring the module into the desired members:
 
-```nyx
+```nanyx
 import nanyx/math as (sqrt, pi, cos)
 
 def result = sqrt(16)  -- No need for Math. prefix
@@ -54,7 +54,7 @@ def result = sqrt(16)  -- No need for Math. prefix
 
 Give modules shorter names:
 
-```nyx
+```nanyx
 import dataProcessing as dp
 
 def result = dp.process(data)
@@ -64,7 +64,7 @@ def result = dp.process(data)
 
 By default, all definitions are accessible only in their own scope. Use `export` to make a type or definition available to other modules.
 
-```nyx
+```nanyx
 module Utils
 
 -- Public
@@ -86,7 +86,7 @@ def transform: Data -> Data = { data ->
 
 Organize related functionality:
 
-```nyx
+```nanyx
 module collections.list
 
 export def map: (list(a), (a -> b)) -> list(b) = { ... }
@@ -94,7 +94,7 @@ export def filter: (list(a), (a -> bool)) -> list(a) = { ... }
 export def fold: (list(a), b, (b, a) -> b) -> b = { ... }
 ```
 
-```nyx
+```nanyx
 module collections.map
 
 def empty: map(k, v) = { ... }
@@ -106,7 +106,7 @@ def lookup: (map(k, v), k) -> Option(v) = { ... }
 
 Create hierarchies with dot notation:
 
-```nyx
+```nanyx
 module users.validation
 
 def validateEmail: string -> Result(Email, ValidationError) = { ... }
@@ -117,7 +117,7 @@ def validateAge: int -> Result(Age, ValidationError) = { ... }
 
 When writing a package for publication, individual modules can be exported too. It is common to re-export items from other modules:
 
-```nyx
+```nanyx
 -- Export the collections module outside the package
 export module collections
 
@@ -132,7 +132,7 @@ export collections.map (empty, insert, lookup)
 
 Define constants at module level:
 
-```nyx
+```nanyx
 module config
 
 def appName = "MyApp"
@@ -152,7 +152,7 @@ Avoid circular module dependencies. If module A imports B, then B cannot import 
 
 Instead, extract shared code to a third module:
 
-```nyx
+```nanyx
 -- Bad: circular dependency
 module a
 import b  -- A imports B
@@ -175,7 +175,7 @@ import shared
 
 Nanyx's standard library appears as a package called `nanyx` and is organized into modules:
 
-```nyx
+```nanyx
 import (
   nanyx/list
   nanyx/map
@@ -189,7 +189,7 @@ import (
 
 ## Example: User Management Module
 
-```nyx
+```nanyx
 module userManagement
 
 export type User = (
@@ -237,7 +237,7 @@ def generateId: [Random] () -> UserId = {
 
 ## Using Modules
 
-```nyx
+```nanyx
 module myApp
 
 import (

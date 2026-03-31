@@ -12,7 +12,7 @@ Nanyx uses tag unions for error handling — no exceptions!
 
 In Nanyx, functions that can fail return a result type using tag unions:
 
-```nyx
+```nanyx
 -- A function that might fail
 def getCustomer: CustomerId -> #ok(Customer) | #error(#notFound | #databaseError)
   = { id -> ... }
@@ -20,7 +20,7 @@ def getCustomer: CustomerId -> #ok(Customer) | #error(#notFound | #databaseError
 
 Handle the result with pattern matching:
 
-```nyx
+```nanyx
 match getCustomer(someId)
   | #ok(customer) -> println("Found: {customer.name}")
   | #error(#notFound) -> println("Customer not found")
@@ -31,7 +31,7 @@ match getCustomer(someId)
 
 Use `handle` with `try` to short-circuit on errors:
 
-```nyx
+```nanyx
 def result = handle {
   def customer = try getCustomer("someid")
   def latestOrder = try getLatestOrder(customer)
@@ -46,7 +46,7 @@ If any step returns an error, the function immediately returns that error.
 
 For values that might not exist, use the `#some` / `#none` pattern:
 
-```nyx
+```nanyx
 def findUser: int -> #some(User) | #none = { id ->
   match id
     | 1 -> #some(User("Alice"))
@@ -58,7 +58,7 @@ def findUser: int -> #some(User) | #none = { id ->
 
 The `except` keyword is similar to `match` but doesn't require exhaustive handling. Unhandled values are returned:
 
-```nyx
+```nanyx
 def g = {
   def f: () -> #ok(int) | #error(#notFound) = ...
   
@@ -71,7 +71,7 @@ def g = {
 
 ## Chaining with Pipelines
 
-```nyx
+```nanyx
 input
   \parseInt
   \result.map { * 2 }

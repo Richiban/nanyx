@@ -159,7 +159,7 @@ To extend the parser, consider adding:
 ## Example
 
 Input:
-```nyx
+```nanyx
 module Test
 
 def message = "Hello world"

@@ -18,7 +18,7 @@ nanyx add http
 
 ## The Code
 
-```nyx
+```nanyx
 module main
 
 import http/server

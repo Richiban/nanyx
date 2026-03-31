@@ -14,7 +14,7 @@ The `io` module provides functions for reading from and writing to standard I/O.
 
 Prints a string followed by a newline to stdout.
 
-```nyx
+```nanyx
 println("Hello, World!")
 ```
 
@@ -22,7 +22,7 @@ println("Hello, World!")
 
 Prints a string to stdout without a trailing newline.
 
-```nyx
+```nanyx
 print("Enter your name: ")
 ```
 
@@ -30,7 +30,7 @@ print("Enter your name: ")
 
 Prints a debug representation of any value and returns it. Useful for inspecting values in pipelines.
 
-```nyx
+```nanyx
 [1, 2, 3]
   \list.map { * 2 }
   \dbg
@@ -41,7 +41,7 @@ Prints a debug representation of any value and returns it. Useful for inspecting
 
 Reads a line of input from stdin.
 
-```nyx
+```nanyx
 match readLine()
   | #ok(line) -> println("You said: {line}")
   | #error(_) -> println("Failed to read input")
