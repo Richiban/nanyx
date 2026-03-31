@@ -42,6 +42,14 @@ def main = {
 }
 ```
 
+You can also load a context for a single expression with `use ... in`:
+
+```nanyx
+def result = use Console(println = hostPrint) in {
+  println("Hello from a scoped context")
+}
+```
+
 ## Contexts Are Part of the Type
 
 A value's context requirement is part of its type. You can annotate just the contexts and let the rest infer:
@@ -64,6 +72,10 @@ def readAndPrintFile
     println(contents)
   }
 ```
+
+## Console by default
+
+The program entrypoint runs in `Console`, which is why `println` is available in `main` without extra setup.
 
 ## Contexts as Typeclasses
 

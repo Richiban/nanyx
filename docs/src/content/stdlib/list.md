@@ -1,7 +1,7 @@
 ---
 title: "list"
 description: "Operations on lists"
-order: 2
+order: 3
 ---
 
 # list

@@ -1,14 +1,16 @@
 ---
-title: "Error Handling"
+title: "Error handling"
 description: "Working with Result and Option types"
-order: 6
+order: 16
 ---
 
-# Error Handling
+# Error handling
+
+Nanyx distinguishes between errors (returned values) and exceptions (thrown, but not caught). The language encourages explicit errors via tag unions so callers must handle failure cases.
 
 Nanyx uses tag unions for error handling — no exceptions!
 
-## Result Types
+## Result types
 
 In Nanyx, functions that can fail return a result type using tag unions:
 
@@ -27,7 +29,7 @@ match getCustomer(someId)
   | #error(#databaseError) -> println("Database error")
 ```
 
-## The `handle` and `try` Keywords
+## The `handle` and `try` keywords
 
 Use `handle` with `try` to short-circuit on errors:
 
@@ -42,7 +44,7 @@ def result = handle {
 
 If any step returns an error, the function immediately returns that error.
 
-## Option Types
+## Option types
 
 For values that might not exist, use the `#some` / `#none` pattern:
 
@@ -54,7 +56,7 @@ def findUser: int -> #some(User) | #none = { id ->
 }
 ```
 
-## The `except` Keyword
+## The `except` keyword
 
 The `except` keyword is similar to `match` but doesn't require exhaustive handling. Unhandled values are returned:
 

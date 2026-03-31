@@ -78,6 +78,18 @@ async.apply({ builder ->
 })
 ```
 
+## Workflow keywords
+
+Builders can expose custom keywords by implementing special methods. Common examples include `yield`, `await`, `try`, and `use`.
+
+```nanyx
+def async = (
+  @customKeywordType(#bind)
+  def await(m, f) ->
+    ...
+)
+```
+
 ## Error and Option Chaining
 
 A workflow can provide a `try` keyword to short-circuit on errors. This is useful for `Result` or `Option` chaining.
@@ -107,6 +119,8 @@ def result = query {
   select customer.name, order.total
 }
 ```
+
+Workflows are also how HTML-style builders or configuration DSLs are implemented.
 
 ## When to Use Workflows
 

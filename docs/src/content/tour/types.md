@@ -62,6 +62,37 @@ def alice: Person = (
 )
 ```
 
+## Structural typing
+
+Record types are structural, meaning compatibility is based on shape rather than explicit inheritance.
+
+```nanyx
+type Named = (name: string)
+type Person = (name: string)
+
+def john: Named = Person("John")
+```
+
+You can combine records with intersections:
+
+```nanyx
+type Person = Named & (age: int)
+```
+
+## Optional fields
+
+Records can contain optional members:
+
+```nanyx
+type Person = (name: string; petsName?: string)
+```
+
+Optional fields can also be modeled explicitly with tag unions if you need stricter control.
+
+## Top and bottom types
+
+`any` is the top type (accepts any value), and `undefined` is the bottom type (no values). These appear when you build generic or unreachable code paths.
+
 ## Tuple Types
 
 Tuples are anonymous records with numbered fields:

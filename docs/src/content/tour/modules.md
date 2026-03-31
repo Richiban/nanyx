@@ -1,13 +1,13 @@
 ---
 title: "Modules"
 description: "Organizing code with modules"
-order: 5
+order: 12
 ---
 # Modules
 
 Modules in Nanyx help organize code into logical units. They provide namespaces for definitions and control visibility.
 
-## Module Declaration
+## Module declaration
 
 Every Nanyx file optionally starts with a module declaration. If you omit it, the module name defaults to the file name:
 
@@ -19,7 +19,9 @@ def main = {
 }
 ```
 
-## Module Names
+## Module names
+
+By default, a module name is derived from the file path relative to the compilation root. You can override this with a `module` declaration.
 
 Module names should be camel-cased and reflect the purpose of the code:
 
@@ -29,7 +31,7 @@ import dataProcessing
 import httpClient
 ```
 
-## Importing Modules
+## Importing modules
 
 Import other modules to use their exports:
 
@@ -71,7 +73,7 @@ import (
 )
 ```
 
-## Qualified Imports
+## Qualified imports
 
 Access module members with the module name:
 
@@ -82,7 +84,7 @@ def result = m.sqrt(16)  -- 4.0
 def pi = m.pi
 ```
 
-## Selective Imports
+## Selective imports
 
 Import specific items from a module:
 
@@ -92,7 +94,7 @@ import nanyx/math as (sqrt, pi, cos)
 def result = sqrt(16)  -- No need for Math. prefix
 ```
 
-## Import Aliases
+## Import aliases
 
 Give modules shorter names:
 
@@ -116,7 +118,15 @@ def double: int -> int = { x -> x * 2 }
 def triple: int -> int = { x -> x * 3 }
 ```
 
-## Public vs private Definitions
+You can also export a module itself:
+
+```nanyx
+export module myModule
+
+export def message = "Hello world"
+```
+
+## Public vs private definitions
 
 Use `export` to make a type or definition available to other modules.
 
@@ -138,7 +148,7 @@ def transform: Data -> Data = { data ->
 }
 ```
 
-## Module Structure
+## Module structure
 
 Organize related functionality:
 
@@ -158,7 +168,17 @@ def insert: (map(k, v), k, v) -> map(k, v) = { ... }
 def lookup: (map(k, v), k) -> Option(v) = { ... }
 ```
 
-## Nested Modules
+## Nested modules
+
+You can declare module blocks inside a file. The block name is appended to the outer module name:
+
+```nanyx
+module MyModule
+
+module Functions ->
+  export def f(x) -> x * 2
+  export def g(x) -> x ** 2
+```
 
 Create hierarchies with dot notation:
 
@@ -181,7 +201,7 @@ export Collections.List (map, filter, fold)
 export Collections.Map (empty, insert, lookup)
 ```
 
-## Module-Level Constants
+## Module-level constants
 
 Define constants at module level:
 
@@ -199,7 +219,7 @@ def databaseConfig = (
 )
 ```
 
-## Circular Dependencies
+## Circular dependencies
 
 Avoid circular module dependencies. If module A imports B, then B cannot import A.
 
@@ -224,7 +244,7 @@ module B
 import Shared
 ```
 
-## Standard Library Modules
+## Standard library modules
 
 Nanyx's standard library appears as a package called `nanyx` and is organized into modules:
 
@@ -240,7 +260,7 @@ import (
 )
 ```
 
-## Example: User Management Module
+## Example: User management module
 
 ```nanyx
 module userManagement

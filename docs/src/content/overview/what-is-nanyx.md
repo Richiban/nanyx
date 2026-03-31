@@ -1,7 +1,7 @@
 ---
 title: "What is Nanyx?"
-description: "Write your first Nanyx program"
-order: 3
+description: "An overview of Nanyx"
+order: 1
 ---
 
 # What is Nanyx?
@@ -18,15 +18,15 @@ It compiles to WASM, making it ideal for web development, but it's also great fo
 - **Type inference**: Rarely write types, but get strong static guarantees.
 - **Pattern matching**: Exhaustive matching on records, tag unions, and more.
 
-## Key Features at a Glance
+## Key features at a glance
 
-### Pipeline Operator
+### Pipeline operator
 The `\` operator lets you chain transformations in a readable, left-to-right manner:
 ```nanyx
 data \parse \validate \transform \save
 ```
 
-### Context-Based Effects
+### Context-based effects
 Manage side effects explicitly through contexts, providing algebraic effect handlers without the complexity:
 ```nanyx
 context Console = (println: string -> ())
@@ -35,7 +35,7 @@ def greet: <Console> string -> () = { name ->
 }
 ```
 
-### Powerful Pattern Matching
+### Powerful pattern matching
 Exhaustive pattern matching on records, tag unions, literals, and more:
 ```nanyx
 match result
@@ -43,10 +43,26 @@ match result
   | #error(msg) -> logError(msg)
 ```
 
-### Strong Static Typing with Inference
+### Strong static typing with inference
 Full Hindley-Milner type inference means you rarely need to write type annotations, but you can when it improves clarity.
 
-## Philosophy
+## Goals and philosophy
+
+Nanyx is designed with a few guiding goals:
+
+- Be familiar to developers coming from Python or TypeScript, without losing the language's identity.
+- Keep syntax minimal and readable.
+- Stay strongly typed with inference, so you write fewer annotations.
+- Remain gradually typed: code can run even when there are type errors, but warnings are surfaced.
+- Prefer consistency over special cases.
+- Optimize for expressiveness with fewer features (the "min-gen" principle).
+- Inform but do not block: the compiler warns rather than prevents iteration.
+
+This philosophy shows up in error handling. Functions return errors explicitly via tag unions, and the compiler forces you to handle them.
+
+## Productivity focus
+
+Nanyx emphasizes developer experience: rich editor tooling, clear error messages, and fast feedback loops.
 
 Nanyx is built on the principle that code should be **clear, composable, and correct**. It takes inspiration from languages like F#, Haskell, OCaml, and Elm while maintaining its own unique identity.
 

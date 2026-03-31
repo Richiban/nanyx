@@ -1,7 +1,7 @@
 ---
 title: "string"
 description: "String manipulation functions"
-order: 3
+order: 4
 ---
 
 # string

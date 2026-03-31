@@ -1,9 +1,9 @@
 ---
 title: "Functions"
 description: "Defining and calling functions"
-order: 3
+order: 4
 ---
-# Functions and Lambdas
+# Functions and lambdas
 
 Functions are first-class values in Nanyx, meaning they can be passed as arguments, returned from other functions, and stored in data structures.
 
@@ -82,6 +82,47 @@ def incremented = numbers \map { + 1 }
 -- Comparison operators
 def adults = users \filter { .age > 18 }
 -- Equivalent to: users \filter { user -> user.age > 18 }
+```
+
+## Optional parameters
+
+Prefix a parameter name with `?` to make it optional. The compiler wraps the type in `Option` and inserts `#none` when omitted.
+
+```nanyx
+def printMessage = { ?message ->
+  message
+  \match
+    | #nil -> "You didn't say anything"
+    | #some, msg -> "You said -> {msg}"
+  \println
+}
+```
+
+Default values also make parameters optional while giving you a non-optional value inside the function:
+
+```nanyx
+def printResults(left = "left", middle, right = "right") ->
+  print "{left}, {middle}, {right}"
+```
+
+## Named parameters
+
+If you name parameters in the signature, callers can pass a record with matching fields:
+
+```nanyx
+def replace: (string, replace: string, with: string) -> string = { s, o, r -> ??? }
+
+replace("Hello world", replace = "world", with = "Nanyx")
+```
+
+## Callable values
+
+Any value with a type `a -> b` can be called like a function, including dictionaries and strings:
+
+```nanyx
+def dict: string -> string = ["Hello" => "Bonjour", "Goodbye" => "Au revoir"]
+
+dict("Hello") -- "Bonjour"
 ```
 
 ## Higher-Order Functions
