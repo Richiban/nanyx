@@ -1,4 +1,4 @@
-import { overviewPages, gettingStartedPages, tourPages, stdlibPages, cookbookPages } from "./getting-started";
+import { overviewPages, gettingStartedPages, tourPages, advancedPages, stdlibPages, cookbookPages } from "./getting-started";
 import type { DocPage } from "./getting-started";
 
 export interface NavSection {
@@ -26,6 +26,12 @@ export const navSections: NavSection[] = [
     basePath: "/docs/tour",
     icon: "Map",
     pages: tourPages,
+  },
+  {
+    title: "Advanced",
+    basePath: "/docs/advanced",
+    icon: "Sparkles",
+    pages: advancedPages,
   },
   {
     title: "Standard Library",
