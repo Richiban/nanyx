@@ -4,8 +4,6 @@ description: "Powerful control flow with match expressions"
 order: 6
 ---
 
-# Pattern matching
-
 Pattern matching is one of Nanyx's most powerful features. The `match` expression lets you match values against patterns and destructure data.
 
 ## Basic Matching

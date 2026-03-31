@@ -4,8 +4,6 @@ description: "Object-style programming without inheritance"
 order: 2
 ---
 
-# Classes
-
 Nanyx does not have classes or inheritance, but you can model objects and encapsulated state using records and closures.
 
 ## Constructor-style records

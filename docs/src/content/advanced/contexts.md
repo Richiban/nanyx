@@ -4,8 +4,6 @@ description: "Implicit parameters for effects and typeclasses"
 order: 2
 ---
 
-# Contexts
-
 Contexts are implicit parameters in Nanyx. A function can declare the contexts it needs, and the members of those contexts become available inside its body. This is how Nanyx models effects, state, and typeclass-style constraints.
 
 ## Declaring a Context

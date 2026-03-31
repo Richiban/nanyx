@@ -4,8 +4,6 @@ description: "Scoped mutation with the memory context"
 order: 5
 ---
 
-# Memory
-
 Mutation in Nanyx is available but bounded. You must open a `memory` context to create mutable variables or use mutable collections. This allows internal mutation while keeping external interfaces pure.
 
 ## Local mutation

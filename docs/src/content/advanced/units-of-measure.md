@@ -4,8 +4,6 @@ description: "Compile-time units for numbers"
 order: 7
 ---
 
-# Units of measure
-
 Nanyx supports units of measure for numeric types, allowing you to express time, sizes, and rates safely.
 
 ```nanyx

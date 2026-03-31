@@ -4,8 +4,6 @@ description: "Mapping #some across unions"
 order: 9
 ---
 
-# Option-like types
-
 Nanyx can treat any tag union that includes `#some(a)` as “option-like.” That lets you write a single `map` that works for options, results, and custom unions by preserving all other tags.
 
 ## The core idea

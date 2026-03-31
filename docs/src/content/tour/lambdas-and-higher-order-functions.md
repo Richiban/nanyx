@@ -1,10 +1,8 @@
 ---
-title: "Lambdas and higher-order functions"
+title: "Higher-order functions"
 description: "Passing and returning functions"
 order: 5
 ---
-
-# Lambdas and higher-order functions
 
 A higher-order function takes a function as an argument or returns one. Nanyx treats functions as values, so higher-order programming is idiomatic.
 

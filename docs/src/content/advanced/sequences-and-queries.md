@@ -4,8 +4,6 @@ description: "Seq vs series and querying patterns"
 order: 6
 ---
 
-# Sequences and queries
-
 Nanyx has two enumerable abstractions: `seq(a)` and `series(a)`.
 
 - A `seq` can be infinite (lazy or generated).

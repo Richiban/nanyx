@@ -4,8 +4,6 @@ description: "Readable left-to-right composition"
 order: 9
 ---
 
-# Piping
-
 Nanyx supports a pipe operator that sends the left value into the first argument of a function: `x \f(...)`. This makes pipelines easy to read and compose.
 
 ```nanyx

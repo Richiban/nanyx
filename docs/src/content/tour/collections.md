@@ -4,8 +4,6 @@ description: "Lists, maps, sets, and mutability"
 order: 8
 ---
 
-# Collections
-
 Collections are immutable by convention in Nanyx. Mutable versions live in `nanyx/collections/mut` and use a `Mut` prefix (for example, `MList` vs `List`).
 
 ## Immutable vs mutable

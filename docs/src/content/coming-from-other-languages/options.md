@@ -4,8 +4,6 @@ description: "Using explicit tags instead of a generic Maybe"
 order: 1
 ---
 
-# Why we avoid a single Option type
-
 Many languages use a null reference (`null`, `nil`, `None`, `undefined`) to represent missing data, the downside of which is well-known. What makes Nanyx different is that it also doesn't have a single, universal Option/Maybe type. Instead, it encourages explicit tag unions to make missing data precise and composable.
 
 ## Prefer results for failing operations

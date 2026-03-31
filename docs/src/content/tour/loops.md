@@ -4,8 +4,6 @@ description: "Iterating with for"
 order: 10
 ---
 
-# Loops
-
 Nanyx uses the `for` keyword to iterate. The iterable comes first, which keeps loops readable and supports pattern matching on the loop variable.
 
 ## Basic loops

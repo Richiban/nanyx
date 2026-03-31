@@ -3,7 +3,6 @@ title: "Types"
 description: "Nanyx's type system"
 order: 2
 ---
-# Types
 
 Nanyx features a strong static type system with Hindley-Milner type inference. Types are descriptive and readable, and you can use record types for structure and tag unions for variants.
 

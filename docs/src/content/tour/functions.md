@@ -3,7 +3,6 @@ title: "Functions"
 description: "Defining and calling functions"
 order: 4
 ---
-# Functions and lambdas
 
 Functions are first-class values in Nanyx, meaning they can be passed as arguments, returned from other functions, and stored in data structures.
 

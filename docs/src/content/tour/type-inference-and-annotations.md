@@ -4,8 +4,6 @@ description: "How Nanyx infers types and when to annotate"
 order: 3
 ---
 
-# Type inference and annotations
-
 Type inference is foundational in Nanyx. The compiler infers types from values and usage, but annotations are recommended for exported definitions.
 
 ## Inference by value

@@ -4,8 +4,6 @@ description: "Working with ranges and sequences"
 order: 11
 ---
 
-# Ranges
-
 Ranges use the `x..y` syntax and are a form of sequence. Bounded ranges are finite (`series`), while unbounded ranges are potentially infinite (`seq`).
 
 ```nanyx

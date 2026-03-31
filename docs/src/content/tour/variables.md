@@ -4,8 +4,6 @@ description: "Def bindings and immutability in Nanyx"
 order: 1
 ---
 
-# Variables
-
 In Nanyx, variables are immutable by default. You declare them using the `def` keyword.
 
 ## Def Bindings

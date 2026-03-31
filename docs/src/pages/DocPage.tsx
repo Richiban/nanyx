@@ -34,6 +34,7 @@ export default function DocPage() {
   }
 
   const { page, section } = entry;
+  const content = page.content.replace(/^#\s+.*\n+/, "");
   const adjacent = getAdjacentPages(path);
 
   return (
@@ -44,7 +45,13 @@ export default function DocPage() {
           { label: page.title },
         ]}
       />
-      <MarkdownRenderer content={page.content} />
+      <header className="mb-8">
+        <h1 className="text-3xl font-bold mb-2" style={{ fontFamily: "'Space Grotesk', system-ui" }}>
+          {page.title}
+        </h1>
+        {page.description && <p className="doc-description text-muted-foreground text-base">{page.description}</p>}
+      </header>
+      <MarkdownRenderer content={content} />
       <PrevNextNav prev={adjacent.prev} next={adjacent.next} />
     </article>
   );

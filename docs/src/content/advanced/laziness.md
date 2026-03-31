@@ -4,8 +4,6 @@ description: "Lazy values with where blocks"
 order: 4
 ---
 
-# Laziness
-
 Nanyx is eager by default, but you can define lazy values using a `where` block. The value is evaluated on first use and cached.
 
 ```nanyx

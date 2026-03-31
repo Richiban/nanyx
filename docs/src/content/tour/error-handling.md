@@ -4,8 +4,6 @@ description: "Working with Result and Option types"
 order: 16
 ---
 
-# Error handling
-
 Nanyx distinguishes between errors (returned values) and exceptions (thrown, but not caught). The language encourages explicit errors via tag unions so callers must handle failure cases.
 
 Nanyx uses tag unions for error handling — no exceptions!

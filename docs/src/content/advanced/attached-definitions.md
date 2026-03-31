@@ -4,8 +4,6 @@ description: "Methods and properties attached to types"
 order: 8
 ---
 
-# Attached definitions
-
 Attached definitions let you add functions and values directly onto a type. This is how you define methods, operators, and static-like members without classes.
 
 ## Attaching a method

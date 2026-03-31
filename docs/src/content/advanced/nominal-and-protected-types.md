@@ -4,8 +4,6 @@ description: "Nominal identities and opaque boundaries"
 order: 3
 ---
 
-# Nominal and Protected Types
-
 Sometimes a type's name matters more than its structure. Nanyx supports nominal types using the `@` prefix. Nominal types have an identity that is distinct from their shape, which helps prevent accidental misuse when multiple values share a similar structure. They are very commonly used to wrap primitives--like strings and numbers--to create domain-specific types with invariants.
 
 ## Nominal Types

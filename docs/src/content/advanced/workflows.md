@@ -4,8 +4,6 @@ description: "Builder-based workflows and custom keywords"
 order: 1
 ---
 
-# Workflows
-
 Workflows are one of Nanyx's most distinctive features. They let libraries provide language-like constructs by rewriting a block into method calls on a builder value. This makes patterns like async/await, error chaining, and DSLs feel native.
 
 ## The Builder Shape

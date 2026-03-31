@@ -141,6 +141,24 @@
   font-family: 'Space Grotesk', system-ui, sans-serif;
 }
 
+.doc-description {
+  position: relative;
+  padding-left: 1em;
+}
+
+.doc-description::before {
+  content: "";
+  display: inline-block;
+  width: 3em;
+  height: .5em;
+  margin-right: .5em;
+  margin-bottom: .5ex;
+  border: currentColor 1px solid;
+  border-right: none;
+  border-top: none;
+  border-bottom-left-radius: .25em;
+}
+
 .prose p {
   @apply mb-4 leading-relaxed text-foreground/90;
 }

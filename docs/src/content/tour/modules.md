@@ -3,7 +3,6 @@ title: "Modules"
 description: "Organizing code with modules"
 order: 12
 ---
-# Modules
 
 Modules in Nanyx help organize code into logical units. They provide namespaces for definitions and control visibility.
 

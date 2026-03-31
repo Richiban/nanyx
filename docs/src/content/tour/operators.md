@@ -4,8 +4,6 @@ description: "Operators as functions"
 order: 14
 ---
 
-# Operators
-
 Operators are ordinary functions with special syntax. They can be used infix, prefix, postfix, or passed around like any other function.
 
 ## Defining operators
