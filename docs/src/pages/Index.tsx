@@ -1,9 +1,10 @@
 import { Link } from "react-router-dom";
-import { ArrowRight, Rocket, Map, Library, BookOpen } from "lucide-react";
+import { ArrowRight, Rocket, Map, Library, BookOpen, View } from "lucide-react";
 import { navSections } from "@/content/navigation";
 
 const iconMap: Record<string, React.ElementType> = {
   Rocket,
+  View,
   Map,
   Library,
   BookOpen,
