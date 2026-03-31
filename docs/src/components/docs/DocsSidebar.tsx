@@ -32,11 +32,11 @@ export function DocsSidebar({ open, onClose }: DocsSidebarProps) {
 
       <aside
         className={cn(
-          "fixed top-16 bottom-0 left-0 z-50 w-72 border-r border-border bg-card overflow-y-auto transition-transform duration-200 md:sticky md:translate-x-0 md:z-0",
+          "fixed top-16 bottom-0 left-0 z-50 w-72 border-r border-border bg-card overflow-y-auto transition-transform duration-200 md:sticky md:top-16 md:h-[calc(100vh-4rem)] md:translate-x-0 md:z-0",
           open ? "translate-x-0" : "-translate-x-full"
         )}
       >
-        <nav className="p-4 space-y-1 h-screen">
+        <nav className="p-4 space-y-1">
           {navSections.map((section) => {
             const Icon = iconMap[section.icon] || Rocket;
             const isActive = currentPath.startsWith(section.basePath);
