@@ -69,3 +69,18 @@ Be cautious with compiler optimizations that can make program performance less p
 
 The deciding factor in whether or not a language gets adopted is tooling. Design for great editor support, readable error messages, and a smooth debugging experience. The language should work with you, not against you.
 
+## No global state
+
+In Nanyx there is no global shared state. This avoids a plethora of issues, including difficulties with initialization order and race conditions in the presence of concurrency. A Nanyx programmer is free to construct some state in the main function and pass it around, but there is no built-in mechanism to declare global variables. In a real system, the programmer still has to deal with the state of the world, e.g. the state of the file system, the network, and other resources.
+
+## No overloading
+
+Nanyx does not have function overloading. Each function has a unique name, and the type system is powerful enough to express different behaviors without needing overloading. This keeps the language simpler and avoids ambiguity in function calls. If you need different behavior based on types, you can use pattern matching or tag unions to achieve that without overloading. See [Overloading](../coming-from-other-languages/overloading) for details.
+
+## Exhaustive pattern matches
+
+The Nanyx compiler enforces that pattern matches handle all cases of an algebraic data type. If a match expression is found to be non-exhaustive, the program is rejected. We believe this encourages more robust code and enables safer refactoring of algebraic data types.
+
+## Separate pure and impure code
+
+Nanyx supports functional, imperative, and logic programming. The type and effect system of Nanyx cleanly and safely separates pure code from impure code. That is, if a function is pure then the programmer can trust that the function behaves like a mathematical function: it returns the same value when given the same arguments and it has no side-effects.
