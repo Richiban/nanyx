@@ -46,6 +46,16 @@ seq.apply({ builder ->
 })
 ```
 
+Note that `yield` is special in that it can be used implicitly when the expression returns a value:
+
+```nanyx
+seq {
+  1
+  2
+  3
+}
+```
+
 Builders are also the preferred way to initialize collections such as maps:
 
 ```nanyx
