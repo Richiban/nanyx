@@ -1,22 +1,25 @@
 ---
-title: "Why we avoid a single Option type"
+title: "Option types"
 description: "Using explicit tags instead of a generic Maybe"
 order: 1
 ---
 
 # Why we avoid a single Option type
 
-Many languages use a null reference (`null`, `nil`, `None`, `undefined`). Nanyx avoids nulls and encourages explicit tag unions instead of relying on a single, universal Option/Maybe type. The goal is to make missing data precise and composable.
+Many languages use a null reference (`null`, `nil`, `None`, `undefined`) to represent missing data, the downside of which is well-known. What makes Nanyx different is that it also doesn't have a single, universal Option/Maybe type. Instead, it encourages explicit tag unions to make missing data precise and composable.
 
 ## Prefer results for failing operations
 
-When an operation can fail, Nanyx conventions favor a result-like union with a specific error tag. That is more descriptive than a plain optional value, and it composes without conversion helpers.
+When an operation can fail, Nanyx conventions favor a result-like union with a specific error tag. That is more descriptive than a plain optional value, but it still composes without conversion helpers.
+
+
+The standard library provides a `Result` type, but it follows a convention where any union type with `#some(a)` and other tags can be treated as an [option-like type](../advanced/option-like-types). 
 
 ```nanyx
 def first: list(a) -> #some(a) | #err(#listWasEmpty) = ...
 ```
 
-If all failing operations use result-like unions, you avoid bouncing between `Result` and `Option` representations.
+If all failing operations use result-like unions, you avoid having to map between `Result` and `Option` representations.
 
 ## Optional record fields
 
@@ -27,12 +30,12 @@ Optional fields can be represented explicitly with tag unions or by using option
 For data that is neither a simple failure nor a missing field, explicit tags are more informative than a generic `Option`:
 
 ```nanyx
-artist: #loading | #loaded(Artist)
+artist: #loading | #some(Artist)
 
-artist: #unspecified | #specified(Artist)
+artist: #unspecified | #some(Artist)
 ```
 
-Both mean “you might not have an artist,” but the tags explain why and what to expect next.
+Both mean “you might not have an artist,” but the tags explain why not and what to expect next.
 
 ## Easy evolution
 
