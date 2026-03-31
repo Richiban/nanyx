@@ -18,6 +18,27 @@ const languageAliases: Record<string, string> = {
   "f#": "fsharp",
 };
 
+const paperWhiteTheme = {
+  name: "paper-white",
+  type: "light",
+  colors: {
+    "editor.background": "#f7f5f2",
+    "editor.foreground": "#2b2b2b",
+  },
+  settings: [
+    { settings: { foreground: "#2b2b2b" } },
+    { scope: ["comment", "punctuation.definition.comment"], settings: { foreground: "#7a7a7a" } },
+    { scope: ["string", "punctuation.definition.string"], settings: { foreground: "#a31515" } },
+    { scope: ["constant.numeric", "constant.language"], settings: { foreground: "#098658" } },
+    { scope: ["keyword", "storage", "storage.type"], settings: { foreground: "#c244b1" } },
+    { scope: ["entity.name.function", "support.function"], settings: { foreground: "#795e26" } },
+    { scope: ["entity.name.type", "support.type"], settings: { foreground: "#23a87c" } },
+    { scope: ["variable", "variable.parameter"], settings: { foreground: "#001080" } },
+    { scope: ["entity.name.tag", "support.class"], settings: { foreground: "#448eca" } },
+    { scope: ["keyword.operator"], settings: { foreground: "#000000" } },
+  ],
+} as const;
+
 function CopyButton({ code }: { code: string }) {
   const [copied, setCopied] = useState(false);
 
@@ -48,7 +69,7 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
     let isMounted = true;
     const loadHighlighter = async () => {
       const instance = await createHighlighter({
-        themes: ["github-dark", "github-light"],
+        themes: ["github-dark", paperWhiteTheme],
         langs: [
           {
             ...(nyxGrammar as Record<string, unknown>),
@@ -106,7 +127,7 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
               const rawLang = match[1].toLowerCase();
               const normalizedLang = languageAliases[rawLang] ?? rawLang;
               const canHighlight = highlighter && loadedLanguages.has(normalizedLang);
-              const theme = isDark ? "github-dark" : "github-light";
+              const theme = isDark ? "github-dark" : "paper-white";
 
               return (
                 <div className="relative group">
