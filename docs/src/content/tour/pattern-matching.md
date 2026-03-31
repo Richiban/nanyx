@@ -55,7 +55,7 @@ match result
 
 ## Pattern Matching in Functions
 
-Since pattern matching is so common, you can merge the function definition and match patterns together:
+Since a function whose entire body is a pattern match is so common, you can merge the function definition and match patterns together:
 
 ```nanyx
 rec sumList: list(int) -> int = {
@@ -70,6 +70,15 @@ rec sumList: list(int) -> int = {
 match day
   | "Saturday" | "Sunday" -> "Weekend!"
   | _ -> "Weekday"
+```
+
+## Combining Patterns
+
+```nanyx
+match getValue()
+  | { < 0 } & n -> println("Negative: {n}")
+  | { > 100 } & n -> println("Large: {n}")
+  | n -> println("Something else: {n}")
 ```
 
 > **Note:** The Nanyx compiler ensures your patterns are exhaustive — every possible value must be handled. This prevents runtime crashes from unhandled cases.

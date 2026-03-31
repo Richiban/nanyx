@@ -151,35 +151,6 @@ type UserProfile = (
 )
 ```
 
-## Nominal and Protected Types
-
-Sometimes a type's name matters more than its structure. Nanyx supports nominal types using the `@` prefix. These types cannot be constructed (or cloned) outside their home module, so you typically export constructor functions.
-
-```nanyx
-module user
-
-export type @User = (
-  id: UserId
-  name: string
-)
-
-export def makeUser: (UserId, string) -> @User = { id, name ->
-  @User(id = id, name = name)
-}
-```
-
-Protected (opaque) types hide their structure outside the module by using `private`. This is useful for wrapping primitives safely and forcing validation through exported functions.
-
-```nanyx
-module ids
-
-export type @UserId = private string
-
-export def UserId: string -> @UserId = { value ->
-  @UserId(value)
-}
-```
-
 ## Function Types
 
 Functions have specific type signatures:
