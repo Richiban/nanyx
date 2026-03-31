@@ -60,6 +60,10 @@ const paperWhiteTheme = {
       settings: { foreground: "#448eca" },
     },
     {
+      scope: ["tag.nanyx", "support.type.nanyx"],
+      settings: { foreground: "#1b8a5a" },
+    },
+    {
       scope: [
         "punctuation.section",
         "punctuation.section.brackets",
@@ -113,8 +117,12 @@ const inkNightTheme = {
       settings: { foreground: "#a5b4fc" },
     },
     {
-      scope: ["entity.name.tag", "support.class"],
-      settings: { foreground: "#7dd3fc" },
+      scope: ["entity.name.tag","tag.nanyx"],
+      settings: { foreground: "#7dfce7" },
+    },
+    {
+      scope: ["support.type.nanyx"],
+      settings: { foreground: "#34d3ab" },
     },
     {
       scope: [

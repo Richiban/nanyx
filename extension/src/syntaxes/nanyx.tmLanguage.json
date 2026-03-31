@@ -249,6 +249,9 @@
 					"include": "#attributes"
 				},
 				{
+					"include": "#tags"
+				},
+				{
 					"begin": "(:)\\s*(\\()",
 					"beginCaptures": {
 						"1": {
@@ -1078,6 +1081,9 @@
 							"include": "#keywords"
 						},
 						{
+							"include": "#tags"
+						},
+						{
 							"include": "#workflows"
 						},
 						{
@@ -1117,12 +1123,15 @@
       "patterns": [
         {
           "name": "tag.nanyx",
-          "match": "(#[a-zA-Z_0-9]+)",
-          "captures": {
-            "1": {
-              "name": "support.type.nanyx"
-            }
-          }
+					"match": "(#)([a-zA-Z_0-9]+)",
+					"captures": {
+						"1": {
+							"name": "punctuation.definition.tag.nanyx"
+						},
+						"2": {
+							"name": "tag.nanyx"
+						}
+					}
         }
       ]
     },
