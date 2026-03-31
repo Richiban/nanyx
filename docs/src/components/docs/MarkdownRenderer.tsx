@@ -28,7 +28,7 @@ const paperWhiteTheme = {
   settings: [
     { settings: { foreground: "#2b2b2b" } },
     { scope: ["comment", "punctuation.definition.comment"], settings: { foreground: "#7a7a7a" } },
-    { scope: ["string", "punctuation.definition.string"], settings: { foreground: "#a31515" } },
+    { scope: ["string", "punctuation.definition.string"], settings: { foreground: "#c94c12" } },
     { scope: ["constant.numeric", "constant.language"], settings: { foreground: "#098658" } },
     { scope: ["keyword", "storage", "storage.type"], settings: { foreground: "#c244b1" } },
     { scope: ["entity.name.function", "support.function"], settings: { foreground: "#795e26" } },
