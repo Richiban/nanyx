@@ -18,13 +18,4 @@ Overloading looks convenient, but it adds costs that show up in everyday use:
 
 Nanyx prefers a single, explicit meaning for each function name. That keeps call sites readable and makes the language easier to reason about.
 
-## How to model overload-like behavior
-
-You can still provide multiple behaviors, but you do it explicitly:
-
-- Use distinct names for distinct behaviors (`parseInt` vs `parseFloat`).
-- Use tag unions to encode different inputs and match on them.
-- Use modules or records to group related functions under clear names.
-- Accept a function argument and let the caller choose behavior explicitly.
-
-This trades a little conciseness for clarity, predictability, and better tooling.
+We find that Nanyx's optional/named parameters, tag unions, and pattern matching provide enough flexibility to express different behaviors without needing overloading. If you need different behavior based on types, you can use pattern matching or tag unions to achieve that without overloading. See [Option-like types](../advanced/option-like-types) for an example of how to abstract across different unions with a shared convention.
