@@ -57,7 +57,70 @@ const paperWhiteTheme = {
       scope: ["entity.name.tag", "support.class"],
       settings: { foreground: "#448eca" },
     },
+    {
+      scope: [
+        "punctuation.section",
+        "punctuation.section.brackets",
+        "punctuation.section.parens",
+        "punctuation.section.block",
+        "punctuation.definition.group",
+      ],
+      settings: { foreground: "#4a4a4a" },
+    },
     { scope: ["keyword.operator"], settings: { foreground: "#000000" } },
+  ],
+} as const;
+
+const inkNightTheme = {
+  name: "ink-night",
+  type: "dark",
+  colors: {
+    "editor.background": "#111214",
+    "editor.foreground": "#e6e6e6",
+  },
+  settings: [
+    { settings: { foreground: "#e6e6e6" } },
+    {
+      scope: ["comment", "punctuation.definition.comment"],
+      settings: { foreground: "#8b8f98" },
+    },
+    {
+      scope: ["string", "punctuation.definition.string"],
+      settings: { foreground: "#f28f6b" },
+    },
+    {
+      scope: ["constant.numeric", "constant.language"],
+      settings: { foreground: "#55c99b" },
+    },
+    { scope: ["keyword.control.nanyx"], settings: { foreground: "#f07ad8" } },
+    { scope: ["keyword.declaration.nanyx"], settings: { foreground: "#82b1ff" } },
+    {
+      scope: ["entity.name.function", "support.function"],
+      settings: { foreground: "#f4bf75" },
+    },
+    {
+      scope: ["entity.name.type", "support.type"],
+      settings: { foreground: "#6ee7b7" },
+    },
+    {
+      scope: ["variable", "variable.parameter"],
+      settings: { foreground: "#a5b4fc" },
+    },
+    {
+      scope: ["entity.name.tag", "support.class"],
+      settings: { foreground: "#7dd3fc" },
+    },
+    {
+      scope: [
+        "punctuation.section",
+        "punctuation.section.brackets",
+        "punctuation.section.parens",
+        "punctuation.section.block",
+        "punctuation.definition.group",
+      ],
+      settings: { foreground: "#999797" },
+    },
+    { scope: ["keyword.operator"], settings: { foreground: "#999797" } },
   ],
 } as const;
 
@@ -98,7 +161,7 @@ export function MarkdownRenderer({
     let isMounted = true;
     const loadHighlighter = async () => {
       const instance = await createHighlighter({
-        themes: ["github-dark", paperWhiteTheme],
+        themes: [inkNightTheme, paperWhiteTheme],
         langs: [
           {
             ...(nyxGrammar as Record<string, unknown>),
@@ -157,7 +220,7 @@ export function MarkdownRenderer({
               const normalizedLang = languageAliases[rawLang] ?? rawLang;
               const canHighlight =
                 highlighter && loadedLanguages.has(normalizedLang);
-              const theme = isDark ? "github-dark" : "paper-white";
+              const theme = isDark ? "ink-night" : "paper-white";
 
               return (
                 <div className="relative group">

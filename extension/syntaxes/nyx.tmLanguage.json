@@ -9,6 +9,7 @@
     { "include": "#keywords" },
     { "include": "#types" },
     { "include": "#tags" },
+    { "include": "#punctuation" },
     { "include": "#operators" }
   ],
   "repository": {
@@ -99,6 +100,26 @@
         {
           "name": "keyword.operator.nanyx",
           "match": "(\\|->|=|\\+|\\-|\\*|/|\\||&&|\\|\\||==|!=|<=|>=|<|>)"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.section.parens.nanyx",
+          "match": "[()]"
+        },
+        {
+          "name": "punctuation.section.brackets.nanyx",
+          "match": "[\\[\\]]"
+        },
+        {
+          "name": "punctuation.section.braces.nanyx",
+          "match": "[{}]"
+        },
+        {
+          "name": "punctuation.separator.comma.nanyx",
+          "match": ","
         }
       ]
     }
