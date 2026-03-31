@@ -6,7 +6,7 @@ order: 3
 
 # Nominal and Protected Types
 
-Sometimes a type's name matters more than its structure. Nanyx supports nominal types using the `@` prefix. Nominal types have an identity that is distinct from their shape, which helps prevent accidental misuse when multiple values share a similar structure.
+Sometimes a type's name matters more than its structure. Nanyx supports nominal types using the `@` prefix. Nominal types have an identity that is distinct from their shape, which helps prevent accidental misuse when multiple values share a similar structure. They are very commonly used to wrap primitives--like strings and numbers--to create domain-specific types with invariants.
 
 ## Nominal Types
 
@@ -20,8 +20,17 @@ export type @User = (
   name: string
 )
 
-export def makeUser: (UserId, string) -> @User = { id, name ->
-  @User(id = id, name = name)
+export def makeUser: (UserId, string) -> Result(@User, list(string)) = { id, name ->
+  memory {
+    def errors = mut []
+    if id <= 0 then errors += "ID must be positive"
+    if name.length == 0 then errors += "Name cannot be empty"
+    
+    if errors.length > 0 then
+      #error(errors)
+    else
+      #ok(@User(id = id, name = name))
+  }
 }
 ```
 

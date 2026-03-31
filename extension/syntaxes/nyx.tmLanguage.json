@@ -62,7 +62,7 @@
       "patterns": [
         {
           "name": "keyword.control.nanyx",
-          "match": "\\b(if|else|match|with|return|except)\\b"
+          "match": "\\b(if|else|match|with|return|except|then)\\b"
         },
         {
           "name": "keyword.declaration.nanyx",
