@@ -57,7 +57,7 @@ export const navSections: NavSection[] = [
   {
     title: "Foundations",
     basePath: "/docs/foundations",
-    icon: "Landmark",
+    icon: "Compass",
     pages: foundationsPages,
   },
   {
