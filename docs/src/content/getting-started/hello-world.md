@@ -4,14 +4,35 @@ description: "Write your first Nanyx program"
 order: 3
 ---
 
+Make sure you've [installed Nanyx](./installation) and have the CLI available. Then, let's create a simple "Hello, World!" program.
+
 # Hello, World!
 
-Let's create your first Nanyx project and run it.
+```bash
+touch hello.nyx
+```
+
+Open `hello.nyx` in your code editor and add the following code:
+
+```nanyx
+import nanyx/console
+
+println("Hello, Nanyx!")
+```
+
+Run your program with:
+
+```bash
+nanyx run hello.nyx
+# Hello, Nanyx!
+```
+
+Wow, that was pretty simple! Next, let's create your first Nanyx project and run it.
 
 ## Create a Project
 
 ```bash
-nanyx new hello_world
+nanyx proj new hello_world
 cd hello_world
 ```
 
@@ -21,24 +42,26 @@ This creates a new project with the following structure:
 hello_world/
 ├── nanyx.toml
 ├── src/
-│   └── hello_world.nyx
+│   └── main.nyx
 └── test/
-    └── hello_world_test.nyx
+  └── main_test.nyx
 ```
 
 ## Your First Program
 
-Open `src/hello_world.nyx` and you'll see:
+Open `src/main.nyx` and you'll see:
 
 ```nanyx
-module main
+@entry module main
 
-def main = {
-  println("Hello, World!")
-}
+println("Hello, World!")
 ```
 
+Notice how, once we move up to a project structure, we have a `module` declaration at the top of our files. This is how we organize code in Nanyx. The `main` module is the default entry point for the project, marked with the `@entry` attribute.
+
 ## Run It
+
+As long as you're in the project directory, you can run the program without specifying the entrypoint file:
 
 ```bash
 nanyx run

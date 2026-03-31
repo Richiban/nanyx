@@ -6,7 +6,6 @@ import nyxGrammar from "../../../../extension/src/syntaxes/nanyx.tmLanguage.json
 import { Check, Copy } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
-import { set } from "date-fns";
 
 interface MarkdownRendererProps {
   content: string;
@@ -243,8 +242,9 @@ export function MarkdownRenderer({
           code({ className, children, inline, ...props }) {
             const match = /language-(\w+)/.exec(className || "");
             const codeString = String(children).replace(/\n$/, "");
+            const isInline = inline ?? !codeString.includes("\n");
 
-            if (!inline && match) {
+            if (!isInline && match) {
               const rawLang = match[1].toLowerCase();
               const normalizedLang = languageAliases[rawLang] ?? rawLang;
               const canHighlight =
@@ -269,6 +269,14 @@ export function MarkdownRenderer({
                     </pre>
                   )}
                 </div>
+              );
+            }
+
+            if (!isInline) {
+              return (
+                <pre className="rounded-lg p-4 mb-4 overflow-x-auto text-sm border bg-[hsl(var(--code-bg))] border-[hsl(var(--code-border))]">
+                  <code>{codeString}</code>
+                </pre>
               );
             }
 

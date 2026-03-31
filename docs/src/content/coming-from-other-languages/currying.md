@@ -1,13 +1,14 @@
 ---
-title: "Why functions are not curried"
-description: "Currying is possible, but it is not the default"
+title: Currying
+description: Why Nanyx does not curry functions by default
 order: 2
 ---
 
-Nanyx has first-class functions, so you can always curry manually. If you want a curried function, you can write it explicitly:
+Nanyx has first-class functions, so you can always curry manually. If you want a curried function, you _can_ write it explicitly:
 
 ```nanyx
-def add3 = \x -> \y -> \z -> x + y + z
+def add3 = { x -> { y -> { z -> x + y + z } } }
+
 ```
 
 When people say Nanyx is not a curried language, they mean functions are not curried by default. This section uses "currying" as shorthand for "functions that are curried by default."
@@ -15,7 +16,7 @@ When people say Nanyx is not a curried language, they mean functions are not cur
 Currying can make some calls more concise, but it comes with significant downsides:
 
 - It lowers error message quality, because calling a function with too few arguments is always valid.
-- It makes the pipe operator (`|>`) more error-prone in some cases.
+- It makes the pipe operator (`\`) more error-prone in some cases.
 - It forces extra parentheses in some higher-order function calls.
 - It increases the learning curve for people coming from mainstream languages.
 - It encourages pointfree composition, which Nanyx treats as less readable in most cases.
@@ -28,42 +29,41 @@ Those costs outweigh the conciseness upside for Nanyx. The sections below explai
 In Nanyx, these evaluate to the same result:
 
 ```nanyx
-Str.concat "Hello, " "World!"
+String.concat("Hello, ", "World!")
 
 "Hello, "
-|> Str.concat "World!"
+\String.concat("World!")
 ```
 
-That is what most people expect after learning `|>`. In curried languages, the second line usually produces a different result, because the piped value is used as the last argument rather than the first. This makes the operator feel less predictable, even for experienced users.
+That is what most people expect after learning `\`. In curried languages, the second line usually produces a different result, because the piped value is used as the last argument rather than the first. This makes the operator feel less predictable, even for experienced users.
 
 The difference shows up in arithmetic too:
 
 ```nanyx
-someNumber
-|> Num.div 2
+someNumber \Num.div(2)
 
-someNumber
-|> Num.sub 1
+someNumber \Num.sub(1)
 ```
 
 In Nanyx, those mean divide by 2 and subtract 1. In curried languages, they typically mean divide 2 by `someNumber` and subtract `someNumber` from 1, which surprises beginners and is less useful in practice.
 
-Nanyx also benefits from `|>` with higher-order functions. Consider:
+Nanyx also benefits from `\` with higher-order functions. Consider:
 
 ```nanyx
-answer = List.map numbers \num ->
-    someFunction
+def answer = numbers \List.map { num ->
+    someFunction(
         "some argument"
         num
         anotherArg
+    )
+}
 
-numbers
-|> List.map Num.abs
+numbers \List.map(Num.abs)
 ```
 
-Because `|>` passes the value as the first argument, both examples work without extra parentheses. In a curried language, `|> List.map Num.abs` usually only works if `List.map` takes the function first and the list second, which makes the first example more awkward and more parenthesized.
+Because `\` passes the value as the first argument, both examples work without extra parentheses. In a curried language, `\List.map Num.abs` usually only works if `List.map` takes the function first and the list second, which makes the first example more awkward and more parenthesized.
 
-Currying and `|>` are in tension: the style that makes `|>` feel natural works against currying's main advantage.
+Currying and `\` are in tension: the style that makes `\` feel natural works against currying's main advantage.
 
 ## Currying and learning curve
 
@@ -76,13 +76,15 @@ None of that is impossible to learn, but it is extra conceptual weight that does
 Currying makes pointfree composition effortless, but pointfree code is often harder to read. Compare:
 
 ```nanyx
-reverseSort = compose List.reverse List.sort
+def reverseSort = compose(List.reverse, List.sort)
+
 ```
 
 with:
 
 ```nanyx
-reverseSort = \list -> List.reverse (List.sort list)
+def reverseSort = { list -> List.reverse(List.sort(list)) }
+
 ```
 
 The second version is slightly longer, but it is clearer about what happens to `list`. In more complex examples, pointfree code makes readers do extra mental translation, which increases the chance of misunderstanding.
