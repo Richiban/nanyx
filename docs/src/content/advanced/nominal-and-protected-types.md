@@ -40,6 +40,20 @@ export def makeUser: (UserId, string) -> Result(@User, list(string)) = { id, nam
 - Allows you to change the internal shape later without breaking callers.
 - Makes invariants explicit through the constructor.
 
+### Assignability
+
+Nominal types are not assignable to each other, even if their structures are identical. They are, however assignable to their underlying shape for compatibility with existing code.
+
+So, for example given the following definition of `@UserId`:
+
+```nanyx
+type @UserId = int
+```
+
+Then `@UserId` is assignable to `int` but `int` is not assignable to `@UserId`.
+
+If you wish a nominal type to be completely opaque and not assignable to its underlying shape, you can use a protected type instead (see below).
+
 ## Protected (Opaque) Types
 
 Protected types hide their structure outside the module by using `private`. This is useful for wrapping primitives safely and enforcing validation.
