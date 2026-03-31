@@ -62,7 +62,7 @@
       "patterns": [
         {
           "name": "keyword.control.nyx",
-          "match": "\\b(def|type|context|module|import|export|use|in|match|with|if|else|return|as)\\b"
+          "match": "\\b(def|type|context|module|import|export|use|in|match|with|if|else|return|as|rec|set)\\b"
         },
         {
           "name": "constant.language.boolean.nyx",
