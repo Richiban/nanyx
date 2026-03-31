@@ -1,7 +1,6 @@
 import { Link } from "react-router-dom";
-import { Menu, Search, Moon, Sun } from "lucide-react";
+import { Menu, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useEffect, useState } from "react";
 
 interface DocsHeaderProps {
   onToggleSidebar: () => void;
@@ -9,18 +8,6 @@ interface DocsHeaderProps {
 }
 
 export function DocsHeader({ onToggleSidebar, onOpenSearch }: DocsHeaderProps) {
-  const [dark, setDark] = useState(false);
-
-  useEffect(() => {
-    const isDark = document.documentElement.classList.contains("dark");
-    setDark(isDark);
-  }, []);
-
-  const toggleTheme = () => {
-    document.documentElement.classList.toggle("dark");
-    setDark(!dark);
-  };
-
   return (
     <header className="sticky top-0 z-30 h-16 border-b border-border bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/60">
       <div className="flex h-full items-center gap-4 px-4 md:px-6">
@@ -56,12 +43,8 @@ export function DocsHeader({ onToggleSidebar, onOpenSearch }: DocsHeaderProps) {
           </kbd>
         </button>
 
-        <Button variant="ghost" size="icon" onClick={toggleTheme}>
-          {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-        </Button>
-
         <a
-          href="https://github.com/nanyx-lang"
+          href="https://github.com/Richiban/nanyx"
           target="_blank"
           rel="noopener noreferrer"
           className="text-muted-foreground hover:text-foreground transition-colors"
