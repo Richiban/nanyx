@@ -173,27 +173,20 @@
     drop
   )
 
-  (data (i32.const 256) "\0b\00\00\00Hello world\00")
+  (data (i32.const 256) "\15\00\00\00Hello from other.nyx!\00")
 
-  (func $main (result i32) (local $s i32) (local $__dbg_tmp i32)
-    i32.const 42
-    local.set $s
-    i32.const 42
+  (func $message (result i32)
+    i32.const 260
+  )
+  (export "message" (func $message))
+
+  (func $main (result i32) (local $msg i32) (local $__dbg_tmp i32)
+    call $message
+    local.set $msg
+    local.get $msg
     local.tee $__dbg_tmp
     call $dbg
     local.get $__dbg_tmp
-    drop
-    i32.const 260
-    local.tee $__dbg_tmp
-    call $dbg_str
-    local.get $__dbg_tmp
   )
   (export "main" (func $main))
-
-  (func $__nanyx_start
-    call $main
-    drop
-  )
-
-  (start $__nanyx_start)
 )

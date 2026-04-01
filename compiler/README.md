@@ -43,8 +43,9 @@ compiler/
 │   └── testdata/
 ├── Nanyx.Compiler/              # Type-checker core library
 │   └── NyxCompiler.fsproj
-├── Nanyx.Compiler.Cli/          # CLI entry point wrapping the compiler
-│   └── NyxCompiler.Cli.fsproj
+├── Nanyx.Compiler.Cli/          # CLI entry point wrapping the compiler (C#)
+│   ├── Program.cs
+│   └── NanyxCompiler.Cli.csproj
 ├── Nanyx.Compiler.Tests/        # Compiler-level unit/integration tests
 │   └── Nanyx.Compiler.Tests.fsproj
 ├── Nyx.Transpiler.JS/         # JS transpiler
@@ -98,13 +99,13 @@ dotnet run --project compiler/Nyx.Parser/NyxParser.fsproj sample.nyx
 You can now emit WebAssembly text format (`.wat`) directly from the compiler CLI:
 
 ```powershell
-dotnet run --project compiler/Nanyx.Compiler.Cli/NyxCompiler.Cli.fsproj -- sample.nyx --target wasm
+dotnet run --project compiler/Nanyx.Compiler.Cli/NanyxCompiler.Cli.csproj -- sample.nyx --target wasm
 ```
 
 Optional output path:
 
 ```powershell
-dotnet run --project compiler/Nanyx.Compiler.Cli/NyxCompiler.Cli.fsproj -- sample.nyx --target wasm --out sample.wat
+dotnet run --project compiler/Nanyx.Compiler.Cli/NanyxCompiler.Cli.csproj -- sample.nyx --target wasm --out sample.wat
 ```
 
 Current WASM backend support is intentionally minimal and focused on bootstrapping:

@@ -147,6 +147,46 @@ and private collectStatementLocalNames (statements: Statement list) : string lis
 let private collectBlockLocalNames (statements: Statement list) =
     collectStatementLocalNames statements |> List.distinct
 
+let rec private collectPayloadLocalsExpr expr =
+    match expr with
+    | Match(_, arms) ->
+        arms |> List.collect (fun (patterns, armExpr) ->
+            let payloads = patterns |> List.choose (function
+                | TagPattern(_, Some (IdentifierPattern ident)) -> Some ident
+                | _ -> None)
+            List.append payloads (collectPayloadLocalsExpr armExpr))
+    | FunctionCall(_, _, args) -> args |> List.collect collectPayloadLocalsExpr
+    | BinaryOp(_, left, right) -> List.append (collectPayloadLocalsExpr left) (collectPayloadLocalsExpr right)
+    | IfExpr(cond, thenExpr, elseExpr) ->
+        List.append (collectPayloadLocalsExpr cond) (List.append (collectPayloadLocalsExpr thenExpr) (collectPayloadLocalsExpr elseExpr))
+    | Lambda(_, body) -> collectPayloadLocalsExpr body
+    | Pipe(value, _, _, args) -> List.append (collectPayloadLocalsExpr value) (args |> List.collect collectPayloadLocalsExpr)
+    | Block statements ->
+        statements |> List.collect (function
+            | DefStatement(_, _, _, rhs) -> collectPayloadLocalsExpr rhs
+            | ExprStatement value -> collectPayloadLocalsExpr value
+            | _ -> [])
+    | TupleExpr values
+    | ListExpr values -> values |> List.collect collectPayloadLocalsExpr
+    | RecordExpr fields ->
+        fields |> List.collect (function
+            | NamedField(_, value) -> collectPayloadLocalsExpr value
+            | PositionalField value -> collectPayloadLocalsExpr value)
+    | UseIn(_, body) -> collectPayloadLocalsExpr body
+    | MemberAccess(value, _, _) -> collectPayloadLocalsExpr value
+    | TagExpr(_, payload) -> payload |> Option.map collectPayloadLocalsExpr |> Option.defaultValue []
+    | InterpolatedString parts ->
+        parts |> List.collect (function
+            | StringText _ -> []
+            | StringExpr value -> collectPayloadLocalsExpr value)
+    | WorkflowBindExpr(_, value)
+    | WorkflowReturnExpr value -> collectPayloadLocalsExpr value
+    | ContextMemberAccess(_, _)
+    | ContextMemberCall(_, _, _)
+    | UnitExpr
+    | LiteralExpr _
+    | IdentifierExpr _ -> []
+
 let private createNameMap (names: string list) =
     names
     |> List.fold (fun (acc, used) name ->
@@ -901,7 +941,11 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                     | None ->
                         failwith $"Unknown field '{fieldName}' for record variable '{varName}'"
                 | None ->
-                    failwith $"No record layout known for variable '{varName}' when accessing .{fieldName}"
+                    let qualifiedName = $"{varName}.{fieldName}"
+                    if env.KnownFunctions.Contains qualifiedName then
+                        $"call ${sanitizeIdentifier qualifiedName}"
+                    else
+                        failwith $"No record layout known for variable '{varName}' when accessing .{fieldName}"
             | RecordExpr fields ->
                 // Inline record expression - compute layout directly
                 let sortedFieldNames =
@@ -1426,6 +1470,12 @@ let transpileModuleToWat (module': Module) : string =
             | Def (ValueDef(_, name, typeOpt, expr)) -> Some(name, typeOpt, expr)
             | _ -> None)
 
+    let topLevelExprs =
+        module'
+        |> List.choose (function
+            | Expr expr -> Some expr
+            | _ -> None)
+
     let typeLayouts, typeFieldTypes = extractTypeLayouts module'
 
     let mutable nextContextIndex = 0
@@ -1511,29 +1561,36 @@ let transpileModuleToWat (module': Module) : string =
 
     let moduleUsesDbg = 
         (defs |> List.exists (fun (_, _, expr) -> containsDbgCallExpr expr)) ||
-        (contextDefs |> List.exists (fun (_, _, expr) -> containsDbgCallExpr expr))
+        (contextDefs |> List.exists (fun (_, _, expr) -> containsDbgCallExpr expr)) ||
+        (topLevelExprs |> List.exists containsDbgCallExpr)
     let moduleUsesRegularDbg = 
         (defs |> List.exists (fun (_, _, expr) -> containsRegularDbgExpr expr)) ||
-        (contextDefs |> List.exists (fun (_, _, expr) -> containsRegularDbgExpr expr))
+        (contextDefs |> List.exists (fun (_, _, expr) -> containsRegularDbgExpr expr)) ||
+        (topLevelExprs |> List.exists containsRegularDbgExpr)
     let moduleUsesDbgString = 
         (defs |> List.exists (fun (_, _, expr) -> containsDbgStringLiteralExpr expr)) ||
-        (contextDefs |> List.exists (fun (_, _, expr) -> containsDbgStringLiteralExpr expr))
+        (contextDefs |> List.exists (fun (_, _, expr) -> containsDbgStringLiteralExpr expr)) ||
+        (topLevelExprs |> List.exists containsDbgStringLiteralExpr)
     let moduleUsesHeap = 
         (defs |> List.exists (fun (_, _, expr) -> usesHeapAllocationExpr expr)) ||
-        (contextDefs |> List.exists (fun (_, _, expr) -> usesHeapAllocationExpr expr))
+        (contextDefs |> List.exists (fun (_, _, expr) -> usesHeapAllocationExpr expr)) ||
+        (topLevelExprs |> List.exists usesHeapAllocationExpr)
     let dbgTagNames =
         (defs |> List.collect (fun (_, _, expr) -> collectDbgTagNamesExpr expr)) @
         (contextDefs |> List.collect (fun (_, _, expr) -> collectDbgTagNamesExpr expr))
+        @ (topLevelExprs |> List.collect collectDbgTagNamesExpr)
         |> List.distinct
         |> List.sort
     let dbgTagPayloadNames =
         (defs |> List.collect (fun (_, _, expr) -> collectDbgTagPayloadNamesExpr expr)) @
         (contextDefs |> List.collect (fun (_, _, expr) -> collectDbgTagPayloadNamesExpr expr))
+        @ (topLevelExprs |> List.collect collectDbgTagPayloadNamesExpr)
         |> List.distinct
         |> List.sort
     let tagIdMap =
         (defs |> List.collect (fun (_, _, expr) -> collectTagNamesExpr expr)) @
         (contextDefs |> List.collect (fun (_, _, expr) -> collectTagNamesExpr expr))
+        @ (topLevelExprs |> List.collect collectTagNamesExpr)
         |> List.distinct
         |> List.sort
         |> List.mapi (fun index name -> name, index + 1)
@@ -1542,6 +1599,7 @@ let transpileModuleToWat (module': Module) : string =
     let stringLiterals =
         (defs |> List.collect (fun (_, _, expr) -> collectStringLiteralsExpr expr)) @
         (contextDefs |> List.collect (fun (_, _, expr) -> collectStringLiteralsExpr expr))
+        @ (topLevelExprs |> List.collect collectStringLiteralsExpr)
         |> List.distinct
 
     let stringLiteralMap, stringLiteralData = buildStringLiteralMap stringLiterals
@@ -1727,48 +1785,7 @@ let transpileModuleToWat (module': Module) : string =
                 [regularParamSig; contextParamSig]
                 |> List.filter (String.IsNullOrWhiteSpace >> not)
                 |> String.concat " "
-            // Collect all identifier payloads in match patterns
-            let rec collectPayloadLocals expr =
-                match expr with
-                | Match(_, arms) ->
-                    arms |> List.collect (fun (patterns, armExpr) ->
-                        let payloads = patterns |> List.choose (function
-                            | TagPattern(_, Some (IdentifierPattern ident)) -> Some ident
-                            | _ -> None)
-                        List.append payloads (collectPayloadLocals armExpr))
-                | FunctionCall(_, _, args) -> args |> List.collect collectPayloadLocals
-                | BinaryOp(_, left, right) -> List.append (collectPayloadLocals left) (collectPayloadLocals right)
-                | IfExpr(cond, thenExpr, elseExpr) ->
-                    List.append (collectPayloadLocals cond) (List.append (collectPayloadLocals thenExpr) (collectPayloadLocals elseExpr))
-                | Lambda(_, body) -> collectPayloadLocals body
-                | Pipe(value, _, _, args) -> List.append (collectPayloadLocals value) (args |> List.collect collectPayloadLocals)
-                | Block statements ->
-                    statements |> List.collect (function
-                        | DefStatement(_, _, _, rhs) -> collectPayloadLocals rhs
-                        | ExprStatement value -> collectPayloadLocals value
-                        | _ -> [])
-                | TupleExpr values
-                | ListExpr values -> values |> List.collect collectPayloadLocals
-                | RecordExpr fields ->
-                    fields |> List.collect (function
-                        | NamedField(_, value) -> collectPayloadLocals value
-                        | PositionalField value -> collectPayloadLocals value)
-                | UseIn(_, body) -> collectPayloadLocals body
-                | MemberAccess(value, _, _) -> collectPayloadLocals value
-                | TagExpr(_, payload) -> payload |> Option.map collectPayloadLocals |> Option.defaultValue []
-                | InterpolatedString parts ->
-                    parts |> List.collect (function
-                        | StringText _ -> []
-                        | StringExpr value -> collectPayloadLocals value)
-                | WorkflowBindExpr(_, value)
-                | WorkflowReturnExpr value -> collectPayloadLocals value
-                | ContextMemberAccess(_, _) -> []
-                | ContextMemberCall(_, _, _) -> []
-                | UnitExpr
-                | LiteralExpr _
-                | IdentifierExpr _ -> []
-
-            let payloadLocals = collectPayloadLocals bodyExpr |> List.distinct
+            let payloadLocals = collectPayloadLocalsExpr bodyExpr |> List.distinct
             let payloadLocalNames = payloadLocals |> List.map (fun ident -> $"__payload_{ident}")
             let localsSig =
                 [ yield! (localNames |> List.map (fun localName -> localMap.[localName]))
@@ -1803,6 +1820,77 @@ let transpileModuleToWat (module': Module) : string =
     let renderedFunctions =
         renderedUserFunctions @ renderedContextFunctions
         |> String.concat "\n\n"
+
+    let renderedStartFunction, startDirective =
+        if topLevelExprs.IsEmpty then
+            "", ""
+        else
+            let localNames =
+                topLevelExprs
+                |> List.collect collectExprLocalNames
+                |> List.distinct
+            let localMap = createNameMap localNames
+            let dbgLocalName =
+                if topLevelExprs |> List.exists containsDbgCallExpr then Some "__dbg_tmp"
+                else None
+            let mutable usedLocalNames =
+                ([ yield! localMap |> Map.toList |> List.map snd
+                   match dbgLocalName with
+                   | Some name -> yield name
+                   | None -> () ]
+                 |> Set.ofList)
+            let matchArity = topLevelExprs |> List.map countMatchArity |> maxOrZero
+            let matchTempNames =
+                [ for index in 0 .. (matchArity - 1) do
+                    let baseName = $"__match_tmp_{index}"
+                    let mutable candidate = baseName
+                    let mutable suffix = 1
+                    while usedLocalNames |> Set.contains candidate do
+                        candidate <- $"{baseName}_{suffix}"
+                        suffix <- suffix + 1
+                    usedLocalNames <- usedLocalNames |> Set.add candidate
+                    yield candidate ]
+            let payloadLocalNames =
+                topLevelExprs
+                |> List.collect collectPayloadLocalsExpr
+                |> List.distinct
+                |> List.map (fun ident -> $"__payload_{ident}")
+            let localsSig =
+                [ yield! (localNames |> List.map (fun localName -> localMap.[localName]))
+                  yield! matchTempNames
+                  yield! payloadLocalNames
+                  match dbgLocalName with
+                  | Some name -> yield name
+                  | None -> () ]
+                |> List.distinct
+                |> List.map (fun localName -> $"(local ${localName} i32)")
+                |> String.concat " "
+            let env =
+                { KnownFunctions = knownFunctions
+                  FunctionArities = functionArities
+                  FunctionContextRequirements = functionContextRequirements
+                  Locals = localMap
+                  DbgTempLocal = dbgLocalName
+                  TagIds = tagIdMap
+                  MatchTempNames = matchTempNames
+                  NextMatchTemp = 0
+                  StringLiterals = stringLiteralMap
+                  ContextFunctions = Map.empty
+                  ContextParams = Map.empty
+                  PendingUseBindings = ref []
+                  RecordLayouts = Map.empty
+                  TypeLayouts = typeLayouts
+                  TypeFieldTypes = typeFieldTypes
+                  RecordFieldTypes = Map.empty
+                  ParamTypes = Map.empty }
+            let bodyCode =
+                topLevelExprs
+                |> List.map (fun expr -> $"{transpileExpression env expr}\n    drop")
+                |> String.concat "\n    "
+            let header =
+                if String.IsNullOrWhiteSpace localsSig then ""
+                else " " + localsSig
+            $"  (func $__nanyx_start{header}\n    {bodyCode}\n  )", "  (start $__nanyx_start)"
 
     let moduleUsesDbgHelpers = moduleUsesRegularDbg || moduleUsesDbgString
 
@@ -2069,6 +2157,8 @@ let transpileModuleToWat (module': Module) : string =
         let parts =
             [ if not (String.IsNullOrWhiteSpace allImports) then allImports
               if not (String.IsNullOrWhiteSpace dataSegments) then dataSegments
-              if not (String.IsNullOrWhiteSpace renderedFunctions) then renderedFunctions ]
+              if not (String.IsNullOrWhiteSpace renderedFunctions) then renderedFunctions
+              if not (String.IsNullOrWhiteSpace renderedStartFunction) then renderedStartFunction
+              if not (String.IsNullOrWhiteSpace startDirective) then startDirective ]
         let body = String.concat "\n\n" parts
         $"(module\n{body}\n)"

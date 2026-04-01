@@ -1,6 +1,6 @@
 <Solution>
   <Folder Name="/Nanyx.Compiler.Cli/">
-    <Project Path="Nanyx.Compiler.Cli/NanyxCompiler.Cli.fsproj" />
+    <Project Path="Nanyx.Compiler.Cli/NanyxCompiler.Cli.csproj" />
   </Folder>
   <Folder Name="/Nanyx.Compiler.Wasm.Tests/">
     <Project Path="Nanyx.Compiler.Wasm.Tests/Nanyx.Compiler.Wasm.Test.fsproj" />

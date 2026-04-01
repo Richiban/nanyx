@@ -1,6 +1,7 @@
 module TranspilerWasmTestHelpers
 
 open System.IO
+open NyxCompiler
 open Parser.Program
 open Transpiler.Wasm.CodeGen
 
@@ -20,6 +21,16 @@ let transpileWat (source: string) =
     match parseModule source with
     | Result.Ok ast -> transpileModuleToWat ast
     | Result.Error err -> failwith $"Parse error: {err}"
+
+let transpileWatFile (filePath: string) =
+    match Compiler.compileFile filePath with
+    | result when not result.Diagnostics.IsEmpty ->
+        let messages = result.Diagnostics |> List.map (fun d -> d.Message) |> String.concat "\n"
+        failwith $"Compile error: {messages}"
+    | result ->
+        match result.Typed with
+        | Some typed -> transpileModuleToWat typed.Module
+        | None -> failwith "Compile error: no typed module produced"
 
 let assertFixture featureName baseName =
     let source = loadFeatureFile featureName (baseName + ".nyx")

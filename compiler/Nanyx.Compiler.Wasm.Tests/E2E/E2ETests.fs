@@ -18,6 +18,12 @@ let private runE2ETest testName =
     let actual = transpileWat source |> normalizeOutput
     Assert.Equal(expected, actual)
 
+let private runE2EFileTest testName =
+    let inputPath = Path.Combine(e2eRootDir, testName, "input.nyx")
+    let expected = loadE2EFile testName "expected.wat" |> normalizeOutput
+    let actual = transpileWatFile inputPath |> normalizeOutput
+    Assert.Equal(expected, actual)
+
 [<Fact>]
 let ``E2E - one - hello world`` () =
     runE2ETest "one"
@@ -97,3 +103,11 @@ let ``E2E - nineteen - combined context types`` () =
 [<Fact>]
 let ``E2E - twenty - parameterized context instances`` () =
     runE2ETest "twenty"
+
+[<Fact>]
+let ``E2E - twentyone - import from other file`` () =
+    runE2EFileTest "twentyone"
+
+[<Fact>]
+let ``E2E - twentytwo - top-level main call emits start`` () =
+    runE2ETest "twentytwo"

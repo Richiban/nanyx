@@ -92,6 +92,93 @@ module Compiler =
             | _ -> None)
         |> List.collect id
 
+    let private exportedValueDefs (module': Module) =
+        module'
+        |> List.choose (function
+            | Def (ValueDef(true, name, typeOpt, expr)) -> Some (name, typeOpt, expr)
+            | _ -> None)
+
+    let private removeImportStatements (module': Module) =
+        module'
+        |> List.filter (function
+            | Import _ -> false
+            | _ -> true)
+
+    let private renameQualifiedMembersInExpr (alias: string) (expr: Expression) : Expression =
+        let rec mapExpr current =
+            match current with
+            | MemberAccess(IdentifierExpr(baseName, rangeOpt), fieldName, memberRangeOpt) when baseName = alias ->
+                IdentifierExpr($"{alias}.{fieldName}", memberRangeOpt |> Option.orElse rangeOpt)
+            | FunctionCall(name, rangeOpt, args) ->
+                FunctionCall(name, rangeOpt, args |> List.map mapExpr)
+            | Lambda(parameters, body) ->
+                Lambda(parameters, mapExpr body)
+            | BinaryOp(op, left, right) ->
+                BinaryOp(op, mapExpr left, mapExpr right)
+            | Pipe(value, name, rangeOpt, args) ->
+                Pipe(mapExpr value, name, rangeOpt, args |> List.map mapExpr)
+            | Block statements ->
+                Block(statements |> List.map mapStatement)
+            | Match(values, arms) ->
+                let mappedValues = values |> List.map mapExpr
+                let mappedArms = arms |> List.map (fun (patterns, armExpr) -> patterns, mapExpr armExpr)
+                Match(mappedValues, mappedArms)
+            | TupleExpr items -> TupleExpr(items |> List.map mapExpr)
+            | RecordExpr fields ->
+                RecordExpr(
+                    fields
+                    |> List.map (function
+                        | NamedField(name, value) -> NamedField(name, mapExpr value)
+                        | PositionalField value -> PositionalField(mapExpr value)))
+            | ListExpr items -> ListExpr(items |> List.map mapExpr)
+            | TagExpr(tagName, payloadOpt) -> TagExpr(tagName, payloadOpt |> Option.map mapExpr)
+            | IfExpr(cond, thenExpr, elseExpr) ->
+                IfExpr(mapExpr cond, mapExpr thenExpr, mapExpr elseExpr)
+            | MemberAccess(baseExpr, fieldName, rangeOpt) -> MemberAccess(mapExpr baseExpr, fieldName, rangeOpt)
+            | ContextMemberCall(ctxType, memberName, args) ->
+                ContextMemberCall(ctxType, memberName, args |> List.map mapExpr)
+            | UseIn(binding, body) ->
+                let mappedBinding =
+                    match binding with
+                    | UseValue valueExpr -> UseValue(mapExpr valueExpr)
+                    | UseContextInstance(ctxType, valueExpr) -> UseContextInstance(ctxType, mapExpr valueExpr)
+                UseIn(mappedBinding, mapExpr body)
+            | InterpolatedString parts ->
+                InterpolatedString(
+                    parts
+                    |> List.map (function
+                        | StringText text -> StringText text
+                        | StringExpr value -> StringExpr(mapExpr value)))
+            | WorkflowBindExpr(keyword, value) -> WorkflowBindExpr(keyword, mapExpr value)
+            | WorkflowReturnExpr value -> WorkflowReturnExpr(mapExpr value)
+            | ContextMemberAccess _
+            | UnitExpr
+            | LiteralExpr _
+            | IdentifierExpr _ -> current
+        and mapStatement statement =
+            match statement with
+            | DefStatement(isExport, name, typeOpt, value) -> DefStatement(isExport, name, typeOpt, mapExpr value)
+            | ExprStatement value -> ExprStatement(mapExpr value)
+            | UseStatement binding ->
+                match binding with
+                | UseValue valueExpr -> UseStatement(UseValue(mapExpr valueExpr))
+                | UseContextInstance(ctxType, valueExpr) -> UseStatement(UseContextInstance(ctxType, mapExpr valueExpr))
+            | ImportStatement _
+            | TypeDefStatement _ -> statement
+        mapExpr expr
+
+    let private importedValueDefsForModule (item: ImportItem) (typed: TypedModule) : Module =
+        let exportedDefs = exportedValueDefs typed.Module
+        match item.Alias with
+        | None ->
+            exportedDefs
+            |> List.map (fun (name, typeOpt, expr) -> Def (ValueDef(false, name, typeOpt, expr)))
+        | Some qualifier ->
+            exportedDefs
+            |> List.map (fun (name, typeOpt, expr) ->
+                let renamedExpr = renameQualifiedMembersInExpr qualifier expr
+                Def (ValueDef(false, $"{qualifier}.{name}", typeOpt, renamedExpr)))
+
     let private exportedValueNames (module': Module) =
         module'
         |> List.choose (function
@@ -283,6 +370,7 @@ module Compiler =
                 let mutable env = TypeEnv.empty
                 let mutable state = NyxCompiler.Infer.emptyState
                 let mutable errors: Diagnostic list = []
+                let mutable importedDefs: Module = []
                 for item in imports do
                     match resolveImportPath baseDir item with
                     | Error diag -> errors <- errors @ [ diag ]
@@ -301,9 +389,11 @@ module Compiler =
                                 |> Map.filter (fun name _ -> exportedTypes.Contains name)
                             env <- extendEnvWithImport env qualifier filteredTypes
                             state <- { state with TypeDefs = mergeTypeDefs state.TypeDefs filteredTypeDefs }
+                            importedDefs <- importedDefs @ (importedValueDefsForModule item typed)
                 if not errors.IsEmpty then
                     Error errors
                 else
+                    let moduleForCodegen = importedDefs @ (removeImportStatements desugared)
                     match NyxCompiler.Infer.inferModuleWithEnv env state desugared with
                     | Error diagnostics -> Error diagnostics
                     | Ok (types, items, (state: NyxCompiler.Infer.InferState)) ->
@@ -357,7 +447,7 @@ module Compiler =
                                     | TypedDef (TypedTypeDef _)
                                     | TypedImport _
                                     | TypedModuleDecl _ -> item)
-                            Ok { Module = desugared
+                            Ok { Module = moduleForCodegen
                                  Types = resolvedTypes
                                  TypeDefs = resolvedTypeDefs
                                  Items = resolvedItems }
