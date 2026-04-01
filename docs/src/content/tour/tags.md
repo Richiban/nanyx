@@ -16,7 +16,7 @@ def y: #mySecondTag = #mySecondTag
 
 ## Tag unions
 
-Tags are most useful in tag unions, where they act like enums or discriminated unions:
+Tags can carry data and are most useful in tag unions, where they act like enums or discriminated unions:
 
 ```nanyx
 type Color = #red | #green | #blue
@@ -33,13 +33,12 @@ type Color =
 Tag unions are great for readable flags:
 
 ```nanyx
-def openFile
-  : string, (#read | #readwrite) ->
+def openFile: string, (#read | #readwrite) -> File
   = { fileName, mode ->
     ...
   }
 
-openFile("file.txt", #readwrite)
+def file = openFile("file.txt", #readwrite)
 ```
 
 ## Polymorphic tag unions
