@@ -35,7 +35,7 @@ const Index = () => {
           </p>
           <div className="flex items-center justify-center gap-4">
             <Link
-              to="/docs/getting-started/what-is-nanyx"
+              to="/docs/getting-started/"
               className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors shadow-md shadow-primary/20"
             >
               Get Started
