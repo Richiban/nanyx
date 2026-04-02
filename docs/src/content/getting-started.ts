@@ -93,6 +93,10 @@ const cookbookFiles = import.meta.glob("./cookbook/*.md", {
   query: "?raw",
   eager: true,
 });
+const specificationsFiles = import.meta.glob("./specifications/*.md", {
+  query: "?raw",
+  eager: true,
+});
 
 export const overviewPages = loadSection(overviewFiles as Record<string, { default: string }>);
 export const foundationsPages = loadSection(foundationsFiles as Record<string, { default: string }>);
@@ -104,3 +108,4 @@ export const comingFromOtherLanguagesPages = loadSection(
 );
 export const stdlibPages = loadSection(stdlibFiles as Record<string, { default: string }>);
 export const cookbookPages = loadSection(cookbookFiles as Record<string, { default: string }>);
+export const specificationsPages = loadSection(specificationsFiles as Record<string, { default: string }>);

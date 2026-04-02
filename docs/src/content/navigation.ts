@@ -7,6 +7,7 @@ import {
   comingFromOtherLanguagesPages,
   stdlibPages,
   cookbookPages,
+  specificationsPages,
 } from "./getting-started";
 import type { DocPage } from "./getting-started";
 
@@ -65,6 +66,12 @@ export const navSections: NavSection[] = [
     basePath: "/docs/cookbook",
     icon: "BookOpen",
     pages: cookbookPages,
+  },
+  {
+    title: "Specifications",
+    basePath: "/docs/specifications",
+    icon: "BookOpen",
+    pages: specificationsPages,
   },
 ];
 

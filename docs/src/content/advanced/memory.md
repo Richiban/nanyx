@@ -25,9 +25,11 @@ def main = {
   def x = mut 0 -- Error: requires memory context
 }
 
-memory {
-  def x = mut 0 -- OK
-  x := 1
+def main = {
+  memory {
+    def x = mut 0 -- OK
+    x := 1
+  }
 }
 ```
 
@@ -41,6 +43,36 @@ memory {
 }
 ```
 
+## Values cannot escape memory scope
+
+Values that require the `memory` context cannot be returned out of a `memory { ... }` scope.
+
+```nanyx
+def bad = {
+  memory {
+    def arr = MArray.of([1, 2, 3])
+    arr -- Error: value requires memory context and cannot escape this scope
+  }
+}
+```
+
+To return data, convert it to an immutable value before leaving the scope:
+
+```nanyx
+def good = {
+  memory {
+    def arr = MArray.of([1, 2, 3])
+    MArray.toList(arr) -- OK
+  }
+}
+```
+
+This is how Nanyx performs escape analysis. Instead of a separate escape-analysis pass, the compiler tracks context requirements in types. If a value's type still needs `memory`, it can only be used where `memory` is available, so it cannot leak into pure code.
+
+For the detailed proposal, see [Specifications: Context-qualified types](../specifications/context-qualified-types.md).
+
+For the general model behind this, see [Contexts: Contexts Are Part of the Type](./contexts.md#contexts-are-part-of-the-type).
+
 ## No global mutable state
 
-Because `memory` is scoped, global mutable state is effectively impossible. Top-level `mut` values fail to compile.
+Because `memory` is scoped, global mutable state is effectively impossible. Top-level `mut` values will fail to compile because a top-level definition cannot be inside a context.
