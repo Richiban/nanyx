@@ -185,7 +185,7 @@
     local.set $msg
     local.get $msg
     local.tee $__dbg_tmp
-    call $dbg
+    call $dbg_str
     local.get $__dbg_tmp
   )
   (export "main" (func $main))

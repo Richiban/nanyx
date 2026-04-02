@@ -116,7 +116,7 @@ internal static class CliCommands
         try
         {
             var finalOutputPath = string.IsNullOrWhiteSpace(outputPath) ? DefaultWasmOutputPath(inputFile) : outputPath!;
-            var wat = CodeGen.transpileModuleToWat(result.Typed.Value.Module);
+            var wat = CodeGen.transpileTypedModuleToWat(result.Typed.Value);
             File.WriteAllText(finalOutputPath, wat);
             Console.WriteLine($"WASM (WAT) emitted: {finalOutputPath}");
             return 0;

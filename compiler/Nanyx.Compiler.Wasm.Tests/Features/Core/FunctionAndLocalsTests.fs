@@ -1,5 +1,7 @@
 module TranspilerWasmTests.Features.Core.FunctionAndLocals
 
+open System
+open System.IO
 open Xunit
 open TranspilerWasmTestHelpers
 
@@ -127,3 +129,22 @@ let ``Transpile magic dbg for payload tag literal`` () =
 
     Assert.Contains("(import \"env\" \"dbg_tag_payload_some\" (func $dbg_tag_payload_some (param i32)))", wat)
     Assert.Contains("call $dbg_tag_payload_some", wat)
+
+[<Fact>]
+let ``Transpile interpolated dbg string from file`` () =
+    let dir = Path.Combine(Path.GetTempPath(), "nanyx-wasm-interp-" + Guid.NewGuid().ToString("N"))
+    Directory.CreateDirectory(dir) |> ignore
+    try
+        let childPath = Path.Combine(dir, "child.nyx")
+        let mainPath = Path.Combine(dir, "main.nyx")
+        File.WriteAllText(childPath, "export def double = { x -> x * 2 }")
+        File.WriteAllText(mainPath, "import \"child.nyx\" as child\n\ndef main = {\n  def result = child.double(21)\n  dbg(\"Result: {result}\")\n}")
+
+        let wat = transpileWatFile mainPath
+
+        Assert.Contains("call $dbg_str", wat)
+        Assert.Contains("__interp_cursor", wat)
+        Assert.Contains("i32.const 82", wat)
+    finally
+        if Directory.Exists(dir) then
+            Directory.Delete(dir, true)

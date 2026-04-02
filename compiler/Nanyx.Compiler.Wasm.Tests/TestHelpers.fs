@@ -29,7 +29,7 @@ let transpileWatFile (filePath: string) =
         failwith $"Compile error: {messages}"
     | result ->
         match result.Typed with
-        | Some typed -> transpileModuleToWat typed.Module
+        | Some typed -> transpileTypedModuleToWat typed
         | None -> failwith "Compile error: no typed module produced"
 
 let assertFixture featureName baseName =

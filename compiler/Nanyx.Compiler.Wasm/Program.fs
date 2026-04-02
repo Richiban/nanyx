@@ -36,7 +36,7 @@ let main argv =
                 else
                     match result.Typed with
                     | Some typed ->
-                        let wat = transpileModuleToWat typed.Module
+                        let wat = transpileTypedModuleToWat typed
                         File.WriteAllText(outputFile, wat)
                         printfn "Successfully transpiled %s -> %s" inputFile outputFile
                         0

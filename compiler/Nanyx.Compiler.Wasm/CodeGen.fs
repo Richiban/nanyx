@@ -2,11 +2,12 @@ module Transpiler.Wasm.CodeGen
 
 open System
 open System.Text
+open NyxCompiler
 open Parser.Program
 
 type private ContextFn = string * int * int
 
-type private TranspileEnv = { KnownFunctions: Set<string>; FunctionArities: Map<string, int>; FunctionContextRequirements: Map<string, string list>; Locals: Map<string, string>; DbgTempLocal: string option; TagIds: Map<string, int>; MatchTempNames: string list; NextMatchTemp: int; StringLiterals: Map<string, int>; ContextFunctions: Map<string, ContextFn>; ContextParams: Map<string, string>; PendingUseBindings: Map<string, ContextFn> list ref; RecordLayouts: Map<string, string list>; TypeLayouts: Map<string, string list>; TypeFieldTypes: Map<string, Map<string, string>>; RecordFieldTypes: Map<string, Map<string, string>>; ParamTypes: Map<string, string> }
+type private TranspileEnv = { KnownFunctions: Set<string>; FunctionArities: Map<string, int>; FunctionContextRequirements: Map<string, string list>; Locals: Map<string, string>; DbgTempLocal: string option; TagIds: Map<string, int>; MatchTempNames: string list; NextMatchTemp: int; StringLiterals: Map<string, int>; ContextFunctions: Map<string, ContextFn>; ContextParams: Map<string, string>; PendingUseBindings: Map<string, ContextFn> list ref; RecordLayouts: Map<string, string list>; TypeLayouts: Map<string, string list>; TypeFieldTypes: Map<string, Map<string, string>>; RecordFieldTypes: Map<string, Map<string, string>>; ParamTypes: Map<string, string>; ValueTypes: Map<string, string> }
 
 let private ctxFnName (name: string, _, _) = name
 let private ctxFnSlot (_, slot: int, _) = slot
@@ -239,6 +240,76 @@ let private buildStringLiteralMap (literals: string list) =
             value, currentOffset, dataBytes)
     let map = entries |> List.map (fun (value, baseOffset, _) -> value, baseOffset + 4) |> Map.ofList
     map, entries
+
+let private trySimpleTypeName (ty: Ty) =
+    match ty with
+    | TyPrimitive "string" -> Some "string"
+    | TyPrimitive "int" -> Some "int"
+    | TyPrimitive "bool" -> Some "bool"
+    | _ -> None
+
+let private collectTypedValueTypes (typedExpr: TypedExpr) =
+    let rec collectExpr (acc: Map<string, string>) (expr: TypedExpr) =
+        let accWithBody =
+            match expr.Body with
+            | Some body -> collectExpr acc body
+            | None -> acc
+        let accWithStatements =
+            match expr.Statements with
+            | Some statements -> statements |> List.fold collectStatement accWithBody
+            | None -> accWithBody
+        match expr.MatchArms with
+        | Some arms -> arms |> List.fold (fun state (_, armExpr) -> collectExpr state armExpr) accWithStatements
+        | None -> accWithStatements
+    and collectStatement (acc: Map<string, string>) statement =
+        match statement with
+        | TypedDefStatement(_, name, _, expr) ->
+            let updated =
+                match trySimpleTypeName expr.Type with
+                | Some tyName -> acc |> Map.add name tyName
+                | None -> acc
+            collectExpr updated expr
+        | TypedExprStatement expr -> collectExpr acc expr
+        | TypedUseStatement(_, exprOpt) ->
+            match exprOpt with
+            | Some expr -> collectExpr acc expr
+            | None -> acc
+        | TypedImportStatement _
+        | TypedTypeDefStatement _ -> acc
+    collectExpr Map.empty typedExpr
+
+let private tryGetExprTypeName (env: TranspileEnv) (expr: Expression) =
+    match expr with
+    | LiteralExpr(StringLit _) -> Some "string"
+    | LiteralExpr(IntLit _) -> Some "int"
+    | LiteralExpr(BoolLit _) -> Some "bool"
+    | InterpolatedString _ -> Some "string"
+    | IdentifierExpr(name, _) ->
+        env.ValueTypes |> Map.tryFind name
+        |> Option.orElseWith (fun () -> env.ParamTypes |> Map.tryFind name)
+    | MemberAccess(IdentifierExpr(varName, _), fieldName, _) ->
+        match env.RecordFieldTypes |> Map.tryFind varName with
+        | Some fieldTypes -> fieldTypes |> Map.tryFind fieldName
+        | None -> None
+    | _ -> None
+
+let private collectInterpolatedStringExpr (expr: Expression) : bool =
+    match expr with
+    | InterpolatedString _ -> true
+    | _ -> false
+
+let private interpolationLocalNames =
+    [ "__interp_len"
+      "__interp_base"
+      "__interp_cursor"
+      "__interp_ptr"
+      "__interp_copy_len"
+      "__interp_src"
+      "__interp_tmp"
+      "__interp_start"
+      "__interp_lo"
+      "__interp_hi"
+      "__interp_swap" ]
 
 let private collectContextUseBindings (expr: Expression) : (string * Expression) list list =
     // Helper to extract bindings from a record expression
@@ -503,11 +574,7 @@ let rec private usesHeapAllocationExpr (expr: Expression) : bool =
     | UseIn(_, body) -> usesHeapAllocationExpr body
     | MemberAccess(inner, _, _) -> usesHeapAllocationExpr inner
     | TagExpr(_, payload) -> payload |> Option.exists usesHeapAllocationExpr
-    | InterpolatedString parts ->
-        parts
-        |> List.exists (function
-            | StringText _ -> false
-            | StringExpr inner -> usesHeapAllocationExpr inner)
+    | InterpolatedString _ -> true
     | WorkflowBindExpr(_, value)
     | WorkflowReturnExpr value -> usesHeapAllocationExpr value
     | ContextMemberAccess(_, _) -> false
@@ -849,6 +916,57 @@ and private collectTagNamesPattern (pattern: Pattern) : string list =
     | ElsePattern -> []
 
 let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : string =
+    let renderStaticBytes bytes =
+        bytes
+        |> Array.toList
+        |> List.map (fun b ->
+            $"local.get $__interp_cursor\n    i32.const {int b}\n    i32.store8\n    local.get $__interp_cursor\n    i32.const 1\n    i32.add\n    local.set $__interp_cursor")
+        |> String.concat "\n    "
+
+    let renderIntLength exprCode =
+        $"{exprCode}\n    local.set $__interp_tmp\n    local.get $__interp_tmp\n    i32.const 0\n    i32.lt_s\n    if\n      local.get $__interp_len\n      i32.const 1\n      i32.add\n      local.set $__interp_len\n      local.get $__interp_tmp\n      i32.const -1\n      i32.mul\n      local.set $__interp_tmp\n    end\n    local.get $__interp_tmp\n    i32.const 0\n    i32.eq\n    if\n      local.get $__interp_len\n      i32.const 1\n      i32.add\n      local.set $__interp_len\n    else\n      loop $interp_int_len\n        local.get $__interp_len\n        i32.const 1\n        i32.add\n        local.set $__interp_len\n        local.get $__interp_tmp\n        i32.const 10\n        i32.div_u\n        local.set $__interp_tmp\n        local.get $__interp_tmp\n        i32.const 0\n        i32.ne\n        br_if $interp_int_len\n      end\n    end"
+
+    let renderIntWrite exprCode =
+        $"{exprCode}\n    local.set $__interp_tmp\n    local.get $__interp_tmp\n    i32.const 0\n    i32.lt_s\n    if\n      local.get $__interp_cursor\n      i32.const 45\n      i32.store8\n      local.get $__interp_cursor\n      i32.const 1\n      i32.add\n      local.set $__interp_cursor\n      local.get $__interp_tmp\n      i32.const -1\n      i32.mul\n      local.set $__interp_tmp\n    end\n    local.get $__interp_tmp\n    i32.const 0\n    i32.eq\n    if\n      local.get $__interp_cursor\n      i32.const 48\n      i32.store8\n      local.get $__interp_cursor\n      i32.const 1\n      i32.add\n      local.set $__interp_cursor\n    else\n      local.get $__interp_cursor\n      local.set $__interp_start\n      loop $interp_digits\n        local.get $__interp_cursor\n        local.get $__interp_tmp\n        i32.const 10\n        i32.rem_u\n        i32.const 48\n        i32.add\n        i32.store8\n        local.get $__interp_cursor\n        i32.const 1\n        i32.add\n        local.set $__interp_cursor\n        local.get $__interp_tmp\n        i32.const 10\n        i32.div_u\n        local.set $__interp_tmp\n        local.get $__interp_tmp\n        i32.const 0\n        i32.ne\n        br_if $interp_digits\n      end\n      local.get $__interp_start\n      local.set $__interp_lo\n      local.get $__interp_cursor\n      i32.const 1\n      i32.sub\n      local.set $__interp_hi\n      block $interp_rev_done\n        loop $interp_rev\n          local.get $__interp_lo\n          local.get $__interp_hi\n          i32.ge_u\n          br_if $interp_rev_done\n          local.get $__interp_lo\n          i32.load8_u\n          local.set $__interp_swap\n          local.get $__interp_lo\n          local.get $__interp_hi\n          i32.load8_u\n          i32.store8\n          local.get $__interp_hi\n          local.get $__interp_swap\n          i32.store8\n          local.get $__interp_lo\n          i32.const 1\n          i32.add\n          local.set $__interp_lo\n          local.get $__interp_hi\n          i32.const 1\n          i32.sub\n          local.set $__interp_hi\n          br $interp_rev\n        end\n      end\n    end"
+
+    let renderStringCopy exprCode =
+        $"{exprCode}\n    local.set $__interp_ptr\n    local.get $__interp_ptr\n    i32.const 4\n    i32.sub\n    i32.load\n    local.set $__interp_copy_len\n    local.get $__interp_ptr\n    local.set $__interp_src\n    block $interp_copy_done\n      loop $interp_copy\n        local.get $__interp_copy_len\n        i32.const 0\n        i32.eq\n        br_if $interp_copy_done\n        local.get $__interp_cursor\n        local.get $__interp_src\n        i32.load8_u\n        i32.store8\n        local.get $__interp_cursor\n        i32.const 1\n        i32.add\n        local.set $__interp_cursor\n        local.get $__interp_src\n        i32.const 1\n        i32.add\n        local.set $__interp_src\n        local.get $__interp_copy_len\n        i32.const 1\n        i32.sub\n        local.set $__interp_copy_len\n        br $interp_copy\n      end\n    end"
+
+    let renderBoolLength exprCode =
+        $"{exprCode}\n    if\n      local.get $__interp_len\n      i32.const 4\n      i32.add\n      local.set $__interp_len\n    else\n      local.get $__interp_len\n      i32.const 5\n      i32.add\n      local.set $__interp_len\n    end"
+
+    let renderBoolWrite exprCode =
+        let trueBytes = renderStaticBytes (Encoding.UTF8.GetBytes "true")
+        let falseBytes = renderStaticBytes (Encoding.UTF8.GetBytes "false")
+        $"{exprCode}\n    if\n      {trueBytes}\n    else\n      {falseBytes}\n    end"
+
+    let renderInterpolationPartLength part =
+        match part with
+        | StringText text ->
+            let len = Encoding.UTF8.GetByteCount text
+            $"local.get $__interp_len\n    i32.const {len}\n    i32.add\n    local.set $__interp_len"
+        | StringExpr inner ->
+            let exprCode = transpileExpression env inner
+            match tryGetExprTypeName env inner with
+            | Some "string" ->
+                $"{exprCode}\n    local.tee $__interp_ptr\n    i32.const 4\n    i32.sub\n    i32.load\n    local.get $__interp_len\n    i32.add\n    local.set $__interp_len"
+            | Some "int" -> renderIntLength exprCode
+            | Some "bool" -> renderBoolLength exprCode
+            | Some other -> failwith $"Unsupported interpolated value type for WASM MVP backend: {other}"
+            | None -> failwith $"Unable to determine interpolated value type for WASM MVP backend: {inner}"
+
+    let renderInterpolationPartWrite part =
+        match part with
+        | StringText text -> renderStaticBytes (Encoding.UTF8.GetBytes text)
+        | StringExpr inner ->
+            let exprCode = transpileExpression env inner
+            match tryGetExprTypeName env inner with
+            | Some "string" -> renderStringCopy exprCode
+            | Some "int" -> renderIntWrite exprCode
+            | Some "bool" -> renderBoolWrite exprCode
+            | Some other -> failwith $"Unsupported interpolated value type for WASM MVP backend: {other}"
+            | None -> failwith $"Unable to determine interpolated value type for WASM MVP backend: {inner}"
+
     match expr with
     | UnitExpr ->
         "i32.const 0"
@@ -860,6 +978,10 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
         match env.StringLiterals |> Map.tryFind value with
         | Some offset -> $"i32.const {offset}"
         | None -> failwith $"Internal error: missing string literal offset for {value}"
+    | InterpolatedString parts ->
+        let lengthCode = parts |> List.map renderInterpolationPartLength |> String.concat "\n    "
+        let writeCode = parts |> List.map renderInterpolationPartWrite |> String.concat "\n    "
+        $"i32.const 0\n    local.set $__interp_len\n    {lengthCode}\n    global.get $heap_ptr\n    local.tee $__interp_base\n    local.get $__interp_len\n    i32.store\n    local.get $__interp_base\n    i32.const 4\n    i32.add\n    local.set $__interp_cursor\n    {writeCode}\n    local.get $__interp_cursor\n    i32.const 0\n    i32.store8\n    local.get $__interp_base\n    local.get $__interp_len\n    i32.const 5\n    i32.add\n    i32.add\n    global.set $heap_ptr\n    local.get $__interp_base\n    i32.const 4\n    i32.add"
     | IdentifierExpr(name, _) ->
         match env.Locals |> Map.tryFind name with
         | Some localName -> $"local.get ${localName}"
@@ -1089,20 +1211,9 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
             match flattenCallArgs args with
             | [single] -> single
             | _ -> failwith "dbg expects a single argument"
-        // Helper to detect if expression is a string-typed member access or param
         let isStringTypedExpr expr =
-            match expr with
-            | IdentifierExpr(varName, _) ->
-                match env.ParamTypes |> Map.tryFind varName with
-                | Some "string" -> true
-                | _ -> false
-            | MemberAccess(IdentifierExpr(varName, _), fieldName, _) ->
-                match env.RecordFieldTypes |> Map.tryFind varName with
-                | Some fieldTypes ->
-                    match fieldTypes |> Map.tryFind fieldName with
-                    | Some "string" -> true
-                    | _ -> false
-                | None -> false
+            match tryGetExprTypeName env expr with
+            | Some "string" -> true
             | _ -> false
         let argCode =
             match argExpr with
@@ -1353,21 +1464,27 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                             let fieldTypes = fieldInfo |> Map.ofList
                             { env with
                                 RecordLayouts = env.RecordLayouts |> Map.add name sortedFieldNames
-                                RecordFieldTypes = env.RecordFieldTypes |> Map.add name fieldTypes }
+                                RecordFieldTypes = env.RecordFieldTypes |> Map.add name fieldTypes
+                                ValueTypes = env.ValueTypes |> Map.add name "record" }
                         | TupleExpr items ->
                             let fieldNames = items |> List.mapi (fun i _ -> string i)
                             let fieldTypes = items |> List.mapi (fun i expr -> (string i, inferTypeFromExpr expr)) |> Map.ofList
                             { env with
                                 RecordLayouts = env.RecordLayouts |> Map.add name fieldNames
-                                RecordFieldTypes = env.RecordFieldTypes |> Map.add name fieldTypes }
+                                RecordFieldTypes = env.RecordFieldTypes |> Map.add name fieldTypes
+                                ValueTypes = env.ValueTypes |> Map.add name "tuple" }
                         | FunctionCall(typeName, _, _) when env.TypeLayouts |> Map.containsKey typeName ->
                             // Type constructor call - use the type's field types
                             let typeFieldTypes = env.TypeFieldTypes |> Map.tryFind typeName |> Option.defaultValue Map.empty
                             let typeLayout = env.TypeLayouts |> Map.tryFind typeName |> Option.defaultValue []
                             { env with
                                 RecordLayouts = env.RecordLayouts |> Map.add name typeLayout
-                                RecordFieldTypes = env.RecordFieldTypes |> Map.add name typeFieldTypes }
-                        | _ -> env
+                                RecordFieldTypes = env.RecordFieldTypes |> Map.add name typeFieldTypes
+                                ValueTypes = env.ValueTypes |> Map.add name typeName }
+                        | _ ->
+                            match tryGetExprTypeName env rhs with
+                            | Some tyName -> { env with ValueTypes = env.ValueTypes |> Map.add name tyName }
+                            | None -> env
                     let restCode = transpileStatements updatedEnv tail
                     $"{rhsCode}\n    local.set ${localName}\n    {restCode}"
                 | None ->
@@ -1463,7 +1580,7 @@ let private getLayoutFromTypeExpr (typeLayouts: Map<string, string list>) (typeF
         Some (fieldNames, fieldTypes)
     | _ -> None
 
-let transpileModuleToWat (module': Module) : string =
+let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map<string, TypedExpr>) (typedValueTypes: Map<string, string>) : string =
     let defs =
         module'
         |> List.choose (function
@@ -1604,7 +1721,7 @@ let transpileModuleToWat (module': Module) : string =
 
     let stringLiteralMap, stringLiteralData = buildStringLiteralMap stringLiterals
 
-    let renderFunction (name: string) (defTypeOpt: TypeExpr option) (expr: Expression) (exportFn: bool) (pendingUseBindings: Map<string, ContextFn> list) =
+    let renderFunction (name: string) (defTypeOpt: TypeExpr option) (expr: Expression) (typedExprOpt: TypedExpr option) (exportFn: bool) (pendingUseBindings: Map<string, ContextFn> list) =
             let parameters, bodyExpr = defBodyAndParameters expr
             let parameterNames = parameters |> List.map fst
             let parameterMap = createNameMap parameterNames
@@ -1644,6 +1761,36 @@ let transpileModuleToWat (module': Module) : string =
                 |> Map.toList
                 |> List.map snd
                 |> Set.ofList
+
+            let rec containsInterpolation expr =
+                match expr with
+                | InterpolatedString _ -> true
+                | Block statements -> statements |> List.exists (function | DefStatement(_, _, _, rhs) -> containsInterpolation rhs | ExprStatement value -> containsInterpolation value | _ -> false)
+                | BinaryOp(_, left, right) -> containsInterpolation left || containsInterpolation right
+                | IfExpr(cond, thenExpr, elseExpr) -> containsInterpolation cond || containsInterpolation thenExpr || containsInterpolation elseExpr
+                | FunctionCall(_, _, args) -> args |> List.exists containsInterpolation
+                | Lambda(_, body) -> containsInterpolation body
+                | Pipe(value, _, _, args) -> containsInterpolation value || (args |> List.exists containsInterpolation)
+                | TupleExpr items
+                | ListExpr items -> items |> List.exists containsInterpolation
+                | RecordExpr fields -> fields |> List.exists (function | NamedField(_, value) -> containsInterpolation value | PositionalField value -> containsInterpolation value)
+                | Match(values, arms) -> (values |> List.exists containsInterpolation) || (arms |> List.exists (fun (_, armExpr) -> containsInterpolation armExpr))
+                | UseIn(_, body) -> containsInterpolation body
+                | MemberAccess(inner, _, _) -> containsInterpolation inner
+                | TagExpr(_, payload) -> payload |> Option.exists containsInterpolation
+                | WorkflowBindExpr(_, value)
+                | WorkflowReturnExpr value -> containsInterpolation value
+                | ContextMemberCall(_, _, args) -> args |> List.exists containsInterpolation
+                | ContextMemberAccess(_, _)
+                | UnitExpr
+                | LiteralExpr _
+                | IdentifierExpr _ -> false
+
+            let usesInterpolation = containsInterpolation bodyExpr
+
+            if usesInterpolation then
+                for localName in interpolationLocalNames do
+                    usedLocalNames <- usedLocalNames |> Set.add localName
 
             let matchArity = countMatchArity bodyExpr
             let matchTempNames =
@@ -1708,6 +1855,17 @@ let transpileModuleToWat (module': Module) : string =
                     typeExprToString paramType |> Option.map (fun t -> paramName, t))
                 |> Map.ofList
 
+            let typedLocalValueTypes =
+                typedExprOpt
+                |> Option.map collectTypedValueTypes
+                |> Option.defaultValue Map.empty
+
+            let initialValueTypes =
+                typedValueTypes
+                |> Map.fold (fun acc key value -> acc |> Map.add key value) Map.empty
+                |> Map.fold (fun acc key value -> acc |> Map.add key value) initialParamTypes
+                |> Map.fold (fun acc key value -> acc |> Map.add key value) typedLocalValueTypes
+
             // Check if this function requires contexts (from TypeWithContext annotation)
             let requiredContextFns = functionContextRequirements |> Map.tryFind name |> Option.defaultValue []
             let contextParamNames =
@@ -1769,7 +1927,8 @@ let transpileModuleToWat (module': Module) : string =
                   TypeLayouts = typeLayouts
                   TypeFieldTypes = typeFieldTypes
                   RecordFieldTypes = initialRecordFieldTypes
-                  ParamTypes = initialParamTypes }
+                  ParamTypes = initialParamTypes
+                  ValueTypes = initialValueTypes }
             let fn = sanitizeIdentifier name
             
             // Build parameter signature including context params
@@ -1788,12 +1947,16 @@ let transpileModuleToWat (module': Module) : string =
             let payloadLocals = collectPayloadLocalsExpr bodyExpr |> List.distinct
             let payloadLocalNames = payloadLocals |> List.map (fun ident -> $"__payload_{ident}")
             let localsSig =
-                [ yield! (localNames |> List.map (fun localName -> localMap.[localName]))
-                  yield! matchTempNames
-                  yield! payloadLocalNames
-                  match dbgLocalName with
-                  | Some name -> yield name
-                  | None -> () ]
+                [
+                    yield! (localNames |> List.map (fun localName -> localMap.[localName]))
+                    yield! matchTempNames
+                    yield! payloadLocalNames
+                    if usesInterpolation then
+                        yield! interpolationLocalNames
+                    match dbgLocalName with
+                    | Some name -> yield name
+                    | None -> ()
+                ]
                 |> List.map (fun localName -> $"(local ${localName} i32)")
                 |> String.concat " "
             let functionHeader =
@@ -1811,11 +1974,12 @@ let transpileModuleToWat (module': Module) : string =
         defs
         |> List.map (fun (name, typeOpt, expr) ->
             let pending = contextBindingsByDef |> Map.tryFind name |> Option.defaultValue []
-            renderFunction name typeOpt expr true pending)
+            let typedExprOpt = typedFunctionBodies |> Map.tryFind name
+            renderFunction name typeOpt expr typedExprOpt true pending)
 
     let renderedContextFunctions =
         contextDefs
-        |> List.map (fun (name, typeOpt, expr) -> renderFunction name typeOpt expr false [])
+        |> List.map (fun (name, typeOpt, expr) -> renderFunction name typeOpt expr None false [])
 
     let renderedFunctions =
         renderedUserFunctions @ renderedContextFunctions
@@ -1882,7 +2046,8 @@ let transpileModuleToWat (module': Module) : string =
                   TypeLayouts = typeLayouts
                   TypeFieldTypes = typeFieldTypes
                   RecordFieldTypes = Map.empty
-                  ParamTypes = Map.empty }
+                  ParamTypes = Map.empty
+                  ValueTypes = typedValueTypes }
             let bodyCode =
                 topLevelExprs
                 |> List.map (fun expr -> $"{transpileExpression env expr}\n    drop")
@@ -2162,3 +2327,20 @@ let transpileModuleToWat (module': Module) : string =
               if not (String.IsNullOrWhiteSpace startDirective) then startDirective ]
         let body = String.concat "\n\n" parts
         $"(module\n{body}\n)"
+
+let transpileModuleToWat (module': Module) : string =
+    transpileModuleToWatCore module' Map.empty Map.empty
+
+let transpileTypedModuleToWat (typed: TypedModule) : string =
+    let typedBodies =
+        typed.Items
+        |> List.choose (function
+            | TypedDef (TypedValueDef(_, name, _, expr)) -> Some (name, expr)
+            | _ -> None)
+        |> Map.ofList
+    let typedValueTypes =
+        typed.Types
+        |> Map.toList
+        |> List.choose (fun (name, ty) -> trySimpleTypeName ty |> Option.map (fun tyName -> name, tyName))
+        |> Map.ofList
+    transpileModuleToWatCore typed.Module typedBodies typedValueTypes
