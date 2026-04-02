@@ -52,7 +52,9 @@ def bad = {
 }
 ```
 
-The example above is rejected because the result still requires `memory` and escapes the `memory` scope.
+The example above is rejected because the result still requires `@Memory` and escapes the `memory` scope.
+
+In the standard library naming, `@Memory` is the context and `memory { ... }` is the helper that creates that context for a scope.
 
 Converting to a context-free value before returning is valid:
 
@@ -67,7 +69,7 @@ def good = {
 
 ## Generality
 
-This mechanism is intentionally generic and applies to any context, not only `memory`:
+This mechanism is intentionally generic and applies to any context, not only `@Memory`:
 - mutable memory capabilities,
 - IO capabilities,
 - transaction or resource capabilities,

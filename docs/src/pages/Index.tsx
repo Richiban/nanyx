@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { ArrowRight, Rocket, Map, Library, BookOpen, View, Sparkles, Languages } from "lucide-react";
+import { ArrowRight, Rocket, Map, Library, BookOpen, ScrollText, View, Sparkles, Languages } from "lucide-react";
 import { navSections } from "@/content/navigation";
 
 const iconMap: Record<string, React.ElementType> = {
@@ -10,6 +10,7 @@ const iconMap: Record<string, React.ElementType> = {
   Languages,
   Library,
   BookOpen,
+  ScrollText,
 };
 
 const Index = () => {

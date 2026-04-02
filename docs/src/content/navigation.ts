@@ -70,7 +70,7 @@ export const navSections: NavSection[] = [
   {
     title: "Specifications",
     basePath: "/docs/specifications",
-    icon: "BookOpen",
+    icon: "ScrollText",
     pages: specificationsPages,
   },
 ];
