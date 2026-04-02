@@ -147,14 +147,12 @@ def area: Shape -> float = { shape ->
 
 ## Option Types
 
-Nanyx has no null values. Use Option types instead:
+Nanyx has no null values. Use tag unions to represent optional values instead:
 
 ```nanyx
-type Option(a) = #some(a) | #none
-
-def findUser: UserId -> Option(User) = { id ->
-  -- lookup logic
-  #some(user)  -- or #none if not found
+def findUser: UserId -> #some(User) | #notFound = { id ->
+  def found = ... -- lookup logic
+  if found then #some(user) else #notFound
 }
 ```
 
