@@ -104,6 +104,24 @@ def point: (int, int) = (10, 20)
 def coords: (x: int, y: int) = (x = 10, y = 20)
 ```
 
+## Unified tuples and records
+
+In Nanyx, tuples and records are one unified structure. You can mix positional and named fields in the same record, making a tuple just a record with all positional fields.
+
+```nanyx
+def mixed = (1, 2, label = "origin", unit = "px")
+```
+
+The only restriction is ordering: all positional fields must come before any named fields.
+
+```nanyx
+-- Valid
+def valid = (10, 20, x = 10, y = 20)
+
+-- Invalid (named field before positional field)
+-- def invalid = (x = 10, 20)
+```
+
 ## Tag Unions
 
 Tag unions (also called sum types or discriminated unions) represent values that can be one of several variants:
