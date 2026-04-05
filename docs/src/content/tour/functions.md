@@ -6,7 +6,27 @@ order: 4
 
 Functions are first-class values in Nanyx, meaning they can be passed as arguments, returned from other functions, and stored in data structures.
 
+Functions are written with braces, `{ ... }`, and optionally define parameters: `{ x -> ... }`. The parameter list is a comma-separated list of names, and the body is an expression that computes the result.
+
 ## Function Basics
+
+A function that takes no parameters (or, more specifically, take `unit` as input) is simply `{ ... }`:
+
+```nanyx
+def main = {
+  println("Hello, world!")
+}
+```
+
+You could also write it as 
+
+```nanyx
+def main = { () ->
+  println("Hello, world!")
+}
+```
+
+But this is almost never preferred, since the unit parameter list is implied when no parameters are specified.
 
 All functions in Nanyx take exactly one argument and return exactly one result. The function type signature is `a -> b`, where `a` is the input type and `b` is the output type.
 
@@ -20,7 +40,7 @@ def result = double(21)  -- 42
 
 ## Multi-Parameter Functions
 
-Since all functions take one argument, multi-parameter functions actually take a record (tuple):
+Since all functions take one argument, multi-parameter functions actually take a record (or tuple, see [Records and tuples](./records)) as their argument:
 
 ```nanyx
 def add: (int, int) -> int = { x, y -> x + y }

@@ -43,50 +43,9 @@ def active: bool = true
 
 ## Record Types
 
-Records are structural types with named fields:
+Records are structural types with named fields. They have their own Language Tour page covering record types, structural typing, optional fields, and the unified record/tuple model.
 
-```nanyx
--- Record type definition
-type Person = (
-  name: string
-  age: int
-  email: string
-)
-
--- Using the type
-def alice: Person = (
-  name = "Alice"
-  age = 30
-  email = "alice@example.com"
-)
-```
-
-## Structural typing
-
-Record types are structural, meaning compatibility is based on shape rather than explicit inheritance.
-
-```nanyx
-type Named = (name: string)
-type Person = (name: string)
-
-def john: Named = Person("John")
-```
-
-You can combine records with intersections:
-
-```nanyx
-type Person = Named & (age: int)
-```
-
-## Optional fields
-
-Records can contain optional members:
-
-```nanyx
-type Person = (name: string; petsName?: string)
-```
-
-Optional fields can also be modeled explicitly with tag unions if you need stricter control.
+See [Records and tuples](./records.md) for the full guide.
 
 ## Top and bottom types
 
@@ -121,6 +80,8 @@ def valid = (10, 20, x = 10, y = 20)
 -- Invalid (named field before positional field)
 -- def invalid = (x = 10, 20)
 ```
+
+See [Records and tuples](./records.md) for more on record shapes and field rules.
 
 ## Tag Unions
 
