@@ -12,11 +12,7 @@ In the spirit of Elm and Rust, Nanyx aims to have human readable and understanda
 
 ## Illegal states should be unrepresentable
 
-We believe that a language should make it easy to make illegal states unrepresentable. For example, tag unions can be used to precisely define the possible values of a type. In Nanyx, in the future, we want to take this a step further, and allow refinement of some types. For example, to express that some value must not only be an integer, but also that it must fall within a range, e.g. [0-99].
-
-## Min-gen
-
-Nanyx tries to provide a language that feels simultaneously high-level and powerful, but also small and simple. It does this by providing features that are general and composable, rather than adding special syntax or constructs for specific cases. This keeps the language surface minimal while still enabling a wide range of patterns.
+We believe that a language should make it easy to make illegal states unrepresentable. For example, tag unions can be used to precisely define the possible values of a type.
 
 ## No warnings
 
@@ -32,19 +28,21 @@ Instead, the Nanyx compiler follows the [dotnet analyzer model](https://learn.mi
 
 Represent meaning in the type. Use tag unions and descriptive cases instead of magic values or implicit failure.
 
-## Composable by default
+## Minimal surface, maximal leverage
 
-Favor small, orthogonal pieces that combine cleanly: pipelines, builders, and first-class functions that fit together without ceremony.
+Nanyx tries to provide a language that is high-level and powerful, but also _feels small and simple_. It does this by providing features that are general and composable, rather than adding special syntax or constructs for specific cases. This keeps the language surface minimal while still enabling a wide range of patterns.
 
-## Consistency beats special cases
+Favor small, orthogonal pieces that combine cleanly: pipelines, builders, and first-class functions that fit together without ceremony. 
 
-If two features overlap, prefer a single predictable rule. Consistency lowers the learning curve and makes tools easier to build.
+Add features sparingly and keep syntax small. If a feature is powerful, it should work broadly and reduce the need for additional ones. Consistency lowers the learning curve and makes tools easier to build.
+
+Operators and symbols should always have a single, clear meaning. For example, braces are always a function definition, not a record or a block of statements.
 
 ## Gradual feedback, not blocked flow
 
-Surface type information and diagnostics early, but keep iteration fast. The compiler should inform you without getting in the way of exploration. Unlike many languages, Nanyx does not block execution on most errors*, even name or type errors. Instead, it surfaces diagnostics whilst still allowing you to run your code, making it easier to iterate and learn.
+Surface type information and diagnostics early, but keep iteration fast. The compiler should inform you without getting in the way of exploration. Unlike many languages, Nanyx does not block execution on most errors†, even name or type errors. Instead, it surfaces diagnostics whilst still allowing you to run your code, making it easier to iterate and learn.
 
-* In debug mode. To complete a Release build there must be no errors
+† In debug mode. To complete a Release build there must be no errors
 
 ## Effect transparency
 
@@ -53,11 +51,6 @@ Side effects should be visible in types and in code structure. Contexts and work
 ## One language
 
 Nanyx is one programming language. The Nanyx compiler does not have feature flags or compiler plugins that change or extend the semantics of the language. We want to avoid fragmentation in the ecosystem where programs end up being written in different "dialects" of the language. There is one language, now and forever. Of course that does not imply that the language will not evolve over time.
-
-
-## Minimal surface, maximal leverage
-
-Add features sparingly and keep syntax small. If a feature is powerful, it should work broadly and reduce the need for additional ones.
 
 ## Performance you can reason about
 
