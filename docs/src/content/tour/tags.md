@@ -1,7 +1,7 @@
 ---
 title: "Tags"
 description: "Literal tags and tag unions"
-order: 7
+order: 3
 ---
 
 Tags are a foundational feature in Nanyx. A tag's name is its value and its type. Tags are similar to symbols in Ruby or atoms in Erlang.
