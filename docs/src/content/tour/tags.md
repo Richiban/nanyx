@@ -4,7 +4,9 @@ description: "Literal tags and tag unions"
 order: 3
 ---
 
-Tags are a foundational feature in Nanyx. A tag's name is its value and also its type. Tags are similar to symbols in Ruby or atoms in Erlang.
+Tags are a foundational feature in Nanyx, somewhat similar to symbols in Ruby or atoms in Erlang.
+
+A tag's name is its value and also its type.
 
 ## Tags as values and types
 
