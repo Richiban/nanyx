@@ -4,7 +4,7 @@ description: "Literal tags and tag unions"
 order: 3
 ---
 
-Tags are a foundational feature in Nanyx. A tag's name is its value and its type. Tags are similar to symbols in Ruby or atoms in Erlang.
+Tags are a foundational feature in Nanyx. A tag's name is its value and also its type. Tags are similar to symbols in Ruby or atoms in Erlang.
 
 ## Tags as values and types
 
@@ -16,10 +16,17 @@ def y: #mySecondTag = #mySecondTag
 
 ## Tag unions
 
-Tags can carry data and are most useful in tag unions, where they act like enums or discriminated unions:
+Tags don't seem to be much use on their own but, unlike other types in Nanyx, they can be combined into unions: a powerful way to model data. A tag union is a type that can be one of several tags:
 
 ```nanyx
 type Color = #red | #green | #blue
+```
+
+Using plain tags creates what other language might call an enum (although they are structural).
+
+Tags can also carry data meaning they can also emulate discriminated unions:
+
+```nanyx
 
 type Color =
   | #red
