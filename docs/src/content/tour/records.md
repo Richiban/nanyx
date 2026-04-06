@@ -12,7 +12,7 @@ Records and tuples are actually one unified feature in Nanyx; a tuple is just a 
 
 ## Record values
 
-Create a record by listing its fields and their values:
+Create a record by listing its fields and values inside parentheses. For named fields, use `name = value`:
 
 ```nanyx
 -- Record with named fields
@@ -23,10 +23,14 @@ def alice = (
 )
 ```
 
+You can also use positional fields:
+
 ```nanyx
 -- Record with positional fields (aka a tuple)
 def point = (10, 20)
 ```
+
+Because records and tuples are unified, both styles can be combined in one value:
 
 ```nanyx
 -- Mixed record with both positional and named fields
@@ -35,7 +39,7 @@ def mixed = (1, 2, label = "origin", unit = "px")
 
 ## Record types
 
-A record type is written in a very similar way to a record value:
+A record type uses the same shape as a record value, but with type annotations on fields:
 
 ```nanyx
 def config: (host: string, port: int) = (
@@ -44,7 +48,7 @@ def config: (host: string, port: int) = (
 )
 ```
 
-You can lift a record type into a type definition for reuse:
+When you use the same structure in multiple places, define a named type alias:
 
 ```nanyx
 type Person = (
@@ -54,7 +58,7 @@ type Person = (
 )
 ```
 
-You can then use the `Person` type in type annotations:
+Then reference that alias in annotations:
 
 ```nanyx
 def alice: Person = (
@@ -66,7 +70,7 @@ def alice: Person = (
 
 ## Structural typing
 
-Record types are structural, meaning compatibility is based on shape rather than explicit inheritance.
+Record types are structural, meaning compatibility is based on shape rather than explicit inheritance. If two types have compatible fields, they can be used interchangeably where appropriate.
 
 ```nanyx
 type Named = (name: string)
@@ -75,19 +79,17 @@ type Person = (name: string)
 def john: Named = Person("John")
 ```
 
-You can also combine records with intersections:
+You can also compose record requirements with intersections:
 
 ```nanyx
-
 type Person = Named & (age: int)
 ```
 
 ## Optional fields
 
-Records can contain optional members:
+Records can contain optional members when a field may be absent:
 
 ```nanyx
-
 type Person = (name: string; petsName?: string)
 ```
 
@@ -95,16 +97,15 @@ Optional fields can also be modeled explicitly with tag unions if you need stric
 
 ## Records and tuples
 
-In Nanyx, tuples and records are one unified structure. A tuple is just a record with positional fields.
+In Nanyx, tuples and records are one unified structure. A tuple is just a record whose fields are all positional.
 
-That means you can mix positional and named fields in the same value:
+This is why you can mix positional and named fields in the same value:
 
 ```nanyx
-
 def mixed = (1, 2, label = "origin", unit = "px")
 ```
 
-The only restriction is ordering: all positional fields must come before any named fields.
+The one ordering rule is: all positional fields must come before any named fields.
 
 ```nanyx
 -- Valid

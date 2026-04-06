@@ -6,30 +6,35 @@ order: 3
 
 Tags are a foundational feature in Nanyx, somewhat similar to symbols in Ruby or atoms in Erlang.
 
-A tag's name is its value and also its type.
+A tag is both a value and a type. The tag name identifies the exact value, which makes tags useful for precise modeling and pattern matching.
 
 ## Tags as values and types
 
+You can use tags directly as values:
+
 ```nanyx
 def x = #myTag
+```
 
+You can also annotate with a specific tag type:
+
+```nanyx
 def y: #mySecondTag = #mySecondTag
 ```
 
 ## Tag unions
 
-Tags don't seem to be much use on their own but, unlike other types in Nanyx, they can be combined into unions: a powerful way to model data. A tag union is a type that can be one of several tags:
+Single tags are most useful when combined into unions. A tag union is a type that can be one of several tagged cases:
 
 ```nanyx
 type Color = #red | #green | #blue
 ```
 
-Using plain tags creates what other language might call an enum (although they are structural).
+Using plain tags gives you an enum-like shape (while remaining structural).
 
-Tags can also carry data meaning they can also emulate discriminated unions:
+Tags can also carry payload data, which makes them equivalent to discriminated unions:
 
 ```nanyx
-
 type Color =
   | #red
   | #green
@@ -37,9 +42,11 @@ type Color =
   | #custom(string)
 ```
 
+This lets each case carry exactly the data it needs.
+
 ## Tags for function flags
 
-Tag unions are great for readable flags:
+Tag unions are great for readable flags and mode parameters. They make legal options explicit in the function type:
 
 ```nanyx
 def openFile: string, (#read | #readwrite) -> File
@@ -52,7 +59,9 @@ def file = openFile("file.txt", #readwrite)
 
 ## Polymorphic tag unions
 
-Because tag unions are structural, you can write functions that require specific tags but allow others to pass through. This is how `Option.map` works:
+Because tag unions are structural, you can write functions that require specific cases while allowing unknown cases to pass through. This is a common pattern for reusable APIs.
+
+For example, `Option.map` transforms only the `#some` case and preserves everything else:
 
 ```nanyx
 def Option.map
@@ -61,7 +70,7 @@ def Option.map
       | other, _ -> other }
 ```
 
-This preserves non-success cases:
+This preserves non-success cases while still transforming success values:
 
 ```nanyx
 def x: (#some(string) | #notFound) = ...
@@ -70,3 +79,5 @@ def y: (#some(int) | #divideByZero) = ...
 x \Option.map { .length }
 y \Option.map { \Math.abs }
 ```
+
+For broader union and matching patterns, see [Pattern matching](./pattern-matching.md) and [Types](./types.md).
