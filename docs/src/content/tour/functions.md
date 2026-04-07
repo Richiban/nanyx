@@ -82,7 +82,7 @@ def increment = { x -> x + 1 }
 def names = data \map { item -> item.name }
 ```
 
-## Shorthand lambdas
+### Shorthand lambdas
 
 Nanyx provides convenient shorthand syntax for common lambda patterns:
 
@@ -103,7 +103,9 @@ def adults = users \filter { .age > 18 }
 -- Equivalent to: users \filter { user -> user.age > 18 }
 ```
 
-## Optional parameters
+## Parameters
+
+### Optional parameters
 
 Prefix a parameter name with `?` to make it optional. The compiler wraps the type in `Option` and inserts `#none` when omitted.
 
@@ -124,7 +126,7 @@ def printResults(left = "left", middle, right = "right") ->
   print "{left}, {middle}, {right}"
 ```
 
-## Named parameters
+### Named parameters
 
 If you name parameters in the signature, callers can pass a record with matching fields:
 
@@ -203,6 +205,25 @@ rec length: list(a) -> int = {
   | [_, ...tail] -> 1 + length(tail)
 }
 ```
+
+### Tail recursion
+
+Tail recursion is a recursive style where the recursive call is the **last** operation in the function. This is much more efficient because the compiler can reuse the same stack frame for each call, effectively turning the recursive function into a loop and preventing stack overflow on large inputs.
+
+A common pattern is to nest a helper function that carries an accumulator:
+
+```nanyx
+def sum: list(int) -> int = { xs ->
+  rec loop = {
+    | [], acc -> acc
+    | [head, ...tail], acc -> loop(tail, acc + head)
+  }
+
+  loop(xs, 0)
+}
+```
+
+Here `loop` is internal to `sum`, and `acc` stores the running result. Each recursive step passes the updated accumulator forward, and the base case returns it directly.
 
 ## Function composition
 
