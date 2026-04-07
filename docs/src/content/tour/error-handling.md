@@ -56,7 +56,7 @@ def findUser: int -> #some(User) | #none = { id ->
 
 ## The `except` keyword
 
-The `except` keyword is similar to `match` but doesn't require exhaustive handling. Unhandled values are returned:
+The `except` keyword is similar to `match` but doesn't require exhaustive handling. Unhandled values are returned as-is:
 
 ```nanyx
 def g = {
