@@ -69,15 +69,15 @@ Because analyzers are just modules that conform to the analyzer interface, you c
 ```nanyx
 module myAnalyzer
 
-def analyze: TypedAst -> list(Diagnostic) = ast => {
+def analyze: TypedAst -> list(Diagnostic) = { ast ->
   -- Inspect the AST and collect diagnostics
   ast.declarations
-    |> filter(d => d.name.startsWith("_") and d.isPublic)
-    |> map(d => Diagnostic(
+    \ filter { d -> d.name.startsWith("_") and d.isPublic }
+    \ map { d -> Diagnostic(
       severity = #warning
       message = "Public definitions should not start with an underscore"
       location = d.location
-    ))
+    )}
 }
 ```
 
