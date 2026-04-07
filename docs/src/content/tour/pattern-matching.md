@@ -6,13 +6,28 @@ order: 6
 
 Pattern matching is one of Nanyx's most powerful features. The `match` expression lets you match values against patterns and destructure data.
 
+While most languages have some kind of multi-way branching construct like `switch` statements, not all have pattern matching like Nanyx's `match`, which is far more powerful. Pattern matching allows you to extract nested values, check conditions, and handle different data shapes all in a single expression, making code more concise and safer by ensuring all possible cases are handled.
+
 ## Basic Matching
+
+The simplest form of pattern matching is matching against literal values:
 
 ```nanyx
 match someValue
   | 0 -> "zero"
   | 1 -> "one"
   | _ -> "something else"
+```
+
+## Introducing values
+
+Patterns can also introduce new variables that are bound to parts of the matched value:
+
+```nanyx
+match someList
+  | 0 -> "zero"
+  | 1 -> "one"
+  | n -> "something else: {n}"
 ```
 
 ## Matching Custom Types
@@ -31,12 +46,14 @@ def area: Shape -> float = { shape ->
 
 ## Guards
 
+Nanyx doesn't have guards in the traditional sense; instead it allows arbitrary function bodies in patterns. This means you can write complex conditions directly in the pattern:
+
 ```nanyx
 def describeNumber: int -> string = { n ->
   match n
-    | n if n < 0 -> "negative"
+    | { < 0 } -> "negative"
     | 0 -> "zero"
-    | n if n > 100 -> "large"
+    | n & { > 100 } -> "{n}, which is large!"
     | _ -> "positive"
 }
 ```
