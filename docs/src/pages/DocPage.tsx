@@ -38,7 +38,7 @@ export default function DocPage() {
 
     const updateActiveHeadings = () => {
       const next = new Set<string>();
-      const viewportTop = 80; // account for sticky header
+      const viewportTop = 112; // account for sticky header + top menu bar
       const viewportBottom = window.innerHeight;
 
       for (let i = 0; i < ids.length; i++) {
