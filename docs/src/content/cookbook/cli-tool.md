@@ -1,21 +1,19 @@
 ---
-title: "Build a CLI Tool"
-description: "Create a command-line application"
+title: Build a CLI Tool
+description: Create a command-line application
 order: 1
 ---
 
-# Build a CLI Tool
-
 Let's build a simple CLI tool that counts words in a file.
 
-## Project Setup
+## Setup
 
 ```bash
 nanyx new word_counter
 cd word_counter
 ```
 
-## The Code
+## The code
 
 ```nanyx
 import (
@@ -37,7 +35,7 @@ match file.read("input.txt")
 
 ```
 
-## Run It
+## Run it
 
 ```bash
 echo "hello world from nanyx" > input.txt

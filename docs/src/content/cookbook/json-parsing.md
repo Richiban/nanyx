@@ -50,7 +50,7 @@ def jsonString =
 -- {"name":"Alice","age":30,"active":true}
 ```
 
-## Working with Arrays
+## Working with arrays
 
 ```nanyx
 def usersJson = 
