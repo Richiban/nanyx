@@ -6,24 +6,30 @@ order: 8
 
 Attached definitions let you add functions and values directly onto a type. This is how you define methods, operators, and static-like members without classes.
 
-## Attaching a method
+## Attaching a function
 
-Use dot syntax to attach a definition to a type. Inside the body, `this` refers to the instance:
+Use dot syntax to attach a definition to a type.
 
 ```nanyx
 type Point = (x: int, y: int)
 
-export def Point.length = {
-  Math.sqrt(this.x ** 2 + this.y ** 2)
+export def Point.length = { p ->
+  Math.sqrt(p.x ** 2 + p.y ** 2)
 }
 ```
 
-Call it like a method:
+Call it in a qualified way like any other function:
 
 ```nanyx
 def p = Point(x = 3, y = 4)
 
-def len = p.length
+def len = Point.length(p)
+```
+
+Or use it in a pipeline without needing to specify the type name:
+
+```nanyx
+def len = p \length
 ```
 
 ## Attaching operators

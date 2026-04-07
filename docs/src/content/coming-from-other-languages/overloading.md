@@ -22,7 +22,7 @@ We find that Nanyx's optional/named parameters, tag unions, and pattern matching
 
 ## Alternatives
 
-Where definitions would normally be ambigous and result in a compiler error (such as when implementing a commonly-understood function for your type, like `map`), Nanyx encourages [attaching the function](../advanced/attached-definitions) to the type.
+Where definitions would normally be ambigous and result in a compiler error (such as when implementing a commonly-understood function for your type, like `map`), Nanyx encourages [attaching the function to the type](../advanced/attached-definitions).
 
 This allows for disambiguation when needed while keeping the function name consistent with the domain concept. For example, instead of overloading a global `map` function, you can define `MyType.map` as an attached function on your type. As a convenience, the type name does not need to be specified when piping an instance of that type to the function in question:
 

@@ -4,11 +4,11 @@ description: "Operators as functions"
 order: 14
 ---
 
-Operators are ordinary functions with special syntax. They can be used infix, prefix, postfix, or passed around like any other function.
+Operators are ordinary functions with special names. They can be used infix, prefix, postfix, or passed around like any other function.
 
 ## Defining operators
 
-You define operators by naming a function with the operator token, usually in backticks:
+You define operators by naming a function with a valid operator name, encased in backticks:
 
 ```nanyx
 def `+++`: string, string -> string = { a, b -> a + b }
@@ -49,11 +49,6 @@ def result = data
   \sort
 ```
 
-## Assignment and mutation
+## Valid operator names
 
-`=` defines an immutable binding. Use `mut` and `set` for mutable storage.
-
-```nanyx
-mut count = 0
-set count = count + 1
-```
+The following symbols are valid operator names: `+`, `-`, `*`, `/`, `%`, `**`, `=`, `!`, `<`, `>`, `&`, `|`, `^`, `~`, `?`. They can be repeated, but the whole name must consist only of characters from the above list. For example, `++` and `>>>` are valid operator names, but `+a` and `` are not. Note: some operator names are reserved by the language, such as `=`.
