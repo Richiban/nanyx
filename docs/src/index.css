@@ -155,7 +155,7 @@
   &::before {
     content: "";
     display: inline-block;
-    width: 3em;
+    width: clamp(1ch, 4ch, 10vw);
     height: 1.5ex;
     margin-right: 0.5em;
     border: currentColor 1px solid;
