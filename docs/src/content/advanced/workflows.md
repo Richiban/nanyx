@@ -8,7 +8,7 @@ Workflows are one of Nanyx's most distinctive features. They let libraries provi
 
 ## The builder shape
 
-A workflow is just a value with an `apply` function and (optionally) keyword methods such as `yield`, `await`, `try`, or `use`.
+A workflow is just a unary higher order function (i.e. a function that takes a single argument that is, itself, a function) or a record with an `apply` function. That function will have some context attached that provides the body of the inner function with keyword methods such as `yield`, `await`, `try`, or `defer`.
 
 ```nanyx
 someBuilder {
@@ -16,11 +16,44 @@ someBuilder {
 }
 ```
 
-The block above desugars to an `apply` call:
+The block above desugars to either a function call or an `apply` call, whichever is appropriate:
 
 ```nanyx
-someBuilder.apply({ builder ->
+someBuilder({
   -- block content
+})
+```
+
+or
+
+```nanyx
+someBuilder.apply({
+  -- block content
+})
+```
+
+The simplest possible workflow can be illustrated with a builder that just provides a `yield` method that dumps the given value out to debug:
+
+```nanyx
+def debug = (
+  yield = { value, continuation ->
+    hostDebug(value)
+    continuation()
+  }
+)
+
+use debug in
+  yield "Debug message 1"
+  yield "Debug message 2"
+```
+
+The block content is rewritten to calls to the `yield` method on the `debug` builder, which in this case just prints the value and continues.
+
+```nanyx
+debug.yield("Debug message 1", {
+  debug.yield("Debug message 2", {
+    -- end of block
+  })
 })
 ```
 
@@ -56,15 +89,6 @@ seq {
 }
 ```
 
-Builders are also the preferred way to initialize collections such as maps:
-
-```nanyx
-def someMap = map {
-  1 => "one"
-  2 => "two"
-}
-```
-
 ## Async and custom keywords
 
 Workflows can introduce custom keywords. For example, an async workflow can expose `await` by implementing a method tagged as a keyword.
@@ -91,8 +115,9 @@ The language has built-in support for a number of common keywords, but you can d
 ```nanyx
 def retry = (
   @keywordKind(#bind)
-  def retry!(m, f) ->
+  def retry! = { m, f ->
     ...
+  }
 )
 ```
 
@@ -115,14 +140,30 @@ def retry = (
 
 ## Workflow keywords
 
-Builders can expose custom keywords by implementing special methods. Common examples include `yield`, `await`, `try`, and `use`.
+Builders can expose custom keywords by implementing special methods. Common examples include `yield`, `await`, `try`, and `defer`.
 
 ```nanyx
 def async = (
-  @customKeywordType(#bind)
-  def await(m, f) ->
-    ...
+  $customKeywordType(#bind)
+  def await = { m, f ->
+      ...
+  }
+
+  $customKeywordType(#bindF)
+  def defer = { thunk, continuation ->
+    continuation()
+    thunk()
+  }
 )
+```
+
+```nanyx
+def main = {
+  async {
+    defer println("This runs at the end of the block")
+    println("This runs first")
+  }
+}
 ```
 
 ## Error and option chaining

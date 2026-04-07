@@ -526,11 +526,11 @@
 			"patterns": [
 				{
 					"name": "keyword.declaration.nanyx",
-					"match": "\\b(def|default|type|trait|set|mut|where|constructor|spec|rec|as|try|using|export|import|module|or|and|is|pattern|not|spec)(?!')\\b"
+					"match": "\\b(def|default|type|trait|mut|where|rec|as|try|export|import|module|or|and|is|pattern|not)(?!')\\b"
 				},
 				{
 					"name": "keyword.control.nanyx",
-					"match": "\\b(match|except|yield|with|if|then|else|for|in|return|try|finally|while|do|await|try|bind)(?!')\\b"
+					"match": "\\b(in|match|except|yield|with|if|then|else|for|in|return|try|finally|while|do|await|try|bind)(?!')\\b"
 				},
 				{
 					"name": "keyword.symbol.arrow.nanyx",
