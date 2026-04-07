@@ -31,12 +31,28 @@ export default function DocPage() {
 
     const updateActiveHeadings = () => {
       const next = new Set<string>();
-      for (const id of ids) {
-        const el = document.getElementById(id);
+      const viewportTop = 80; // account for sticky header
+      const viewportBottom = window.innerHeight;
+
+      for (let i = 0; i < ids.length; i++) {
+        const el = document.getElementById(ids[i]);
         if (!el) continue;
-        const rect = el.getBoundingClientRect();
-        if (rect.bottom > 80 && rect.top < window.innerHeight * 0.6) {
-          next.add(id);
+
+        // Section runs from this heading to the next heading (or end of document)
+        const sectionTop = el.getBoundingClientRect().top;
+        let sectionBottom: number;
+
+        if (i + 1 < ids.length) {
+          const nextEl = document.getElementById(ids[i + 1]);
+          sectionBottom = nextEl ? nextEl.getBoundingClientRect().top : viewportBottom;
+        } else {
+          // Last section extends to the bottom of the document
+          sectionBottom = document.documentElement.getBoundingClientRect().bottom;
+        }
+
+        // Section is visible if it overlaps the viewport
+        if (sectionBottom > viewportTop && sectionTop < viewportBottom) {
+          next.add(ids[i]);
         }
       }
       setActiveIds(next);
