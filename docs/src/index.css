@@ -191,6 +191,10 @@
       color: hsl(var(--foreground));
       border-left-color: hsl(var(--primary));
     }
+
+    &.toc-h1 {
+      font-weight: 600;
+    }
   }
 }
 

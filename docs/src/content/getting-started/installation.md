@@ -4,8 +4,6 @@ description: "How to install Nanyx on your system"
 order: 2
 ---
 
-# Installation
-
 Nanyx can be installed on macOS, Linux, and Windows. The recommended way is through the `nanyx` version manager.
 
 ## Quick install

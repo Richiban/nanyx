@@ -6,7 +6,7 @@ import { PrevNextNav } from "@/components/docs/PrevNextNav";
 import { useEffect, useMemo, useState } from "react";
 import { ListTree } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { extractHeadingsFromMarkdown } from "@/lib/markdownHeadings";
+import { extractHeadingsFromMarkdown, slugifyHeading } from "@/lib/markdownHeadings";
 
 export default function DocPage() {
   const location = useLocation();
@@ -18,8 +18,15 @@ export default function DocPage() {
   const content = entry ? entry.page.content.replace(/^#\s+.*\n+/, "") : "";
 
   const headings = useMemo(
-    () => extractHeadingsFromMarkdown(content),
-    [content]
+    () => {
+      const bodyHeadings = extractHeadingsFromMarkdown(content);
+      if (entry) {
+        const titleHeading = { id: slugifyHeading(entry.page.title), text: entry.page.title, level: 1 };
+        return [titleHeading, ...bodyHeadings];
+      }
+      return bodyHeadings;
+    },
+    [content, entry]
   );
 
   // Track which headings are currently visible in the viewport
@@ -141,8 +148,8 @@ export default function DocPage() {
                     setTocOpen(false);
                   }
                 }}
-                className={cn("toc-link", isActive && "toc-active")}
-                style={{ paddingLeft: `calc(1ch + ${Math.max(0, heading.level - 2) * 12}px)` }}
+                className={cn("toc-link", isActive && "toc-active", heading.level === 1 && "toc-h1")}
+                style={{ paddingLeft: `calc(1ch + ${Math.max(0, heading.level - 1) * 12}px)` }}
               >
                 {heading.text}
               </a>
@@ -163,7 +170,7 @@ export default function DocPage() {
           ]}
         />
         <header className="mb-5">
-          <h1 className="text-3xl font-bold mb-2" style={{ fontFamily: "'Space Grotesk', system-ui" }}>
+          <h1 id={slugifyHeading(page.title)} className="text-3xl font-bold mb-2" style={{ fontFamily: "'Space Grotesk', system-ui" }}>
             {page.title}
           </h1>
           {page.description && <p className="doc-description text-muted-foreground text-base">{page.description}</p>}
