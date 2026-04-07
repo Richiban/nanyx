@@ -4,7 +4,7 @@ description: "Why Nanyx avoids overloaded function names"
 order: 3
 ---
 
-Many languages let multiple functions share the same name as long as their type signatures differ. That is called overloading. Nanyx intentionally does not support it.
+Many languages let multiple functions share the same name as long as their type signatures differ, a feature called _overloading_. Nanyx intentionally does not support it.
 
 ## Why Nanyx avoids overloading
 
@@ -19,3 +19,24 @@ Overloading looks convenient, but it adds costs that show up in everyday use:
 Nanyx prefers a single, explicit meaning for each function name. That keeps call sites readable and makes the language easier to reason about.
 
 We find that Nanyx's optional/named parameters, tag unions, and pattern matching provide enough flexibility to express different behaviors without needing overloading. If you need different behavior based on types, you can use pattern matching or tag unions to achieve that without overloading. See [Option-like types](../advanced/option-like-types) for an example of how to abstract across different unions with a shared convention.
+
+## Alternatives
+
+Where definitions would normally be ambigous and result in a compiler error (such as when implementing a commonly-understood function for your type, like `map`), Nanyx encourages [attaching the function](../advanced/attached-definitions) to the type.
+
+This allows for disambiguation when needed while keeping the function name consistent with the domain concept. For example, instead of overloading a global `map` function, you can define `MyType.map` as an attached function on your type. As a convenience, the type name does not need to be specified when piping an instance of that type to the function in question:
+
+```nanyx
+type MyType = ...
+
+-- Create a function that is attached to the type MyType
+def MyType.name = { ... }
+
+def o: MyType = ...
+
+-- Use the attached function in a qualified way
+def result1 = MyType.name(o)
+
+-- Use the function in a pipeline without needing to specify the type name
+def result2 = o \name
+```
