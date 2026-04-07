@@ -4,9 +4,11 @@ import { createHighlighter } from "shiki/bundle/web";
 import toml from "shiki/langs/toml";
 import nyxGrammar from "../../../../extension/src/syntaxes/nanyx.tmLanguage.json";
 import { Check, Copy, Link2 } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, createContext, useContext, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { extractHeadingsFromMarkdown, slugifyHeading } from "@/lib/markdownHeadings";
+
+const PreContext = createContext(false);
 
 interface MarkdownRendererProps {
   content: string;
@@ -305,12 +307,13 @@ export function MarkdownRenderer({
           h5: makeHeading("h5"),
           h6: makeHeading("h6"),
           pre({ children }) {
-            return <>{children}</>;
+            return <PreContext.Provider value={true}>{children}</PreContext.Provider>;
           },
-          code({ className, children, inline, ...props }) {
+          code: function CodeComponent({ className, children, inline, ...props }) {
+            const insidePre = useContext(PreContext);
             const match = /language-(\w+)/.exec(className || "");
             const codeString = String(children).replace(/\n$/, "");
-            const isInline = inline ?? !codeString.includes("\n");
+            const isInline = inline ?? !insidePre;
 
             if (!isInline && match) {
               const rawLang = match[1].toLowerCase();
