@@ -69,7 +69,7 @@ def g = {
 }
 ```
 
-## Chaining with Pipelines
+## Chaining with pipelines
 
 ```nanyx
 input

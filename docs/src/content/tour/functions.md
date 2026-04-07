@@ -8,7 +8,7 @@ Functions are first-class values in Nanyx, meaning they can be passed as argumen
 
 Functions are written with braces, `{ ... }`, and optionally define parameters: `{ x -> ... }`. The parameter list is a comma-separated list of names, and the body is an expression that computes the result.
 
-## Function Basics
+## Function basics
 
 A function that takes no parameters (or, more specifically, take `unit` as input) is simply `{ ... }`:
 
@@ -38,7 +38,7 @@ def double: int -> int = { x -> x * 2 }
 def result = double(21)  -- 42
 ```
 
-## Multi-Parameter Functions
+## Multi-parameter functions
 
 Since all functions take one argument, multi-parameter functions actually take a record (or tuple, see [Records and tuples](./records)) as their argument:
 
@@ -50,7 +50,7 @@ def add: (int, int) -> int = { x, y -> x + y }
 def sum = add(5, 10)  -- 15
 ```
 
-## Unit Type
+## Unit type
 
 The `()` type (unit) represents the absence of a meaningful value. It's used for functions that don't take input or don't return output:
 
@@ -67,7 +67,7 @@ def getMessage: () -> string = {
 }
 ```
 
-## Lambda Expressions
+## Lambda expressions
 
 Lambda expressions (also called anonymous functions) are created with braces:
 
@@ -82,7 +82,7 @@ def increment = { x -> x + 1 }
 def names = data \map { item -> item.name }
 ```
 
-## Shorthand Lambdas
+## Shorthand lambdas
 
 Nanyx provides convenient shorthand syntax for common lambda patterns:
 
@@ -144,7 +144,7 @@ def dict: string -> string = ["Hello" => "Bonjour", "Goodbye" => "Au revoir"]
 dict("Hello") -- "Bonjour"
 ```
 
-## Higher-Order Functions
+## Higher-order functions
 
 Functions that take other functions as arguments or return functions are called higher-order functions:
 
@@ -161,9 +161,9 @@ def add5 = makeAdder(5)
 def result = add5(10)  -- 15
 ```
 
-## Pattern Matching in Functions
+## Pattern-matching functions
 
-Functions can pattern match directly on their arguments:
+Since a function that consists only of a pattern match on its arguments is so common, a shorthand syntax is available: functions can pattern match directly on their arguments:
 
 ```nanyx
 -- Simple pattern matching function
@@ -187,7 +187,7 @@ def classify: int -> string = {
 }
 ```
 
-## Recursive Functions
+## Recursive functions
 
 Use the `rec` keyword to define recursive functions:
 
@@ -204,7 +204,7 @@ rec length: list(a) -> int = {
 }
 ```
 
-## Function Composition
+## Function composition
 
 Functions can be composed to create new functions:
 
@@ -233,7 +233,7 @@ def add5 = add(5)
 def result = add5(10)  -- 15
 ```
 
-## Partial Application
+## Partial application
 
 With records, you can simulate partial application:
 
@@ -246,7 +246,7 @@ def process: (config: Config, data: Data) -> Result = { config, data ->
 def processWithConfig = { data -> process(myConfig, data) }
 ```
 
-## Type Annotations for Clarity
+## Type Annotations for clarity
 
 While type inference works well, annotating function signatures is recommended for exported functions:
 
@@ -260,7 +260,7 @@ export def add: (int, int) -> int = { x, y -> x + y }
 
 Type annotations serve as documentation and help catch errors early.
 
-## Pure Functions
+## Pure functions
 
 Functions without effects (no contexts) are pure - they always return the same output for the same input:
 
@@ -274,7 +274,7 @@ def greet: <Console> string -> () = { name ->
 }
 ```
 
-## Function Examples
+## Function examples
 
 ### Map Implementation
 
@@ -286,7 +286,7 @@ rec map: (list(a), (a -> b)) -> list(b) = { xs, f ->
 }
 ```
 
-### Filter Implementation
+### Filter implementation
 
 ```nanyx
 rec filter: (list(a), (a -> bool)) -> list(a) = { xs, predicate ->
@@ -299,7 +299,7 @@ rec filter: (list(a), (a -> bool)) -> list(a) = { xs, predicate ->
 }
 ```
 
-### Fold Implementation
+### Fold implementation
 
 ```nanyx
 rec fold: (list(a), b, (b, a) -> b) -> b = { xs, acc, f ->

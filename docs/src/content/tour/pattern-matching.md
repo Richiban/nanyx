@@ -8,7 +8,7 @@ Pattern matching is one of Nanyx's most powerful features. The `match` expressio
 
 While most languages have some kind of multi-way branching construct like `switch` statements, not all have pattern matching like Nanyx's `match`, which is far more powerful. Pattern matching allows you to extract nested values, check conditions, and handle different data shapes all in a single expression, making code more concise and safer by ensuring all possible cases are handled.
 
-## Basic Matching
+## Basic matching
 
 The simplest form of pattern matching is matching against literal values:
 
@@ -30,7 +30,7 @@ match someList
   | n -> "something else: {n}"
 ```
 
-## Matching Custom Types
+## Matching custom types
 
 ```nanyx
 type Shape =
@@ -68,7 +68,7 @@ match result
   | #error(msg) -> println("Error: {msg}")
 ```
 
-## Pattern Matching in Functions
+## Pattern matching in functions
 
 Since a function whose entire body is a pattern match is so common, you can merge the function definition and match patterns together:
 
@@ -79,7 +79,7 @@ rec sumList: list(int) -> int = {
 }
 ```
 
-## Multiple Patterns
+## Multiple patterns
 
 ```nanyx
 match day
@@ -87,7 +87,7 @@ match day
   | _ -> "Weekday"
 ```
 
-## Combining Patterns
+## Combining patterns
 
 ```nanyx
 match getValue()
