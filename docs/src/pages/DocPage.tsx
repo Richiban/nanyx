@@ -62,7 +62,19 @@ export default function DocPage() {
           next.add(ids[i]);
         }
       }
-      setActiveIds(next);
+      setActiveIds((prev) => {
+        if (prev.size !== next.size) {
+          return next;
+        }
+
+        for (const id of next) {
+          if (!prev.has(id)) {
+            return next;
+          }
+        }
+
+        return prev;
+      });
       ticking = false;
     };
 

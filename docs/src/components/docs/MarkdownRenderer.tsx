@@ -6,7 +6,7 @@ import { createHighlighter, type ThemeInput } from "shiki/bundle/web";
 import toml from "shiki/langs/toml";
 import nyxGrammar from "../../../../extension/src/syntaxes/nanyx.tmLanguage.json";
 import { Check, Copy, Link2 } from "lucide-react";
-import { useEffect, useMemo, useState, createContext, useContext, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useState, createContext, useContext, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { extractHeadingsFromMarkdown, slugifyHeading } from "@/lib/markdownHeadings";
 
@@ -177,7 +177,7 @@ function CopyButton({ code }: { code: string }) {
   );
 }
 
-export function MarkdownRenderer({
+function MarkdownRendererImpl({
   content,
   className,
 }: MarkdownRendererProps) {
@@ -368,3 +368,5 @@ export function MarkdownRenderer({
     </div>
   );
 }
+
+export const MarkdownRenderer = memo(MarkdownRendererImpl);
