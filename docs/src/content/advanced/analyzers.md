@@ -4,9 +4,9 @@ description: "Pluggable diagnostics beyond compiler errors"
 order: 10
 ---
 
-The Nanyx compiler follows a strict principle: [the compiler is not a linter](../foundations/principles#the-compiler-is-not-a-linter). Its only job is to determine whether your code is valid and, if so, produce correct output. The compiler itself will only ever emit error-level diagnostics -- things that prevent your program from generating a release build.
+One of the principles of Nanyx is that [the compiler is not a linter](../foundations/principles#the-compiler-is-not-a-linter); its focus is to take Nanyx files as input and produce an executable result. 
 
-However, the _compilation process_ supports multiple diagnostic levels beyond errors:
+Thus the compiler itself will only ever emit error-level diagnostics -- things that prevent your program from generating a release build. However, the _compilation process_ supports multiple diagnostic levels beyond errors:
 
 | Level | Description |
 |-------|-------------|
