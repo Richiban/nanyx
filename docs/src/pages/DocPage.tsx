@@ -12,6 +12,7 @@ export default function DocPage() {
   const location = useLocation();
   const path = location.pathname;
   const [tocOpen, setTocOpen] = useState(false);
+  const [activeIds, setActiveIds] = useState<Set<string>>(new Set());
 
   const entry = findPage(path);
   const content = entry ? entry.page.content.replace(/^#\s+.*\n+/, "") : "";
@@ -20,6 +21,44 @@ export default function DocPage() {
     () => extractHeadingsFromMarkdown(content).filter((heading) => heading.level >= 2),
     [content]
   );
+
+  // Track which headings are currently visible in the viewport
+  useEffect(() => {
+    const ids = headings.map((h) => h.id);
+    if (ids.length === 0) return;
+
+    let ticking = false;
+
+    const updateActiveHeadings = () => {
+      const next = new Set<string>();
+      for (const id of ids) {
+        const el = document.getElementById(id);
+        if (!el) continue;
+        const rect = el.getBoundingClientRect();
+        if (rect.bottom > 80 && rect.top < window.innerHeight * 0.6) {
+          next.add(id);
+        }
+      }
+      setActiveIds(next);
+      ticking = false;
+    };
+
+    const handleScroll = () => {
+      if (!ticking) {
+        ticking = true;
+        requestAnimationFrame(updateActiveHeadings);
+      }
+    };
+
+    // Defer initial check so MarkdownRenderer has time to mount headings
+    const initialTimer = requestAnimationFrame(updateActiveHeadings);
+    window.addEventListener("scroll", handleScroll, { passive: true });
+
+    return () => {
+      cancelAnimationFrame(initialTimer);
+      window.removeEventListener("scroll", handleScroll);
+    };
+  }, [headings]);
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -75,22 +114,30 @@ export default function DocPage() {
         Contents
       </h2>
       <ul className={cn("space-y-2 toc-items", mobile ? "max-h-64 overflow-y-auto" : "max-h-[calc(100vh-9rem)] overflow-y-auto") }>
-        {headings.map((heading) => (
-          <li key={heading.id}>
-            <a
-              href={`#${heading.id}`}
-              onClick={() => {
-                if (mobile) {
-                  setTocOpen(false);
-                }
-              }}
-              className="block text-sm text-muted-foreground hover:text-foreground transition-colors"
-              style={{ paddingLeft: `${Math.max(0, heading.level - 2) * 12}px` }}
-            >
-              {heading.text}
-            </a>
-          </li>
-        ))}
+        {headings.map((heading) => {
+          const isActive = activeIds.has(heading.id);
+          return (
+            <li key={heading.id}>
+              <a
+                href={`#${heading.id}`}
+                onClick={() => {
+                  if (mobile) {
+                    setTocOpen(false);
+                  }
+                }}
+                className={cn(
+                  "block text-sm transition-colors",
+                  isActive
+                    ? "text-primary font-medium"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+                style={{ paddingLeft: `${Math.max(0, heading.level - 2) * 12 + (isActive ? 6 : 0)}px` }}
+              >
+                {heading.text}
+              </a>
+            </li>
+          );
+        })}
       </ul>
     </nav>
   );
