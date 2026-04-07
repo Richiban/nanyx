@@ -4,7 +4,7 @@ description: "Def bindings and immutability in Nanyx"
 order: 1
 ---
 
-In Nanyx, variables are immutable by default. You declare them using the `def` keyword.
+In Nanyx, variables are immutable. You declare them using the `def` keyword.
 
 ## Def Bindings
 
@@ -18,20 +18,10 @@ Once a value is bound, it cannot be reassigned:
 
 ```nanyx
 def x = 10
-x = 20  -- ✗ Compile error: cannot reassign immutable variable
+x = 20  -- ✗ Compile error: cannot reassign a value
 ```
 
-## Mutable Variables
-
-When you need mutation, use the `mut` keyword and `set` for updates:
-
-```nanyx
-mut counter = 0
-set counter++  -- ✓ This works
-set counter = counter + 1  -- Also works
-```
-
-> **Tip:** Prefer immutable bindings whenever possible. They make your code easier to reason about.
+> **Mutation:** In Nanyx mutation is considered an advanced topic and makes use of a context called `@Memory`. See [Memory](./memory.md) for more on how mutation works and how to use it safely.
 
 ## Type Annotations
 
