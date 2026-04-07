@@ -16,7 +16,7 @@ export function DocsLayout() {
       />
       <div className="flex">
         <DocsSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
-        <main className="flex-1 min-w-0 px-6 py-8 md:px-12 lg:px-16 max-w-4xl">
+        <main className="flex-1 min-w-0 px-6 py-8 md:px-12 lg:px-16">
           <Outlet />
         </main>
       </div>

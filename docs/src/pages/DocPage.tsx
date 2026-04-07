@@ -1,19 +1,46 @@
-import { useParams, useLocation, Navigate } from "react-router-dom";
+import { useLocation, Navigate } from "react-router-dom";
 import { findPage, getAdjacentPages, navSections } from "@/content/navigation";
 import { MarkdownRenderer } from "@/components/docs/MarkdownRenderer";
 import { DocsBreadcrumbs } from "@/components/docs/DocsBreadcrumbs";
 import { PrevNextNav } from "@/components/docs/PrevNextNav";
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { ListTree } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { extractHeadingsFromMarkdown } from "@/lib/markdownHeadings";
 
 export default function DocPage() {
   const location = useLocation();
   const path = location.pathname;
+  const [tocOpen, setTocOpen] = useState(false);
 
   const entry = findPage(path);
+  const content = entry ? entry.page.content.replace(/^#\s+.*\n+/, "") : "";
+
+  const headings = useMemo(
+    () => extractHeadingsFromMarkdown(content).filter((heading) => heading.level >= 2),
+    [content]
+  );
 
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [path]);
+
+  useEffect(() => {
+    if (!location.hash) {
+      return;
+    }
+
+    const id = decodeURIComponent(location.hash.slice(1));
+    const scrollToTarget = () => {
+      const element = document.getElementById(id);
+      if (element) {
+        element.scrollIntoView({ block: "start", behavior: "auto" });
+      }
+    };
+
+    const frame = window.requestAnimationFrame(scrollToTarget);
+    return () => window.cancelAnimationFrame(frame);
+  }, [location.hash, content]);
 
   if (!entry) {
     // Redirect to first page if at a section root
@@ -34,25 +61,79 @@ export default function DocPage() {
   }
 
   const { page, section } = entry;
-  const content = page.content.replace(/^#\s+.*\n+/, "");
   const adjacent = getAdjacentPages(path);
 
+  const renderHeadingLinks = (mobile: boolean) => (
+    <nav
+      aria-label="Table of contents"
+      className={cn(
+        "toc rounded-lg",
+        mobile ? "p-3" : "p-4"
+      )}
+    >
+      <h2 className="text-sm font-semibold mb-2" style={{ fontFamily: "'Space Grotesk', system-ui" }}>
+        Contents
+      </h2>
+      <ul className={cn("space-y-1 toc-items", mobile ? "max-h-64 overflow-y-auto" : "max-h-[calc(100vh-9rem)] overflow-y-auto") }>
+        {headings.map((heading) => (
+          <li key={heading.id}>
+            <a
+              href={`#${heading.id}`}
+              onClick={() => {
+                if (mobile) {
+                  setTocOpen(false);
+                }
+              }}
+              className="block text-sm text-muted-foreground hover:text-foreground transition-colors"
+              style={{ paddingLeft: `${Math.max(0, heading.level - 2) * 12}px` }}
+            >
+              {heading.text}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  );
+
   return (
-    <article>
-      <DocsBreadcrumbs
-        items={[
-          { label: section.title, href: `${section.basePath}/${section.pages[0].slug}` },
-          { label: page.title },
-        ]}
-      />
-      <header className="mb-8">
-        <h1 className="text-3xl font-bold mb-2" style={{ fontFamily: "'Space Grotesk', system-ui" }}>
-          {page.title}
-        </h1>
-        {page.description && <p className="doc-description text-muted-foreground text-base">{page.description}</p>}
-      </header>
-      <MarkdownRenderer content={content} />
-      <PrevNextNav prev={adjacent.prev} next={adjacent.next} />
+    <article className="max-w-7xl lg:grid lg:grid-cols-[minmax(0,1fr)_18rem] lg:gap-8">
+      <div className="min-w-0">
+        <DocsBreadcrumbs
+          items={[
+            { label: section.title, href: `${section.basePath}/${section.pages[0].slug}` },
+            { label: page.title },
+          ]}
+        />
+        <header className="mb-5">
+          <h1 className="text-3xl font-bold mb-2" style={{ fontFamily: "'Space Grotesk', system-ui" }}>
+            {page.title}
+          </h1>
+          {page.description && <p className="doc-description text-muted-foreground text-base">{page.description}</p>}
+        </header>
+
+        {headings.length > 0 && (
+          <div className="mb-6 lg:hidden">
+            <button
+              type="button"
+              onClick={() => setTocOpen((open) => !open)}
+              className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium hover:bg-accent transition-colors"
+            >
+              <ListTree className="h-4 w-4" />
+              Table of contents
+            </button>
+            {tocOpen && <div className="mt-3">{renderHeadingLinks(true)}</div>}
+          </div>
+        )}
+
+        <MarkdownRenderer content={content} />
+        <PrevNextNav prev={adjacent.prev} next={adjacent.next} />
+      </div>
+
+      {headings.length > 0 && (
+        <aside className="hidden lg:block">
+          <div className="sticky top-20">{renderHeadingLinks(false)}</div>
+        </aside>
+      )}
     </article>
   );
 }

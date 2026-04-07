@@ -3,9 +3,10 @@ import remarkGfm from "remark-gfm";
 import { createHighlighter } from "shiki/bundle/web";
 import toml from "shiki/langs/toml";
 import nyxGrammar from "../../../../extension/src/syntaxes/nanyx.tmLanguage.json";
-import { Check, Copy } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Check, Copy, Link2 } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { extractHeadingsFromMarkdown, slugifyHeading } from "@/lib/markdownHeadings";
 
 interface MarkdownRendererProps {
   content: string;
@@ -231,11 +232,78 @@ export function MarkdownRenderer({
     return new Set(highlighter.getLoadedLanguages());
   }, [highlighter]);
 
+  const markdownHeadings = useMemo(() => extractHeadingsFromMarkdown(content), [content]);
+  const [copiedHeadingId, setCopiedHeadingId] = useState<string | null>(null);
+
+  const extractText = (children: ReactNode): string => {
+    if (typeof children === "string") {
+      return children;
+    }
+
+    if (typeof children === "number") {
+      return String(children);
+    }
+
+    if (Array.isArray(children)) {
+      return children.map(extractText).join("");
+    }
+
+    if (children && typeof children === "object" && "props" in children) {
+      const props = (children as { props?: { children?: ReactNode } }).props;
+      return extractText(props?.children ?? "");
+    }
+
+    return "";
+  };
+
+  const copyHeadingLink = (id: string) => {
+    const hashUrl = `${window.location.origin}${window.location.pathname}${window.location.search}#${id}`;
+    navigator.clipboard.writeText(hashUrl);
+    setCopiedHeadingId(id);
+    setTimeout(() => setCopiedHeadingId(null), 1500);
+  };
+
+  let headingIndex = 0;
+
+  const makeHeading = (tag: "h1" | "h2" | "h3" | "h4" | "h5" | "h6") => {
+    return ({ children, ...props }: { children?: ReactNode }) => {
+      const text = extractText(children ?? "").trim();
+      const level = Number(tag.slice(1));
+      const heading = markdownHeadings[headingIndex];
+      const id =
+        heading && heading.text === text && heading.level === level
+          ? heading.id
+          : slugifyHeading(text);
+      headingIndex += 1;
+      const Tag = tag;
+
+      return (
+        <Tag id={id} className="group scroll-mt-24" {...props}>
+          <span>{children}</span>
+          <button
+            type="button"
+            onClick={() => copyHeadingLink(id)}
+            className="ml-2 inline-flex align-middle text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100"
+            aria-label={`Copy link to ${text}`}
+          >
+            {copiedHeadingId === id ? <Check className="h-4 w-4" /> : <Link2 className="h-4 w-4" />}
+          </button>
+        </Tag>
+      );
+    };
+  };
+
   return (
     <div className={cn("prose", className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
+          h1: makeHeading("h1"),
+          h2: makeHeading("h2"),
+          h3: makeHeading("h3"),
+          h4: makeHeading("h4"),
+          h5: makeHeading("h5"),
+          h6: makeHeading("h6"),
           pre({ children }) {
             return <>{children}</>;
           },
