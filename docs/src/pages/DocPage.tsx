@@ -74,7 +74,7 @@ export default function DocPage() {
       <h2 className="text-sm font-semibold mb-2" style={{ fontFamily: "'Space Grotesk', system-ui" }}>
         Contents
       </h2>
-      <ul className={cn("space-y-1.5 toc-items", mobile ? "max-h-64 overflow-y-auto" : "max-h-[calc(100vh-9rem)] overflow-y-auto") }>
+      <ul className={cn("space-y-2 toc-items", mobile ? "max-h-64 overflow-y-auto" : "max-h-[calc(100vh-9rem)] overflow-y-auto") }>
         {headings.map((heading) => (
           <li key={heading.id}>
             <a
