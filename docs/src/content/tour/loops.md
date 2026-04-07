@@ -40,18 +40,12 @@ for data, 0.. | item, i ->
   print "Item number {i} is {item}"
 ```
 
-This is equivalent to:
-
-```nanyx
-data \iteri { item, i -> print("Item number {i} is {item}") }
-```
-
 ## Dictionaries
 
-When iterating a map, the loop variable is a record of the key and value:
+When iterating a map or dictionary, the loop variable is a record of the key and value:
 
 ```nanyx
-def dict = map { "one" => "uno"; "two" => "dos" }
+def dict = ["one" => "uno"; "two" => "dos"]
 
 for dict | key, value -> print "{key} => {value}"
 ```
