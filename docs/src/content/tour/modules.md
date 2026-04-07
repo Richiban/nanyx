@@ -59,11 +59,10 @@ The standard library is available under the `nanyx` package and is available in 
 module main
 
 import nanyx/collections
-
 ...
 ```
 
-## Importing file paths
+### Importing modules by file path
 
 For quick scripts or local utilities, you can import directly from a file path. When importing a file path, you must use an alias to give the module a name in your current scope.
 
@@ -74,7 +73,7 @@ import "./utils" as utils
 utils.someHelper(...)
 ```
 
-## Importing packages
+### Importing modules from other packages
 
 Importing external packages (such as those installed from a package manager):
 
@@ -86,7 +85,7 @@ import (
 )
 ```
 
-## Qualified imports
+### Qualified imports
 
 Access module members with the module name:
 
@@ -97,7 +96,7 @@ def result = m.sqrt(16)  -- 4.0
 def pi = m.pi
 ```
 
-## Selective imports
+### Selective imports
 
 Import specific items from a module using deconstruction syntax on the import:
 
@@ -123,59 +122,31 @@ Types and definitions are private to a module by default. Use `export` to make t
 ```nanyx
 module utils
 
-export def double: int -> int = { x -> x * 2 }
-
-export def triple: int -> int = { x -> x * 3 }
-```
-
-You can also export a module itself:
-
-```nanyx
-export module myModule
-
-export def message = "Hello world"
-```
-
-## Public vs private definitions
-
-Use `export` to make a type or definition available to other modules.
-
-```nanyx
-module utils
-
 -- Public
 export def processData: Data -> Result = { data ->
   data \validate \transform
 }
 
--- Private helper
+-- Private helpers
 def validate: Data -> Data = { data ->
-  -- validation logic
+  ...
 }
 
 def transform: Data -> Data = { data ->
-  -- transformation logic
+  ...
 }
 ```
 
-## Module structure
+### Re-exporting
 
-Organize related functionality:
-
-```nanyx
-module collections.list
-
-export def map: (list(a), (a -> b)) -> list(b) = { ... }
-export def filter: (list(a), (a -> bool)) -> list(a) = { ... }
-export def fold: (list(a), b, (b, a) -> b) -> b = { ... }
-```
+Export items from other modules:
 
 ```nanyx
-module collections.map
+module Collections
 
-def empty: map(k, v) = { ... }
-def insert: (map(k, v), k, v) -> map(k, v) = { ... }
-def lookup: (map(k, v), k) -> Option(v) = { ... }
+-- Re-export from sub-modules
+export Collections.List (map, filter, fold)
+export Collections.Map (empty, insert, lookup)
 ```
 
 ## Nested modules
@@ -197,18 +168,6 @@ module users.validation
 
 def validateEmail: string -> Result(Email, ValidationError) = { ... }
 def validateAge: int -> Result(Age, ValidationError) = { ... }
-```
-
-## Re-exporting
-
-Export items from other modules:
-
-```nanyx
-module Collections
-
--- Re-export from sub-modules
-export Collections.List (map, filter, fold)
-export Collections.Map (empty, insert, lookup)
 ```
 
 ## Module-level constants
@@ -254,7 +213,7 @@ module B
 import Shared
 ```
 
-## Standard library modules
+## Modules in the standard library
 
 Nanyx's standard library appears as a package called `nanyx` and is organized into modules:
 
@@ -317,24 +276,3 @@ def generateId: [Random] () -> UserId = {
 4. **Cohesion**: Group related functionality together
 5. **Minimal coupling**: Reduce dependencies between modules
 6. **No circular deps**: Keep dependency graph acyclic
-
-## Using Modules
-
-```nanyx
-module myApp
-
-import (
-  userManagement as users
-  dataProcessing
-)
-
-def main = {
-  def result = users.createUser("Alice", "alice@example.com")
-  
-  match result
-    | #ok(user) ->
-        user \dataProcessing.process \save
-    | #error(err) ->
-        err \logError
-}
-```
