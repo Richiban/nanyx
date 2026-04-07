@@ -13,7 +13,7 @@ Build a basic HTTP server with Nanyx using the `http` package.
 ```bash
 nanyx new my_server
 cd my_server
-nanyx add http
+nanyx install nanyx.http
 ```
 
 ## The Code
@@ -21,21 +21,17 @@ nanyx add http
 ```nanyx
 module main
 
-import http/server
-import http/request
-import http/response
+import nanyx.http/server
 
-def main = {
-  def handler: request.Request -> response.Response = { req ->
-    match request.path(req)
-      | "/" -> response.text(200, "Welcome to Nanyx!")
-      | "/hello/{name}" -> response.text(200, "Hello, {name}!")
-      | _ -> response.text(404, "Not Found")
-  }
-
-  println("Server running on http://localhost:3000")
-  server.start(handler, port = 3000)
+def handler: Request -> Response = { req ->
+  match req.path
+    | "/" -> Response.text(200, "Welcome to Nanyx!")
+    | "/hello/{name}" -> Response.text(200, "Hello, {name}!")
+    | _ -> Response.text(404, "Not Found")
 }
+
+println("Server running on http://localhost:3000")
+server.start(handler, port = 3000)
 ```
 
 ## Run It

@@ -1,21 +1,25 @@
 ---
-title: "Parse JSON Data"
-description: "Working with JSON in Nanyx"
+title: Parse JSON Data
+description: Working with JSON in Nanyx
 order: 2
 ---
 
-# Parse JSON Data
-
 Nanyx provides a `json` module for encoding and decoding JSON.
 
-## Decoding JSON
+## Setup
+
+```bash
+nanyx new json_parsing
+cd json_parsing
+nanyx install nanyx.web
+```
 
 ```nanyx
 import nanyx.web/json
 
 type User = (name: string, age: int)
 
-def decodeUser: string -> Result(User, json.DecodeError) = { data ->
+def decodeUser: string -> Result(User, DecodeError) = { data ->
   data
    \ json.decode(json.record(
       name = json.field("name", json.string)
