@@ -4,7 +4,9 @@ description: "Using explicit tags instead of a generic Maybe"
 order: 1
 ---
 
-Many languages use a null reference (`null`, `nil`, `None`, `undefined`) to represent missing data, the downside of which is well-known. What makes Nanyx different is that it also doesn't have a single, universal Option/Maybe type. Instead, it encourages explicit tag unions to make missing data precise and composable.
+Many languages use a null reference (`null`, `nil`, `None`, or `undefined`) to represent missing data, the downside of which is well-known. 
+
+What makes Nanyx different is that it also doesn't have a single, universal Option/Maybe type. Instead, it encourages a convention with explicit tag unions to make missing data precise and composable.
 
 ## Prefer results for failing operations
 
@@ -14,7 +16,10 @@ When an operation can fail, Nanyx conventions favor a result-like union with a s
 The standard library provides a `Result` type, but it follows a convention where any union type with `#some(a)` and other tags can be treated as an [option-like type](../advanced/option-like-types). 
 
 ```nanyx
-def first: list(a) -> #some(a) | #err(#listWasEmpty) = ...
+def List.head = {
+  | [] -> #emptyList
+  | [x, ...] -> #some(x)
+}
 ```
 
 If all failing operations use result-like unions, you avoid having to map between `Result` and `Option` representations.

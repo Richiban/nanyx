@@ -4,11 +4,13 @@ description: "Mapping #some across unions"
 order: 9
 ---
 
-Nanyx can treat any tag union that includes `#some(a)` as “option-like.” That lets you write a single `map` that works for options, results, and custom unions by preserving all other tags.
+Nanyx is flexible enough that functions can be typed to operate on a tag union whilst specifying only some of the values in the union.
+
+Nanyx has a convention where any tag union that includes `#some(a)` is considered "option-like". The standard library includes an option module that provides functions for working with option-like types, such as a single `map` that works for options, results, and custom unions by preserving all other tags. 
 
 ## The core idea
 
-The function below accepts any union that contains `#some(a)` and keeps the rest of the union intact:
+The function below accepts any union that contains `#some(a)` and transforms that value while leaving the rest of the union intact:
 
 ```nanyx
 def Option.map
@@ -17,7 +19,7 @@ def Option.map
       | other, _ -> other }
 ```
 
-`rest` represents all other tags in the union. They pass through unchanged.
+The type variable `rest` represents all other tags in the union, allowing us to use it in an output position in the function type.
 
 ## Works with options
 
