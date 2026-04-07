@@ -6,7 +6,7 @@ order: 1
 
 Workflows are one of Nanyx's most distinctive features. They let libraries provide language-like constructs by rewriting a block into method calls on a builder value. This makes patterns like async/await, error chaining, and DSLs feel native.
 
-## The Builder Shape
+## The builder shape
 
 A workflow is just a value with an `apply` function and (optionally) keyword methods such as `yield`, `await`, `try`, or `use`.
 
@@ -24,7 +24,7 @@ someBuilder.apply({ builder ->
 })
 ```
 
-## Yield and Collection Builders
+## Yield and collection builders
 
 The standard `seq` builder provides `yield`, letting you build sequences with a clean syntax:
 
@@ -65,7 +65,7 @@ def someMap = map {
 }
 ```
 
-## Async and Custom Keywords
+## Async and custom keywords
 
 Workflows can introduce custom keywords. For example, an async workflow can expose `await` by implementing a method tagged as a keyword.
 
@@ -98,7 +98,7 @@ def async = (
 )
 ```
 
-## Error and Option Chaining
+## Error and option chaining
 
 A workflow can provide a `try` keyword to short-circuit on errors. This is useful for `Result` or `Option` chaining.
 
@@ -114,7 +114,7 @@ def lastOrderTotal = handle {
 }
 ```
 
-## Query and DSL Workflows
+## Query and DSL workflows
 
 Workflows are a natural fit for DSLs. A query builder can turn a block into a pipeline of filtering, joining, and projection steps.
 
@@ -130,7 +130,7 @@ def result = query {
 
 Workflows are also how HTML-style builders or configuration DSLs are implemented.
 
-## When to Use Workflows
+## When to use workflows
 
 - You want syntax that reads like a language feature, but is implemented in libraries.
 - You need structured control flow around effects (async, retries, error handling).
