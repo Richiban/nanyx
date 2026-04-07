@@ -48,7 +48,7 @@ def result = use Console(println = hostPrint) in {
 }
 ```
 
-## Contexts Are part of the type
+## Contexts are part of the type
 
 A value's context requirement is part of its type. You can annotate just the contexts and let the rest infer:
 
@@ -91,6 +91,67 @@ context Sum(a) = (
 
 export def sum: [Sum(a)] list(a) -> a
   = { items -> items \fold(`0`) { + } }
+```
+
+## Context synthesis using attached definitions
+
+When a function requires a context, you don't always have to load or even create it manually. If the type in question has [attached definitions](./attached-definitions.md) that match the context's members, the compiler can **synthesize** the context automatically.
+
+For example, given a `Sum` context:
+
+```nanyx
+context Sum(a) = (
+  `0`: a
+  `+`: a, a -> a
+)
+```
+
+And a type with matching attached definitions:
+
+```nanyx
+type Point = (x: int, y: int)
+
+def Point.`0` = Point(x = 0, y = 0)
+
+def Point.`+` = { a, b ->
+  Point(x = a.x + b.x, y = a.y + b.y)
+}
+```
+
+You can call `sum` on a `list(Point)` without explicitly loading a `Sum(Point)` context -- the compiler sees that `Point.``0``` and `Point.``+``` satisfy the context and synthesizes it:
+
+```nanyx
+def points = [Point(1, 2), Point(3, 4), Point(5, 6)]
+
+def total = sum(points)
+-- total = Point(x = 9, y = 12)
+```
+
+This is analogous to how Haskell derives typeclass instances or how Rust resolves trait implementations. The key difference is that in Nanyx the "instance" is just a collection of attached definitions -- there is no separate declaration required.
+
+### When synthesis applies
+
+Context synthesis occurs when:
+
+- A function requires a context parameterized by a concrete type
+- That type has attached definitions matching every member of the context
+- The types of those definitions are compatible with the context's signatures
+
+If any member is missing or has an incompatible type, synthesis fails and the compiler requires you to load the context explicitly.
+
+### Explicit loading takes priority
+
+If you manually load a context with `use`, that instance is always used, even if attached definitions exist. This lets you override the default behavior when needed:
+
+```nanyx
+def reverseSum = {
+  use Sum(Point)(
+    `0` = Point(x = 0, y = 0)
+    `+` = { a, b -> Point(x = a.x - b.x, y = a.y - b.y) }
+  )
+
+  sum(points)
+}
 ```
 
 ## Why contexts matter
