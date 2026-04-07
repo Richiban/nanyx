@@ -125,12 +125,7 @@ export default function DocPage() {
                     setTocOpen(false);
                   }
                 }}
-                className={cn(
-                  "block text-sm py-1 pl-[1ch] transition-all duration-200 border-l-[1ch]",
-                  isActive
-                    ? "border-primary/100 font-medium"
-                    : "border-primary/0 text-muted-foreground hover:text-foreground"
-                )}
+                className={cn("toc-link", isActive && "toc-active")}
                 style={{ paddingLeft: `calc(1ch + ${Math.max(0, heading.level - 2) * 12}px)` }}
               >
                 {heading.text}

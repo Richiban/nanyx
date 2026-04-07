@@ -172,6 +172,28 @@
     padding-bottom: 1ch;
     margin-left: .25rem;
   }
+
+  .toc-link {
+    display: block;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    padding-block: 0.25rem;
+    padding-left: 1ch;
+    border-left-width: 1ch;
+    border-left-style: solid;
+    border-left-color: transparent;
+    color: hsl(var(--muted-foreground));
+    transition: all 200ms;
+
+    &:hover {
+      color: hsl(var(--foreground));
+    }
+
+    &.toc-active {
+      color: hsl(var(--foreground));
+      border-left-color: hsl(var(--primary));
+    }
+  }
 }
 
 .prose p {
