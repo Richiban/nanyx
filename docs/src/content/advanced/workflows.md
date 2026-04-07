@@ -86,6 +86,33 @@ async.apply({ builder ->
 })
 ```
 
+The language has built-in support for a number of common keywords, but you can define your own for any workflow. Custom keywords must end with the character `!` to avoid conflicts with normal method calls:
+
+```nanyx
+def retry = (
+  @keywordKind(#bind)
+  def retry!(m, f) ->
+    ...
+)
+```
+
+### Common keywords
+
+| Keyword | Description |
+|---------|-------------|
+| `yield`  | Produce a value in a collection builder |
+| `await`  | Await an asynchronous operation in an async workflow |
+| `try`    | Short-circuit on errors in a workflow that handles results |
+| | _More coming soon..._ |
+
+### Keyword kinds
+
+| Kind | Description |
+|---------|-------------|
+| `#bind`  | The keyword takes a value and a continuation function. The workflow will call the continuation with the result of the keyword operation. |
+| `#bindF` | Like bind, but a function returning the target value is passed instead of the value itself. This allows for workflows such as lazy evaluation and querying |
+| | _More coming soon..._ |
+
 ## Workflow keywords
 
 Builders can expose custom keywords by implementing special methods. Common examples include `yield`, `await`, `try`, and `use`.
