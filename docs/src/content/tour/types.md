@@ -6,7 +6,7 @@ order: 2
 
 Nanyx features a strong static type system with Hindley-Milner type inference. Types are descriptive and readable, and you can use record types for structure and tag unions for variants.
 
-## Type Inference
+## Type inference
 
 Nanyx can infer most types automatically:
 
@@ -18,7 +18,7 @@ def add = { x, y -> x + y }
 def length = { s -> s.length }
 ```
 
-## Type Annotations
+## Type annotations
 
 While inference works well, you can (and should) annotate exported functions:
 
@@ -30,7 +30,7 @@ def double: int -> int = { x -> x * 2 }
 def multiply: (int, int) -> int = { x, y -> x * y }
 ```
 
-## Basic Types
+## Basic types
 
 Nanyx has several built-in primitive types:
 
@@ -41,7 +41,7 @@ def name: string = "Alice"
 def active: bool = true
 ```
 
-## Record Types
+## Record types
 
 Records are structural types with named fields. They have their own Language Tour page covering record types, structural typing, optional fields, and the unified record/tuple model.
 
@@ -51,7 +51,7 @@ See [Records and tuples](./records.md) for the full guide.
 
 `any` is the top type (accepts any value), and `undefined` is the bottom type (no values). These appear when you build generic or unreachable code paths.
 
-## Tuple Types
+## Tuple types
 
 Tuples are anonymous records with numbered fields:
 
@@ -83,7 +83,7 @@ def valid = (10, 20, x = 10, y = 20)
 
 See [Records and tuples](./records.md) for more on record shapes and field rules.
 
-## Tag Unions
+## Tag unions
 
 Tag unions (also called sum types or discriminated unions) represent values that can be one of several variants:
 
@@ -106,7 +106,7 @@ def area: Shape -> float = { shape ->
 }
 ```
 
-## Option Types
+## Option types
 
 Nanyx has no null values. Use tag unions to represent optional values instead:
 
@@ -117,7 +117,7 @@ def findUser: UserId -> #some(User) | #notFound = { id ->
 }
 ```
 
-## Generic Types
+## Generic types
 
 Types can be parameterized with type variables:
 
@@ -141,7 +141,7 @@ def zip: (list(a), list(b)) -> list((a, b)) = { xs, ys ->
 }
 ```
 
-## Type Aliases
+## Type aliases
 
 Create meaningful names for complex types:
 
@@ -158,7 +158,7 @@ type UserProfile = (
 )
 ```
 
-## Function Types
+## Function types
 
 Functions have specific type signatures:
 
