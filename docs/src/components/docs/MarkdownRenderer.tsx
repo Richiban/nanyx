@@ -1,6 +1,8 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { createHighlighter } from "shiki/bundle/web";
+import { createHighlighter, type ThemeInput } from "shiki/bundle/web";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore -- shiki/langs/toml lacks type declarations
 import toml from "shiki/langs/toml";
 import nyxGrammar from "../../../../extension/src/syntaxes/nanyx.tmLanguage.json";
 import { Check, Copy, Link2 } from "lucide-react";
@@ -188,7 +190,7 @@ export function MarkdownRenderer({
     let isMounted = true;
     const loadHighlighter = async () => {
       const instance = await createHighlighter({
-        themes: [inkNightTheme, paperWhiteTheme],
+        themes: [inkNightTheme as unknown as ThemeInput, paperWhiteTheme as unknown as ThemeInput],
         langs: [
           "bash",
           toml,
@@ -309,7 +311,9 @@ export function MarkdownRenderer({
           pre({ children }) {
             return <PreContext.Provider value={true}>{children}</PreContext.Provider>;
           },
-          code: function CodeComponent({ className, children, inline, ...props }) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          code: function CodeComponent(codeProps: any) {
+            const { className, children, inline, ...props } = codeProps;
             const insidePre = useContext(PreContext);
             const match = /language-(\w+)/.exec(className || "");
             const codeString = String(children).replace(/\n$/, "");
