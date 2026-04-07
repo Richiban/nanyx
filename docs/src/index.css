@@ -168,7 +168,6 @@
 .toc {
   .toc-items {
     border-left: 1px currentColor solid;
-    border-bottom-left-radius: .25rem;
     padding-bottom: 1ch;
     margin-left: .25rem;
   }
@@ -179,7 +178,7 @@
     line-height: 1.25rem;
     padding-block: 0.25rem;
     padding-left: 1ch;
-    border-left-width: 1ch;
+    border-left-width: .5ch;
     border-left-style: solid;
     border-left-color: transparent;
     color: hsl(var(--muted-foreground));
