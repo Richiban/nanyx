@@ -18,7 +18,7 @@ export default function DocPage() {
   const content = entry ? entry.page.content.replace(/^#\s+.*\n+/, "") : "";
 
   const headings = useMemo(
-    () => extractHeadingsFromMarkdown(content).filter((heading) => heading.level >= 2),
+    () => extractHeadingsFromMarkdown(content),
     [content]
   );
 

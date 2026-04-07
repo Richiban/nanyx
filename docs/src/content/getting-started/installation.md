@@ -8,7 +8,7 @@ order: 2
 
 Nanyx can be installed on macOS, Linux, and Windows. The recommended way is through the `nanyx` version manager.
 
-## Quick Install
+## Quick install
 
 Run the following command in your terminal:
 
@@ -18,7 +18,7 @@ curl -fsSL https://nanyx.dev/install | sh
 
 This will install the latest stable version of Nanyx and add it to your `PATH`.
 
-## Verify Installation
+## Verify installation
 
 ```bash
 nanyx --version
@@ -45,7 +45,7 @@ sudo apt install nanyx
 scoop install nanyx
 ```
 
-## Editor Support
+## Editor support
 
 Nanyx has editor plugins available for:
 
@@ -53,6 +53,6 @@ Nanyx has editor plugins available for:
 - **Neovim** — via `nvim-lspconfig` with the Nanyx LSP
 - **Zed** — built-in Nanyx support
 
-## Next Steps
+## Next steps
 
 Now that you have Nanyx installed, let's write your [first program](/docs/getting-started/hello-world)!

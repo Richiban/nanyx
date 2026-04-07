@@ -20,7 +20,7 @@ export type @User = (
   name: string
 )
 
-export def makeUser: (UserId, string) -> Result(@User, list(string)) = { id, name ->
+export def @User.new: (UserId, string) -> Result(@User, list(string)) = { id, name ->
   memory {
     def errors = mut []
     if id <= 0 then errors += "ID must be positive"
@@ -48,9 +48,9 @@ Then `@UserId` is assignable to `int` but `int` is not assignable to `@UserId`.
 
 If you wish a nominal type to be completely opaque and not assignable to its underlying shape, you can use a protected type instead (see below).
 
-## Protected (Opaque) Types
+## Protected (opaque) types
 
-Protected types hide their structure outside the module by using `private`. This is useful for wrapping primitives safely and enforcing validation.
+Protected types go further by hiding their structure completely outside their home module using the `private` keyword. This is useful for wrapping primitives safely and enforcing validation.
 
 ```nanyx
 module ids
@@ -67,7 +67,7 @@ export def UserId.new: string -> Result(@UserId, string) = { value ->
 
 Outside the module, callers can pass around `@UserId` values but cannot construct or inspect the underlying string directly.
 
-## Constructors and Accessors
+## Constructors and accessors
 
 Because protected types hide representation, you typically provide helpers that convert in and out of the type boundary.
 
@@ -87,7 +87,7 @@ export def Email?: string -> Option(@Email) = { value ->
 export def Email.value: @Email -> string = { @Email(e) -> e }
 ```
 
-## Choosing Between Them
+## Choosing between them
 
 - Use nominal types when you want identity and explicit construction but still want to expose the shape.
 - Use protected types when you want a hard abstraction boundary and / or guarantees that changing the internal representation of a type will not affect external users.
