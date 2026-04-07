@@ -1,6 +1,6 @@
 ---
-title: "Modules"
-description: "Organizing code with modules"
+title: "Modules and imports"
+description: "Organizing code with modules and import patterns"
 order: 12
 ---
 
@@ -8,26 +8,32 @@ Modules in Nanyx help organize code into logical units. They provide namespaces 
 
 ## Module declaration
 
-Every Nanyx file optionally starts with a module declaration. If you omit it, the module name defaults to the file name:
+Every Nanyx file optionally starts with a module declaration. 
 
 ```nanyx
 module main
 
-def main = {
-  println("Hello from MyApp!")
-}
+println("Hello from MyApp!")
 ```
 
-## Module names
+If the module declaration is omitted, the module remains anonymous and can only be imported by file path.
 
-By default, a module name is derived from the file path relative to the compilation root. You can override this with a `module` declaration.
+## Module naming
 
-Module names should be camel-cased and reflect the purpose of the code:
+Module names should be camel-cased and reflect the purpose of the code contained within:
 
 ```nanyx
-import userManagement
-import dataProcessing  
-import httpClient
+module userManagement
+
+...
+```
+
+It is a commonly-used convention to use dots to create namespaced hierarchies of modules within a package:
+
+```nanyx
+module collections.list
+
+...
 ```
 
 ## Importing modules
@@ -40,35 +46,43 @@ module main
 -- Notice how we can import multiple modules in a single statement
 import (
   userManagement
-  dataProcessing
+  dataProcessing as d
 )
 
-def main = {
-  userManagement.createUser(...)
-  dataProcessing.process(...)
-}
+userManagement.createUser(...)
+d.process(...)
 ```
 
-If we're writing a quick app we can import file paths directly:
+The standard library is available under the `nanyx` package and is available in all Nanyx programs; there's no need to install it:
+
+```nanyx
+module main
+
+import nanyx/collections
+
+...
+```
+
+## Importing file paths
+
+For quick scripts or local utilities, you can import directly from a file path. When importing a file path, you must use an alias to give the module a name in your current scope.
 
 ```nanyx
 -- If importing a file the module name must be qualified
 import "./utils" as utils
 
-def main = {
-  utils.someHelper(...)
-}
+utils.someHelper(...)
 ```
 
 ## Importing packages
 
-Importing packages installed from a package manager:
+Importing external packages (such as those installed from a package manager):
 
 ```nanyx
 -- Notice how the package name and module name are separated by a slash
 import (
-  web/http
-  web/json.deserialization
+  webframework/http
+  webframework/json.deserialization
 )
 ```
 
@@ -85,7 +99,7 @@ def pi = m.pi
 
 ## Selective imports
 
-Import specific items from a module:
+Import specific items from a module using deconstruction syntax on the import:
 
 ```nanyx
 import nanyx/math as (sqrt, pi, cos)
@@ -93,28 +107,25 @@ import nanyx/math as (sqrt, pi, cos)
 def result = sqrt(16)  -- No need for Math. prefix
 ```
 
-## Import aliases
-
-Give modules shorter names:
+It's even possible to both deconstruct and alias an import, although the need to do this is rare:
 
 ```nanyx
-import DataProcessing as DP
+import nanyx/math as m & (sqrt, pi)
 
-def result = DP.process(data)
+def a = sqrt(16)
+def b = m.cos(0)
 ```
 
 ## Exports
 
-By default, all top-level definitions are exported:
+Types and definitions are private to a module by default. Use `export` to make them available to other modules:
 
 ```nanyx
 module utils
 
--- Exported (public)
-def double: int -> int = { x -> x * 2 }
+export def double: int -> int = { x -> x * 2 }
 
--- Also exported
-def triple: int -> int = { x -> x * 3 }
+export def triple: int -> int = { x -> x * 3 }
 ```
 
 You can also export a module itself:
@@ -130,7 +141,7 @@ export def message = "Hello world"
 Use `export` to make a type or definition available to other modules.
 
 ```nanyx
-module Utils
+module utils
 
 -- Public
 export def processData: Data -> Result = { data ->
@@ -160,7 +171,7 @@ export def fold: (list(a), b, (b, a) -> b) -> b = { ... }
 ```
 
 ```nanyx
-module Collections.Map
+module collections.map
 
 def empty: map(k, v) = { ... }
 def insert: (map(k, v), k, v) -> map(k, v) = { ... }
@@ -172,9 +183,9 @@ def lookup: (map(k, v), k) -> Option(v) = { ... }
 You can declare module blocks inside a file. The block name is appended to the outer module name:
 
 ```nanyx
-module MyModule
+module myModule
 
-module Functions ->
+module functions =
   export def f(x) -> x * 2
   export def g(x) -> x ** 2
 ```
