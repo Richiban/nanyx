@@ -40,3 +40,53 @@ def lookup = ["a" => 1, "b" => 2]
 
 def unique = set [1, 2, 2, 3]
 ```
+
+## Syntax
+
+Nanyx supports a generalisable literal syntax for all collection types; the square bracket form is available to any type that implements the correct builder context:
+
+```nanyx
+context ListBuilder(a) {
+  def yield: element -> ()
+}
+
+def MyList.apply = { f ->
+  memory {
+    def list = mut MyList()
+
+    use (
+      def yield = { element -> list := list \add(element) }
+    )
+
+    f(builder)
+
+    list.value
+  }
+}
+
+def myList: MyList(string, int) = [1, 2, 3]
+```
+
+```nanyx
+context MapBuilder(a) {
+  def empty: a
+  def `=>`: (k, v) -> ()
+}
+
+def myMapBuilder: [Memory] MapBuilder(MyMap(string, int)) = {
+  def empty = { MyMap(string, int) {} }
+  def `=>` = {(m, (k, v)) -> m \ (k => v)}
+}
+
+def MyMap.apply = { f ->
+  memory {
+    def builder = myMapBuilder
+
+    f(builder)
+
+    builder.build() -- returns MyMap(string, int)
+  }
+}
+
+def myMap: MyMap(string, int) = ["a" => 1, "b" => 2]
+```
