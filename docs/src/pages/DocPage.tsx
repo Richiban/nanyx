@@ -113,7 +113,7 @@ export default function DocPage() {
       <h2 className="text-sm font-semibold mb-2" style={{ fontFamily: "'Space Grotesk', system-ui" }}>
         Contents
       </h2>
-      <ul className={cn("space-y-2 toc-items", mobile ? "max-h-64 overflow-y-auto" : "max-h-[calc(100vh-9rem)] overflow-y-auto") }>
+      <ul className={cn("toc-items", mobile ? "max-h-64 overflow-y-auto" : "max-h-[calc(100vh-9rem)] overflow-y-auto") }>
         {headings.map((heading) => {
           const isActive = activeIds.has(heading.id);
           return (
@@ -126,12 +126,12 @@ export default function DocPage() {
                   }
                 }}
                 className={cn(
-                  "block text-sm transition-colors",
+                  "block text-sm py-1 pl-[1ch] transition-all duration-200 border-l-[1ch]",
                   isActive
-                    ? "text-primary font-medium"
-                    : "text-muted-foreground hover:text-foreground"
+                    ? "border-primary/100 font-medium"
+                    : "border-primary/0 text-muted-foreground hover:text-foreground"
                 )}
-                style={{ paddingLeft: `${Math.max(0, heading.level - 2) * 12 + (isActive ? 6 : 0)}px` }}
+                style={{ paddingLeft: `calc(1ch + ${Math.max(0, heading.level - 2) * 12}px)` }}
               >
                 {heading.text}
               </a>
