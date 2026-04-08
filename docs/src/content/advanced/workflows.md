@@ -114,7 +114,7 @@ The language has built-in support for a number of common keywords, but you can d
 
 ```nanyx
 def retry = (
-  @keywordKind(#bind)
+  $keywordKind(#bind)
   def retry! = { m, f ->
     ...
   }
@@ -144,12 +144,12 @@ Builders can expose custom keywords by implementing special methods. Common exam
 
 ```nanyx
 def async = (
-  $customKeywordType(#bind)
+  @customKeywordType(#bind)
   def await = { m, f ->
       ...
   }
 
-  $customKeywordType(#bindF)
+  @customKeywordType(#bindF)
   def defer = { thunk, continuation ->
     continuation()
     thunk()

@@ -5,7 +5,7 @@ context Sum(a) = (
   zero: a
   plus: (a, a) -> a
 )
-def sayHello: [@Console] () -> () = {
+def sayHello: [$Console] () -> () = {
   println("Hello")
 }
 

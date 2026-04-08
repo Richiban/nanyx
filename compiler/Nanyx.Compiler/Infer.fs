@@ -141,7 +141,7 @@ let private tryInferAttachedLambdaInput (state: InferState) (name: Identifier) (
         let dotIndex = name.LastIndexOf(".")
         let typeName = name.Substring(0, dotIndex)
         match state.TypeDefs |> Map.tryFind typeName with
-        | Some info when typeName.StartsWith("@") -> Some (TyNominal(typeName, info.Underlying, info.IsPrivate))
+        | Some info when typeName.StartsWith("$") -> Some (TyNominal(typeName, info.Underlying, info.IsPrivate))
         | Some info -> Some info.Underlying
         | None -> None
     | _ -> None
@@ -181,7 +181,7 @@ let rec private typeExprToTy (state: InferState) (typeExpr: TypeExpr) : Ty * Inf
         | Some prim -> prim, state
         | None ->
             match state.TypeDefs |> Map.tryFind name with
-            | Some info when name.StartsWith("@") -> TyNominal(name, info.Underlying, info.IsPrivate), state
+            | Some info when name.StartsWith("$") -> TyNominal(name, info.Underlying, info.IsPrivate), state
             | Some info -> info.Underlying, state
             | None -> TyPrimitive name, state
     | TypeVar name ->
@@ -235,7 +235,7 @@ let rec private typeExprToTy (state: InferState) (typeExpr: TypeExpr) : Ty * Inf
             TyApply("list", [elementTy]), current
         else
             match current.TypeDefs |> Map.tryFind name with
-            | Some info when not (name.StartsWith("@")) ->
+            | Some info when not (name.StartsWith("$")) ->
                 if info.Parameters.Length = argTys.Length then
                     let substitutions =
                         (info.Parameters, argTys)
@@ -395,9 +395,9 @@ let private registerTypeDef (state: InferState) (name: Identifier) (modifiers: T
     let isPrivate = isPrivateType modifiers
     let paramVars = paramEntries |> List.map snd
     let nextNominals =
-        if name.StartsWith("@") then next.LocalNominals |> Set.add name else next.LocalNominals
+        if name.StartsWith("$") then next.LocalNominals |> Set.add name else next.LocalNominals
     let nextPrivate =
-        if name.StartsWith("@") && isPrivate then next.LocalPrivateNominals |> Set.add name else next.LocalPrivateNominals
+        if name.StartsWith("$") && isPrivate then next.LocalPrivateNominals |> Set.add name else next.LocalPrivateNominals
     let nextContexts =
         if isContextDef modifiers then next.ContextDefs |> Map.add name body else next.ContextDefs
     { next with
@@ -587,7 +587,7 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                         let inputTy = inputTypeFromArgs argTys
                         let constrained = addAssignableConstraint inputTy info.Underlying current
                         let resultTy =
-                            if name.StartsWith("@") then TyNominal(name, info.Underlying, info.IsPrivate) else info.Underlying
+                            if name.StartsWith("$") then TyNominal(name, info.Underlying, info.IsPrivate) else info.Underlying
                         Ok (mkTypedExpr expr resultTy None None None, constrained)
                     else
                         Error errors

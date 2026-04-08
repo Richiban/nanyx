@@ -4,7 +4,7 @@ description: "Scoped mutation with the memory context"
 order: 5
 ---
 
-Mutation in Nanyx is available but bounded. Mutable values require the `@Memory` context, and `memory { ... }` is the helper that creates and scopes that context. This allows internal mutation while keeping external interfaces pure.
+Mutation in Nanyx is available but bounded. Mutable values require the `$Memory` context, and `memory { ... }` is the helper that creates and scopes that context. This allows internal mutation while keeping external interfaces pure.
 
 ## Local mutation
 
@@ -22,7 +22,7 @@ def sort: [Ord(a)] list(a) -> list(a) = { l ->
 
 ```nanyx
 def main = {
-  def x = mut 0 -- Error: requires @Memory context
+  def x = mut 0 -- Error: requires $Memory context
 }
 
 def main = {
@@ -45,13 +45,13 @@ memory {
 
 ## Values cannot escape memory scope
 
-Values that require the `@Memory` context cannot be returned out of a `memory { ... }` scope.
+Values that require the `$Memory` context cannot be returned out of a `memory { ... }` scope.
 
 ```nanyx
 def bad = {
   memory {
     def arr = MArray.of([1, 2, 3])
-    arr -- Error: value requires @Memory context and cannot escape this scope
+    arr -- Error: value requires $Memory context and cannot escape this scope
   }
 }
 ```
@@ -67,7 +67,7 @@ def good = {
 }
 ```
 
-This is how Nanyx performs escape analysis. Instead of a separate escape-analysis pass, the compiler tracks context requirements in types. If a value's type still needs `@Memory`, it can only be used where `@Memory` is available, so it cannot leak into pure code.
+This is how Nanyx performs escape analysis. Instead of a separate escape-analysis pass, the compiler tracks context requirements in types. If a value's type still needs `$Memory`, it can only be used where `$Memory` is available, so it cannot leak into pure code.
 
 For the detailed proposal, see [Specifications: Context-qualified types](../specifications/context-qualified-types.md).
 

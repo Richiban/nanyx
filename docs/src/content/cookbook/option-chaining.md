@@ -16,7 +16,7 @@ cd option_chaining
 ## The code
 
 ```nanyx
-$workflow -- This attribute will give you a helper function for free
+@workflow -- This attribute will give you a helper function for free
 def optionChain = (
   -- This is how we get the short-circuiting behavior for options.
   -- Notice how we don't use the continuation for the `#none` case, so 

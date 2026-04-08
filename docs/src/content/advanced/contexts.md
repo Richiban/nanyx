@@ -18,10 +18,10 @@ context Console = (
 
 ## Requiring a context
 
-A function can specify required contexts in its type signature. Here, `sayHello` can call `println` because it runs in `@Console`:
+A function can specify required contexts in its type signature. Here, `sayHello` can call `println` because it runs in `$Console`:
 
 ```nanyx
-def sayHello: [@Console] () -> () = {
+def sayHello: [$Console] () -> () = {
   println("Hello, world!")
 }
 ```
@@ -53,7 +53,7 @@ def result = use Console(println = hostPrint) in {
 A value's context requirement is part of its type. You can annotate just the contexts and let the rest infer:
 
 ```nanyx
-def greet: [@Console] = {
+def greet: [$Console] = {
   println("Hi")
 }
 ```

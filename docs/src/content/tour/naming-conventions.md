@@ -22,5 +22,5 @@ type Greeter = (greet: () -> ())
 -- Type + function with the same name
 
 def Greeter() =
-  (greet<@Console> = { println("Hello!") })
+  (greet<$Console> = { println("Hello!") })
 ```

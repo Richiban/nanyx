@@ -246,26 +246,26 @@ let ``Typecheck infers attached receiver type for unannotated lambda`` () =
 [<Fact>]
 let ``Typecheck infers nominal attached receiver type for unannotated lambda`` () =
     let source =
-        "type @Email = string\n" +
-        "def @Email.toString = { e -> \"ok\" }"
+        "type $Email = string\n" +
+        "def $Email.toString = { e -> \"ok\" }"
     let result = Compiler.compile source
     Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
     let typed = result.Typed.Value
-    match typed.Types.["@Email.toString"] with
-    | TyFunc(TyNominal(name, _, _), TyPrimitive "string") when name = "@Email" ->
+    match typed.Types.["$Email.toString"] with
+    | TyFunc(TyNominal(name, _, _), TyPrimitive "string") when name = "$Email" ->
         Assert.True(true)
     | other -> Assert.True(false, $"Unexpected inferred nominal attached def type: %A{other}")
 
 [<Fact>]
 let ``Typecheck infers nominal attached receiver as argument in body`` () =
     let source =
-        "type @Email = string\n" +
-        "def @Email.toDisplay = { e -> e }"
+        "type $Email = string\n" +
+        "def $Email.toDisplay = { e -> e }"
     let result = Compiler.compile source
     Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
     let typed = result.Typed.Value
-    match typed.Types.["@Email.toDisplay"] with
-    | TyFunc(TyNominal(nameIn, _, _), TyNominal(nameOut, _, _)) when nameIn = "@Email" && nameOut = "@Email" ->
+    match typed.Types.["$Email.toDisplay"] with
+    | TyFunc(TyNominal(nameIn, _, _), TyNominal(nameOut, _, _)) when nameIn = "$Email" && nameOut = "$Email" ->
         Assert.True(true)
     | other -> Assert.True(false, $"Unexpected inferred nominal identity attached def type: %A{other}")
 
@@ -294,10 +294,10 @@ let ``Typecheck pipe resolves attached functions`` () =
 [<Fact>]
 let ``Typecheck pipe resolves attached functions on nominals`` () =
     let source =
-        "type @Email = string\n" +
-        "def @Email.toString: @Email -> string = { e -> \"\" }\n" +
-        "def @Email.format: @Email -> string = { e -> \"\" }\n" +
-        "def email: @Email = \"a@b.com\"\n" +
+        "type $Email = string\n" +
+        "def $Email.toString: $Email -> string = { e -> \"\" }\n" +
+        "def $Email.format: $Email -> string = { e -> \"\" }\n" +
+        "def email: $Email = \"a@b.com\"\n" +
         "def s = email \\ toString\n" +
         "def s2 = email \\ format"
     let result = Compiler.compile source
@@ -607,30 +607,30 @@ let ``Typecheck workflow requires pure`` () =
 [<Fact>]
 let ``Typecheck supports nominal types`` () =
     let source =
-        "type @Email = string\n" +
-        "def email: @Email = \"a@b.com\"\n" +
+        "type $Email = string\n" +
+        "def email: $Email = \"a@b.com\"\n" +
         "def addr: string = email\n" +
-        "def email2: @Email = addr"
+        "def email2: $Email = addr"
     let result = Compiler.compile source
     Assert.True(result.Diagnostics.IsEmpty)
     let typed = result.Typed.Value
     match typed.Types.["email"] with
     | TyNominal(name, underlying, false) ->
-        Assert.Equal("@Email", name)
+        Assert.Equal("$Email", name)
         Assert.Equal(TyPrimitive "string", underlying)
     | other -> Assert.True(false, $"Unexpected nominal type: %A{other}")
     Assert.Equal(TyPrimitive "string", typed.Types.["addr"])
     match typed.Types.["email2"] with
-    | TyNominal(name, _, false) -> Assert.Equal("@Email", name)
+    | TyNominal(name, _, false) -> Assert.Equal("$Email", name)
     | other -> Assert.True(false, $"Unexpected nominal type: %A{other}")
 
 [<Fact>]
 let ``Typecheck rejects distinct nominal types`` () =
     let source =
-        "type @Email = string\n" +
-        "type @UserId = string\n" +
-        "def email: @Email = \"a@b.com\"\n" +
-        "def user: @UserId = email"
+        "type $Email = string\n" +
+        "type $UserId = string\n" +
+        "def email: $Email = \"a@b.com\"\n" +
+        "def user: $UserId = email"
     let result = Compiler.compile source
     Assert.False(result.Diagnostics.IsEmpty)
     let message = result.Diagnostics |> List.head |> fun diag -> diag.Message
@@ -639,14 +639,14 @@ let ``Typecheck rejects distinct nominal types`` () =
 [<Fact>]
 let ``Typecheck allows local private nominal construction`` () =
     let source =
-        "type @Token = private string\n" +
-        "def token: @Token = \"secret\""
+        "type $Token = private string\n" +
+        "def token: $Token = \"secret\""
     let result = Compiler.compile source
     Assert.True(result.Diagnostics.IsEmpty)
     let typed = result.Typed.Value
     match typed.Types.["token"] with
     | TyNominal(name, underlying, true) ->
-        Assert.Equal("@Token", name)
+        Assert.Equal("$Token", name)
         Assert.Equal(TyPrimitive "string", underlying)
     | other -> Assert.True(false, $"Unexpected token type: %A{other}")
 

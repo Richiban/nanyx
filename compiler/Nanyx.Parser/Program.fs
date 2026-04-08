@@ -185,7 +185,7 @@ let identifierNoWs: Parser<Identifier, unit> =
 let identifier: Parser<Identifier, unit> = identifierNoWs .>> wsInline
 
 let typeNameIdentifier: Parser<Identifier, unit> =
-    (pchar '@' >>. identifierNoWs |>> fun name -> "@" + name)
+    (pchar '$' >>. identifierNoWs |>> fun name -> "$" + name)
     <|> identifierNoWs
 
 let qualifiedIdentifier: Parser<Identifier, unit> =
