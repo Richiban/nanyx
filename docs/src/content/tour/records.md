@@ -95,7 +95,7 @@ type Person = (name: string; petsName?: string)
 
 Optional fields can also be modeled explicitly with tag unions if you need stricter control.
 
-## Records and tuples
+## Records vs tuples
 
 In Nanyx, tuples and records are one unified structure. A tuple is just a record whose fields are all positional.
 
