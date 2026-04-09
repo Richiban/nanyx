@@ -85,16 +85,6 @@ You can also compose record requirements with intersections:
 type Person = Named & (age: int)
 ```
 
-## Optional fields
-
-Records can contain optional members when a field may be absent:
-
-```nanyx
-type Person = (name: string; petsName?: string)
-```
-
-Optional fields can also be modeled explicitly with tag unions if you need stricter control.
-
 ## Records vs tuples
 
 In Nanyx, tuples and records are one unified structure. A tuple is just a record whose fields are all positional.
@@ -114,5 +104,84 @@ def valid = (10, 20, x = 10, y = 20)
 -- Invalid (named field before positional field)
 -- def invalid = (x = 10, 20)
 ```
+
+## Optional fields
+
+Records can contain optional members when a field may be absent:
+
+```nanyx
+type Person = (name: string; petsName?: string)
+```
+
+Optional fields can also be modeled explicitly with tag unions if you need stricter control.
+
+## Copy and update (non-destructive mutation)
+
+Records are typically treated immutably. To create a modified copy, use `with`.
+
+Update a single field:
+
+```nanyx
+def alice = (name = "Alice", age = 30)
+def olderAlice = alice with age = 31
+```
+
+Update multiple fields at once:
+
+```nanyx
+def user = (name = "Alice", age = 30, email = "old@example.com")
+def updatedUser = user with (
+  age = 31
+  email = "alice@example.com"
+)
+```
+
+You can also chain `with` for nested records:
+
+```nanyx
+def line = (
+  range = (
+    start = (character = 0)
+  )
+)
+
+def updatedLine = line with (
+  range = line.range with (
+    start = line.range.start with (
+      character = 4
+    )
+  )
+)
+```
+
+This preserves the original value and returns a new record with only the specified fields changed. This means that the result of a `with` expression is always of the same type as the input record.
+
+## Record spread (`...`)
+
+Nanyx also supports record spread using the `...` sigil (similar to JavaScript).
+
+Spread can combine any number of source objects, interleaved with explicit field definitions:
+
+```nanyx
+def defaults = (host = "localhost", port = 8080)
+def env = (port = 9000)
+def cli = (logLevel = "debug")
+
+def config = (
+  ...defaults
+  protocol = "https"
+  ...env
+  ...cli
+)
+```
+
+`with` and spread solve related but different problems:
+
+- `with` has exactly one input object.
+- The result of `with` is always the same type as that input object.
+- Spread can merge any number of objects and new field definitions.
+- The result of spread can be any arbitrary record type.
+
+--- 
 
 For the broader type-system overview, see [Types](./types.md).

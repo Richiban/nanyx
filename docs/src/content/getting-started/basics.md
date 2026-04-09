@@ -44,6 +44,8 @@ def myRef = Ref(1)
 set myRef.value = 2
 ```
 
+For immutable record updates, see [Copy and update (non-destructive mutation)](../tour/records.md#copy-and-update-non-destructive-mutation).
+
 ## Blocks and indentation
 
 Blocks use indentation. A more-indented line belongs to the previous line. If a line ends with `->`, the next indented block is part of the expression.

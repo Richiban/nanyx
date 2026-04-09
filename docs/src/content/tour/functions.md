@@ -128,7 +128,7 @@ def printResults(left = "left", middle, right = "right") ->
 
 ### Named parameters
 
-If you name parameters in the signature, callers can pass a record with matching fields:
+If you name parameters in the signature, callers can (in fact, _must_) pass a record with matching fields:
 
 ```nanyx
 def replace: (string, replace: string, with: string) -> string = { s, o, r -> ??? }
