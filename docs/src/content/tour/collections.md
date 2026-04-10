@@ -27,15 +27,18 @@ def addItems = {
 }
 ```
 
+Use immutable collections by default. Reach for mutable variants when profiling shows a hot path that benefits from in-place updates.
+
 ## Common collection abstractions
 
 Most of the time, Nanyx programs don't care very much about the specific implementation of a collection, just that it supports certain operations. For this reason, the standard library provides a number of common collection abstractions that can be implemented by any type:
 
-| Collection type | Special alias | Use case |
+| Collection type | Special alias | Characteristics |
 |-----------------|-------------------|---------|
 | `List(a)` | `list(a)` | Indexable collections |
 | `Set(a)` | - | Membership checks |
 | `Map(k, v)` | `k -> v` | Key/value lookup |
+| `Collection(a)` | - | Any in-memory collection |
 | `Sequence(a)` | `seq(a)` | Finite, deterministic sequences |
 | `Generator(a)` | `gen(a)` | Potentially infinite or non-deterministic sequences |
 
@@ -45,13 +48,15 @@ def lookup = ["a" => 1, "b" => 2]
 def unique: Set(int) = [1, 2, 2, 3]
 ```
 
+For advanced patterns such as associated types and constrained collection capabilities, see [Associated types and constraints](../advanced/associated-types-and-constraints.md).
+
 ## Syntax
 
 Nanyx supports a generalisable literal syntax for all collection types; the square bracket form is available to any target type that implements the correct builder context:
 
 ```nanyx
 context ListBuilder(a) = (
-  def yield: a -> ()
+  yield: a -> ()
 )
 
 def MyList.apply: ([ListBuilder(a)] () -> a) -> MyList(a) = { f ->
@@ -62,7 +67,7 @@ def MyList.apply: ([ListBuilder(a)] () -> a) -> MyList(a) = { f ->
       yield = { element -> list := list \add(element) }
     )
 
-    f(builder)
+    f()
 
     list.value
   }
@@ -74,7 +79,7 @@ def myList: MyList(int) = [1, 2, 3]
 
 ```nanyx
 context MapBuilder(k, v) = (
-  def `=>`: (k, v) -> ()
+  `=>`: (k, v) -> ()
 )
 
 def MyMap.apply: ([MapBuilder(a)] () -> a) -> MyMap(a) = { f ->
@@ -85,9 +90,9 @@ def MyMap.apply: ([MapBuilder(a)] () -> a) -> MyMap(a) = { f ->
       `=>` = { k, v -> map := map \ add(k, v) }
     )
 
-    f(builder)
+    f()
 
-    builder.build() -- returns MyMap(string, int)
+    map.value
   }
 }
 
@@ -106,3 +111,5 @@ def myList: MyList(int) = MyList.apply {
   yield(3)
 }
 ```
+
+For iteration constructs, see [Loops](./loops.md). For query-style collection programming, see [Sequences and queries](../advanced/sequences-and-queries.md).

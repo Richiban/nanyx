@@ -1,12 +1,13 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { createHighlighter, type ThemeInput } from "shiki/bundle/web";
+import mermaid from "mermaid";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore -- shiki/langs/toml lacks type declarations
 import toml from "shiki/langs/toml";
 import nyxGrammar from "../../../../extension/src/syntaxes/nanyx.tmLanguage.json";
 import { Check, Copy, Link2 } from "lucide-react";
-import { memo, useEffect, useMemo, useState, createContext, useContext, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useRef, useState, createContext, useContext, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { extractHeadingsFromMarkdown, slugifyHeading } from "@/lib/markdownHeadings";
 
@@ -177,6 +178,58 @@ function CopyButton({ code }: { code: string }) {
   );
 }
 
+function MermaidDiagram({ chart, isDark }: { chart: string; isDark: boolean }) {
+  const [svg, setSvg] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
+  const diagramIdRef = useRef(`mermaid-${Math.random().toString(36).slice(2, 10)}`);
+
+  useEffect(() => {
+    let active = true;
+
+    const render = async () => {
+      try {
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: "loose",
+          theme: isDark ? "dark" : "default",
+        });
+
+        const { svg: renderedSvg } = await mermaid.render(diagramIdRef.current, chart);
+        if (!active) {
+          return;
+        }
+        setSvg(renderedSvg);
+        setError(null);
+      } catch {
+        if (!active) {
+          return;
+        }
+        setError("Unable to render Mermaid diagram.");
+      }
+    };
+
+    render();
+
+    return () => {
+      active = false;
+    };
+  }, [chart, isDark]);
+
+  if (error) {
+    return (
+      <pre className="rounded-lg p-4 mb-4 overflow-x-auto text-sm border bg-[hsl(var(--code-bg))] border-[hsl(var(--code-border))]">
+        <code>{chart}</code>
+      </pre>
+    );
+  }
+
+  return (
+    <div className="rounded-lg p-4 mb-4 overflow-x-auto border bg-[hsl(var(--code-bg))] border-[hsl(var(--code-border))]">
+      {svg ? <div dangerouslySetInnerHTML={{ __html: svg }} /> : <div className="text-sm text-muted-foreground">Rendering diagram...</div>}
+    </div>
+  );
+}
+
 function MarkdownRendererImpl({
   content,
   className,
@@ -322,6 +375,11 @@ function MarkdownRendererImpl({
             if (!isInline && match) {
               const rawLang = match[1].toLowerCase();
               const normalizedLang = languageAliases[rawLang] ?? rawLang;
+
+              if (normalizedLang === "mermaid") {
+                return <MermaidDiagram chart={codeString} isDark={isDark} />;
+              }
+
               const canHighlight =
                 highlighter && loadedLanguages.has(normalizedLang);
               const theme = isDark ? "ink-night" : "paper-white";

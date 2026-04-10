@@ -93,6 +93,8 @@ export def sum: [Sum(a)] list(a) -> a
   = { items -> items \fold(`0`) { + } }
 ```
 
+For ergonomic generic API design with associated members and constrained capabilities, see [Associated types and constraints](./associated-types-and-constraints.md).
+
 ## Context synthesis using attached definitions
 
 When a function requires a context, you don't always have to load or even create it manually. If the type in question has [attached definitions](./attached-definitions.md) that match the context's members, the compiler can **synthesize** the context automatically.
