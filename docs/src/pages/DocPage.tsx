@@ -127,7 +127,7 @@ export default function DocPage() {
       return <Navigate to="/docs/getting-started/what-is-nanyx" replace />;
     }
     return (
-      <div className="py-12 text-center">
+      <div className="docs-not-found">
         <h1 className="text-2xl font-bold mb-2" style={{ fontFamily: "'Space Grotesk', system-ui" }}>Page Not Found</h1>
         <p className="text-muted-foreground">The documentation page you're looking for doesn't exist.</p>
       </div>
@@ -173,16 +173,16 @@ export default function DocPage() {
   );
 
   return (
-    <article className="max-w-7xl lg:grid lg:grid-cols-[minmax(0,1fr)_18rem] lg:gap-8">
-      <div className="min-w-0">
+    <article className="docs-article">
+      <div className="docs-content-col">
         <DocsBreadcrumbs
           items={[
             { label: section.title, href: `${section.basePath}/${section.pages[0].slug}` },
             { label: page.title },
           ]}
         />
-        <header className="mb-5">
-          <h1 id={slugifyHeading(page.title)} className="text-3xl font-bold mb-2" style={{ fontFamily: "'Space Grotesk', system-ui" }}>
+        <header className="docs-page-header">
+          <h1 id={slugifyHeading(page.title)} className="docs-page-title" style={{ fontFamily: "'Space Grotesk', system-ui" }}>
             {page.title}
           </h1>
           {page.description && <p className="doc-description text-muted-foreground text-base">{page.description}</p>}
@@ -207,8 +207,8 @@ export default function DocPage() {
       </div>
 
       {headings.length > 0 && (
-        <aside className="hidden lg:block">
-          <div className="sticky top-20">{renderHeadingLinks(false)}</div>
+        <aside className="docs-toc-aside">
+          <div className="docs-toc-sticky">{renderHeadingLinks(false)}</div>
         </aside>
       )}
     </article>

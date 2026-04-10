@@ -9,8 +9,8 @@ interface DocsHeaderProps {
 
 export function DocsHeader({ onToggleSidebar, onOpenSearch }: DocsHeaderProps) {
   return (
-    <header className="sticky top-0 z-30 h-16 border-b border-border bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/60">
-      <div className="flex h-full items-center gap-4 px-4 md:px-6">
+    <header className="docs-header">
+      <div className="docs-header-inner">
         <Button
           variant="ghost"
           size="icon"
@@ -20,12 +20,12 @@ export function DocsHeader({ onToggleSidebar, onOpenSearch }: DocsHeaderProps) {
           <Menu className="h-5 w-5" />
         </Button>
 
-        <Link to="/" className="flex items-center gap-2.5 mr-auto">
-          <div className="h-8 w-8 rounded-lg flex items-center justify-center">
+        <Link to="/" className="docs-logo-link">
+          <div className="docs-logo-mark">
             <img src="/nanyx.svg" />
           </div>
           <span
-            className="text-lg font-bold tracking-tight"
+            className="docs-logo-text"
             style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}
           >
             Nanyx

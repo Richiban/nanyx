@@ -128,6 +128,129 @@
 }
 
 /* Prose styling for markdown content */
+.docs-layout-root {
+  min-height: 100vh;
+  background: hsl(var(--background));
+}
+
+.docs-layout-body {
+  display: flex;
+}
+
+.docs-layout-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 2rem 1.5rem;
+}
+
+.docs-header {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  height: 4rem;
+  border-bottom: 1px solid hsl(var(--border));
+  background: hsl(var(--card) / 0.95);
+}
+
+@supports ((backdrop-filter: blur(8px)) or (-webkit-backdrop-filter: blur(8px))) {
+  .docs-header {
+    background: hsl(var(--card) / 0.6);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+  }
+}
+
+.docs-header-inner {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  gap: 1rem;
+  padding-inline: 1rem;
+}
+
+.docs-logo-link {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  margin-right: auto;
+}
+
+.docs-logo-mark {
+  height: 2rem;
+  width: 2rem;
+  border-radius: 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.docs-logo-text {
+  font-size: 1.125rem;
+  line-height: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+}
+
+.docs-article {
+  max-width: 80rem;
+}
+
+.docs-content-col {
+  min-width: 0;
+}
+
+.docs-page-header {
+  margin-bottom: 1.25rem;
+}
+
+.docs-page-title {
+  font-size: 1.875rem;
+  line-height: 2.25rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+.docs-toc-aside {
+  display: none;
+}
+
+.docs-toc-sticky {
+  position: sticky;
+  top: 5rem;
+}
+
+.docs-not-found {
+  padding-block: 3rem;
+  text-align: center;
+}
+
+@media (min-width: 768px) {
+  .docs-layout-main {
+    padding-inline: 3rem;
+  }
+
+  .docs-header-inner {
+    padding-inline: 1.5rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .docs-layout-main {
+    padding-left: 4rem;
+    padding-right: 0;
+  }
+
+  .docs-article {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 18rem;
+    column-gap: 2rem;
+  }
+
+  .docs-toc-aside {
+    display: block;
+  }
+}
+
 .prose {
   @apply max-w-none;
 }

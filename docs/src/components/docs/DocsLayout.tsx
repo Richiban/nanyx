@@ -9,14 +9,14 @@ export function DocsLayout() {
   const [searchOpen, setSearchOpen] = useState(false);
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="docs-layout-root">
       <DocsHeader
         onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
         onOpenSearch={() => setSearchOpen(true)}
       />
-      <div className="flex">
+      <div className="docs-layout-body">
         <DocsSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
-        <main className="flex-1 min-w-0 px-6 py-8 md:px-12 lg:px-16">
+        <main className="docs-layout-main">
           <Outlet />
         </main>
       </div>
