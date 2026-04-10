@@ -4,8 +4,6 @@ description: "Core syntax and expressions"
 order: 4
 ---
 
-# Basics
-
 This page covers core syntax and expression rules to help you read and write simple Nanyx code.
 
 ## Expressions
@@ -18,33 +16,13 @@ def message = "Hello world"
 
 ## Definitions
 
-Use `def` for immutable bindings:
+Use `def` to bind a name to a value. The value can be any expression, including another definition or a function:
 
 ```nanyx
 def name = "Nanyx"
 def version = 4
+def getMessage = { name -> "Hello, {name}!" }
 ```
-
-## Mutability
-
-Mutable variables use `mut`, and updates use `set`:
-
-```nanyx
-mut counter = 0
-set counter++
-set counter = counter + 1
-```
-
-Immutability is a property of the variable, not the value. You can make mutable fields in a record with `mut`:
-
-```nanyx
-type Ref(a) = (mut value: a)
-
-def myRef = Ref(1)
-set myRef.value = 2
-```
-
-For immutable record updates, see [Copy and update (non-destructive mutation)](../tour/records.md#copy-and-update-non-destructive-mutation).
 
 ## Blocks and indentation
 
@@ -64,6 +42,77 @@ You can also continue an expression on the next line when the previous line is i
 def message = "Hello " +
   "World"
 ```
+
+A block returns the value of its last expression:
+
+```nanyx
+def answer =
+  def x = 20
+  def y = 22
+  x + y
+```
+
+For more on expression forms, see [Functions](../tour/functions.md) and [Pattern matching](../tour/pattern-matching.md).
+
+## Numbers
+
+Nanyx includes familiar numeric literals:
+
+```nanyx
+def count = 42
+def ratio = 3.14159
+def million = 1_000_000
+```
+
+You can use standard arithmetic and comparison operators:
+
+```nanyx
+def total = 10 + 5 * 2
+def bigger = total > 12
+```
+
+For operator behavior, see [Operators](../tour/operators.md). For range syntax, see [Ranges](../tour/ranges.md).
+
+## Strings
+
+String literals can use double quotes or single quotes:
+
+```nanyx
+def a = "Hello"
+def b = 'Nanyx'
+```
+
+String interpolation uses `{...}` inside a string literal:
+
+```nanyx
+def name = "Alex"
+def greeting = "Hello, {name}!"
+```
+
+For library string operations (`length`, `split`, `trim`, etc.), see [string stdlib](../stdlib/string.md).
+
+## Equality and comparison
+
+Use `==` and `!=` for equality and inequality:
+
+```nanyx
+def same = 10 == 10
+def different = "a" != "b"
+```
+
+Use `<`, `<=`, `>`, `>=` for ordering comparisons:
+
+```nanyx
+def isAdult = 21 >= 18
+```
+
+These operators are part of the language's operator system; see [Operators](../tour/operators.md) for details.
+
+## Mutability
+
+Mutability is available in Nanyx, but is considered a somewhat advanced feature. Read about [the Memory context](../advanced/memory) for more.
+
+For immutable record updates, see [Copy and update (non-destructive mutation)](../tour/records.md#copy-and-update-non-destructive-mutation).
 
 ## Commas and newlines
 
@@ -89,7 +138,7 @@ def myRecord = (
 
 ## Comments
 
-Single-line comments use `--`. Multi-line comments start and end with a line containing only `---`.
+Single-line comments use `--`. Multi-line comments start and end with a line containing only three or more `---`.
 
 ```nanyx
 -- This is a single-line comment
@@ -97,27 +146,17 @@ Single-line comments use `--`. Multi-line comments start and end with a line con
 ---
 This is a multi-line comment.
 ---
+
+----------------------------------
+This is also a multi-line comment.
+----------------------------------
 ```
 
-## Literals
+Multi-line comments must be closed with the same number of dashes that they were opened with.
 
-Nanyx has familiar literals plus tags, ranges, and records:
+### Tags, ranges and records
 
-```nanyx
-def age = 21
-
-def name = "Fred"
-
-def factor = 1.5
-
-def mode: #read | #readwrite = #readwrite
-
-def range = 1..5
-
-def coordinates = (x = 1, y = 2)
-
-def numbers = [1, 2, 3]
-```
+Nanyx also supports tags, ranges, and records as core value forms. See [Tags](../tour/tags.md), [Ranges](../tour/ranges.md), and [Records and tuples](../tour/records.md).
 
 ## Table literals
 
@@ -152,8 +191,8 @@ if | cond1 ->
 
 ## Unimplemented code
 
-Use `...` as a placeholder to keep code compiling while you iterate:
+Use `???` as a placeholder to keep code compiling while you iterate:
 
 ```nanyx
-def myFunction = { () -> ... }
+def myFunction = { () -> ??? }
 ```

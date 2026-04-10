@@ -4,11 +4,13 @@ description: "Organizing code with modules and import patterns"
 order: 12
 ---
 
-Modules in Nanyx help organize code into logical units. They provide namespaces for definitions and control visibility.
+Modules in Nanyx help organize code into logical units. They provide namespaces for definitions and are the primary unit of encapsulation, controlling visibility.
+
+The common case is that there is a 1:1 relationship between files and modules, but Nanyx also supports declaring multiple modules in a single file or splitting a module across multiple files. The module system is flexible to accommodate different organizational styles.
 
 ## Module declaration
 
-Every Nanyx file optionally starts with a module declaration. 
+Every Nanyx file optionally starts with a module declaration.
 
 ```nanyx
 module main
@@ -17,6 +19,21 @@ println("Hello from MyApp!")
 ```
 
 If the module declaration is omitted, the module remains anonymous and can only be imported by file path.
+
+```nanyx
+-- No module name means this module can only be imported by file path
+
+println("Hello from MyApp!")
+```
+
+It is possible to write a module declaration without giving it a name, but by itself this doesn't provide any benefits over omitting the declaration entirely and is only used in order to attach attributes or documentation to the module:
+
+```nanyx
+-- Here we use the module declaration syntax to attach the @entry attribute, even though we don't give the module a name
+@entry module
+
+println("Hello from MyApp!")
+```
 
 ## Module naming
 
@@ -53,15 +70,6 @@ userManagement.createUser(...)
 d.process(...)
 ```
 
-The standard library is available under the `nanyx` package and is available in all Nanyx programs; there's no need to install it:
-
-```nanyx
-module main
-
-import nanyx/collections
-...
-```
-
 ### Importing modules by file path
 
 For quick scripts or local utilities, you can import directly from a file path. When importing a file path, you must use an alias to give the module a name in your current scope.
@@ -75,14 +83,24 @@ utils.someHelper(...)
 
 ### Importing modules from other packages
 
-Importing external packages (such as those installed from a package manager):
+When importing external packages (such as those installed from a package manager), the import includes the package name as a prefix:
 
 ```nanyx
 -- Notice how the package name and module name are separated by a slash
+-- We import the `http` and `json.deserialization` modules from the `nanyx.web` package
 import (
-  webframework/http
-  webframework/json.deserialization
+  nanyx.web/http
+  nanyx.web/json.deserialization
 )
+```
+
+The standard library is available under the `nanyx` package and is available in all Nanyx programs; there's no need to install it:
+
+```nanyx
+module main
+
+import nanyx/collections
+...
 ```
 
 ### Qualified imports
@@ -137,16 +155,18 @@ def transform: Data -> Data = { data ->
 }
 ```
 
+Modules themselves do not need to be exported; they are available for import by other modules as long as they contain at least one exported definition.
+
 ### Re-exporting
 
 Export items from other modules:
 
 ```nanyx
-module Collections
+module collections
 
 -- Re-export from sub-modules
-export Collections.List (map, filter, fold)
-export Collections.Map (empty, insert, lookup)
+export collections.list (map, filter, fold)
+export collections.map (empty, insert, lookup)
 ```
 
 ## Nested modules
@@ -156,9 +176,14 @@ You can declare module blocks inside a file. The block name is appended to the o
 ```nanyx
 module myModule
 
+-- The full name of this module is `myModule.functions`
 module functions =
   export def f(x) -> x * 2
   export def g(x) -> x ** 2
+
+  module helpers =
+    def helper1() = ...
+    def helper2() = ...
 ```
 
 Create hierarchies with dot notation:
@@ -170,22 +195,24 @@ def validateEmail: string -> Result(Email, ValidationError) = { ... }
 def validateAge: int -> Result(Age, ValidationError) = { ... }
 ```
 
-## Module-level constants
+## Partial modules
 
-Define constants at module level:
+A module can be split across multiple files using the same module name in each file. This is useful for large modules or when you want to separate public API from implementation details.
+
+To prevent accidental misuse, each module declaration must be decorated with the `partial` attribute:
 
 ```nanyx
-module config
+-- utils.nanyx
+@partial module utils
 
-def appName = "MyApp"
-def version = "1.0.0"
-def maxRetries = 3
+...
+```
 
-def databaseConfig = (
-  host = "localhost"
-  port = 5432
-  database = "myapp"
-)
+```nanyx
+-- utils2.nanyx
+@partial module utils
+
+...
 ```
 
 ## Circular dependencies
@@ -196,21 +223,23 @@ Instead, extract shared code to a third module:
 
 ```nanyx
 -- Bad: circular dependency
-module A
-import B  -- A imports B
+module a
+import b  -- A imports B
 
-module B  
-import A  -- B imports A (circular!)
+module b  
+import a  -- B imports A (circular!)
+```
 
+```nanyx
 -- Good: extract shared code
-module Shared
+module shared
 -- Common definitions
 
-module A
-import Shared
+module a
+import shared
 
-module B
-import Shared
+module b
+import shared
 ```
 
 ## Modules in the standard library
