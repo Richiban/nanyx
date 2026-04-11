@@ -21,13 +21,15 @@ This page defines the design direction for units, with two goals:
 
 ## Defining units
 
-```nanyx
-unit(t) ticks of int
+Units are always numeric in Nanyx. Unit declarations do not specify an underlying primitive type (for example, no `of number` or `of int`).
 
-@baseUnit unit(s) Seconds of number = 10_000_000ticks
-unit(min) Minutes of number = 60s
-unit(hr) Hours of number = 60min
-unit(d) Days of number = 24hr
+```nanyx
+unit(t) ticks
+
+@baseUnit unit(s) Seconds = 10_000_000ticks
+unit(min) Minutes = 60s
+unit(hr) Hours = 60min
+unit(d) Days = 24hr
 
 unit B(int) = 8b
 
@@ -103,9 +105,9 @@ This keeps APIs reusable while preserving dimension correctness.
 Unit declarations define scale factors between aliases of the same dimension.
 
 ```nanyx
-@baseUnit unit(s) Seconds of number
-unit(ms) Milliseconds of number = 0.001s
-unit(min) Minutes of number = 60s
+@baseUnit unit(s) Seconds
+unit(ms) Milliseconds = 0.001s
+unit(min) Minutes = 60s
 ```
 
 Conversions are compile-time checked and only allowed within equivalent dimensions:

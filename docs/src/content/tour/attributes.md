@@ -65,7 +65,7 @@ See [Workflows](../advanced/workflows.md).
 Marks a unit declaration as a base/reference unit for unit-of-measure definitions.
 
 ```nanyx
-@baseUnit unit(s) Seconds of number = 10_000_000ticks
+@baseUnit unit(s) Seconds = 10_000_000ticks
 ```
 
 See [Units of measure](../advanced/units-of-measure.md).
