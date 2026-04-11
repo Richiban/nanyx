@@ -224,9 +224,18 @@ match num
 Custom patterns can also return values that are then available in the match body:
 
 ```nanyx
+-- A pattern that checks whether a string contains a given character and splits on it
+pattern SplitOnChar: char, string -> #some(string, string) | #pass = { c, s ->
+  let parts = s.split(c)
+  if parts.length == 2 then #some(parts[0], parts[1]) else #pass
+}
+
+match "hello,world"
+  | SplitOnChar(',', s1, s2) -> "First: {s1}, Second: {s2}"
+  | _ -> "Input string does not contain a comma"
 ```
 
-Custom patterns are particularly useful for complex conditions like regex matching:
+Custom patterns are useful for complex conditions like regex matching:
 
 ```nanyx
 pattern MatchesRegex: string, Regex -> bool = { s, r ->
