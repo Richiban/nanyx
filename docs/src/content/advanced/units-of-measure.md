@@ -19,42 +19,53 @@ This page defines the design direction for units, with two goals:
 1. Unit-safe arithmetic with automatic unit derivation (for example `m / s -> m/s`)
 2. Ergonomic value construction at call sites (for example `delay(500ms)`)
 
+## Two concepts: dimensions and units
+
+Nanyx should model **dimensions** and **units** separately:
+
+- **Dimension**: the physical kind used by type checking (`Time`, `Length`, `Mass`, `Length/Time`)
+- **Unit**: a named scale for a dimension (`ms`, `s`, `min`, `km`)
+
+Type checking operates on dimensions. Units are syntax and conversion metadata for constructing and displaying values.
+
 ## Defining units
 
-Units are always numeric in Nanyx. Unit declarations do not specify an underlying primitive type (for example, no `of number` or `of int`).
+Units are always numeric in Nanyx. Unit declarations do not specify an underlying primitive type.
 
 ```nanyx
-unit(t) ticks
+dimension Time
+dimension Bytes
 
-@baseUnit unit(s) Seconds = 10_000_000ticks
-unit(min) Minutes = 60s
-unit(hr) Hours = 60min
-unit(d) Days = 24hr
+@baseUnit unit(s) Seconds: Time
+unit(ms) Milliseconds: Time = 0.001s
+unit(min) Minutes: Time = 60s
+unit(hr) Hours: Time = 60min
+unit(d) Days: Time = 24hr
 
-unit B(int) = 8b
-
-unit(B) Bytes = int
+@baseUnit unit(B) Byte: Bytes
+unit(KB) Kilobyte: Bytes = 1024B
+unit(MB) Megabyte: Bytes = 1024KB
 ```
 
 ### Design model
 
-Each numeric type can carry a _dimension vector_ at compile time.
+Each measured numeric type carries a compile-time _dimension vector_.
 
 - `number` is dimensionless (`1`)
-- Base units introduce independent dimensions (for example `m`, `s`, `kg`)
-- Derived units are aliases that reduce to powers of base dimensions
+- Base dimensions are independent (for example `Length`, `Time`, `Mass`)
+- Units map to a scale within one dimension
 
 Conceptually:
 
-- `m` is `m^1`
-- `s` is `s^1`
-- `m/s` is `m^1 * s^-1`
-- `N` (newton) can be declared as `kg*m/s^2`
+- `number(Length)` means a quantity of length
+- `number(Time)` means a quantity of time
+- `number(Length/Time)` is speed
+- `number(Mass*Length/Time^2)` is force
 
 The compiler stores normalized dimensions (sorted bases + integer exponents), so equivalent forms unify:
 
-- `m/s` == `m*s^-1`
-- `(m/s)*s` == `m`
+- `Length/Time` == `Length*Time^-1`
+- `(Length/Time)*Time` == `Length`
 
 ## Derived units
 
@@ -64,13 +75,13 @@ def transferRate = 50(MB / s)
 
 ## Type rules (F#-style behavior)
 
-Units participate in type inference and unification, not runtime values.
+Dimensions participate in type inference and unification, not runtime values.
 
 For arithmetic operators on measured numeric values:
 
-- `+` and `-` require identical units
-- `*` adds exponents (`u1 * u2`)
-- `/` subtracts exponents (`u1 / u2`)
+- `+` and `-` require identical dimensions
+- `*` adds exponents (`d1 * d2`)
+- `/` subtracts exponents (`d1 / d2`)
 - `pow(x, n)` multiplies exponents by `n` (for integer `n`)
 
 Examples:
@@ -78,42 +89,42 @@ Examples:
 ```nanyx
 def d = 100m
 def t = 9.58s
-def v = d / t      -- inferred: number<m/s>
-def a = v / t      -- inferred: number<m/s^2>
+def v = d / t      -- inferred: number(Length/Time)
+def a = v / t      -- inferred: number(Length/Time^2)
 ```
 
 Addition mismatch is rejected:
 
 ```nanyx
 def bad = 10m + 2s
--- error: cannot add number<m> and number<s>
+-- error: cannot add number(Length) and number(Time)
 ```
 
-### Generic constraints over units
+### Generic constraints over dimensions
 
-Functions can stay generic over unit dimensions:
+Functions can stay generic over dimensions:
 
 ```nanyx
-def square: number<u> -> number<u^2> = { x -> x * x }
-def avgSpeed: (number<d>, number<t>) -> number<d/t> = { dist, time -> dist / time }
+def square: number(d) -> number(d^2) = { x -> x * x }
+def avgSpeed: (number(Length), number(Time)) -> number(Length/Time) = { dist, time -> dist / time }
 ```
 
 This keeps APIs reusable while preserving dimension correctness.
 
 ## Conversion rules
 
-Unit declarations define scale factors between aliases of the same dimension.
+Unit declarations define scale factors between units of the same dimension.
 
 ```nanyx
-@baseUnit unit(s) Seconds
-unit(ms) Milliseconds = 0.001s
-unit(min) Minutes = 60s
+@baseUnit unit(s) Seconds: Time
+unit(ms) Milliseconds: Time = 0.001s
+unit(min) Minutes: Time = 60s
 ```
 
 Conversions are compile-time checked and only allowed within equivalent dimensions:
 
 ```nanyx
-def timeout: number<s> = 500ms   -- implicit normalize to seconds if needed
+def timeout: number(Time) = 500ms
 def twoMinutes = 120s as min     -- explicit conversion syntax (proposed)
 ```
 
@@ -128,11 +139,11 @@ def impossible = 1m as s
 Use unit suffix literals as typed numeric constructors.
 
 - `500ms` parses as numeric literal `500` with unit suffix `ms`
-- Type is inferred as `number<ms>` (normalized to base dimension internally)
+- Type is inferred as `number(Time)` (carrying source unit metadata for conversions/formatting)
 - Works anywhere a numeric expression works
 
 ```nanyx
-type Duration = number<s>
+type Duration = number(Time)
 
 def delay: Duration -> () = { d -> ... }
 
@@ -142,6 +153,34 @@ delay(2min)       -- ok
 delay(42)         -- error: expected Duration, found dimensionless number
 ```
 
+## Function parameters: dimensions vs units
+
+Both are useful, but they should mean different things.
+
+- **Default**: functions accept a dimension (`number(Time)`, `number(Length/Time)`, etc.)
+- **Optional strict mode**: functions can request an exact unit when protocol/interop requires it (for example milliseconds only)
+
+Dimension-first API (recommended):
+
+```nanyx
+def delay: number(Time) -> () = { d -> ... }
+
+delay(500ms)
+delay(0.5s)
+delay(2min)
+```
+
+Unit-specific API (proposed constraint form):
+
+```nanyx
+def setTimeoutRaw: number(Time) where unit = ms -> () = { d -> ... }
+
+setTimeoutRaw(500ms)   -- ok
+setTimeoutRaw(1s)      -- error (or require explicit `as ms`)
+```
+
+Recommendation: keep most APIs dimension-based, and reserve unit-specific parameters for boundaries (wire formats, hardware APIs, legacy contracts).
+
 ### Why this satisfies both goals
 
 - Goal 1: unit algebra happens in inference/unification, so results derive automatically
@@ -149,7 +188,7 @@ delay(42)         -- error: expected Duration, found dimensionless number
 
 ## Runtime model
 
-Units are erased after type checking.
+Dimensions and units are erased after type checking.
 
 - Runtime carries only the underlying numeric representation
 - No runtime penalty for unit checking
