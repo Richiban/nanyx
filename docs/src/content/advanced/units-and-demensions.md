@@ -1,5 +1,5 @@
 ---
-title: "Units of measure"
+title: "Units and demensions"
 description: "Compile-time units for numbers"
 order: 7
 ---

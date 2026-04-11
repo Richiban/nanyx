@@ -68,7 +68,7 @@ Marks a unit declaration as a base/reference unit for unit-of-measure definition
 @baseUnit unit(s) Seconds = 10_000_000ticks
 ```
 
-See [Units of measure](../advanced/units-of-measure.md).
+See [Units and demensions](../advanced/units-and-demensions.md).
 
 ### `@builderPattern`
 
