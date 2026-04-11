@@ -61,15 +61,13 @@ context ListBuilder(a) = (
 
 def MyList.apply: ([ListBuilder(a)] () -> a) -> MyList(a) = { f ->
   memory {
-    def list = mut MyList()
+    def listRef = mut MyList()
 
     use (
-      yield = { element -> list := list \add(element) }
-    )
+      yield = { element -> listRef := listRef.value \add(element) }
+    ) in f()
 
-    f()
-
-    list.value
+    listRef.value
   }
 }
 
@@ -84,15 +82,13 @@ context MapBuilder(k, v) = (
 
 def MyMap.apply: ([MapBuilder(a)] () -> a) -> MyMap(a) = { f ->
   memory {
-    def map = mut MyMap(string, int)()
+    def mapRef = mut MyMap(string, int)()
     
     use (
-      `=>` = { k, v -> map := map \ add(k, v) }
-    )
+      `=>` = { k, v -> mapRef := mapRef.value \ add(k, v) }
+    ) in f()
 
-    f()
-
-    map.value
+    mapRef.value
   }
 }
 
