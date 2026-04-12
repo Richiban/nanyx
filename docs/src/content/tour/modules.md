@@ -248,7 +248,7 @@ Nanyx's standard library appears as a package called `nanyx` and is organized in
 
 ```nanyx
 import (
-  nanyx/list
+  nanyx/collections
   nanyx/map
   nanyx/set
   nanyx/string

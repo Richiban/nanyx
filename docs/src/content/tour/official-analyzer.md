@@ -27,7 +27,7 @@ The style analyzer helps teams keep APIs predictable and readable by flagging pa
 export def add = { a, b -> a + b }
 ```
 
-These diagnostics are warnings/hints from the analyzer, not compiler errors.
+These diagnostics are warnings/hints from the analyzer, not the compiler.
 
 ### Unused local value
 

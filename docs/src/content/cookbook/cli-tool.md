@@ -19,7 +19,7 @@ cd word_counter
 import (
   nanyx/file
   nanyx/string
-  nanyx/list
+  nanyx/collections
 )
 
 match file.read("input.txt")

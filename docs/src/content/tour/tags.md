@@ -32,6 +32,8 @@ type Color = #red | #green | #blue
 
 Using plain tags gives you an enum-like shape (while remaining structural).
 
+## Payloads
+
 Tags can also carry payload data, which makes them equivalent to discriminated unions:
 
 ```nanyx
@@ -42,7 +44,13 @@ type Color =
   | #custom(string)
 ```
 
-This lets each case carry exactly the data it needs.
+In type syntax, a tag with payload is written `#tagName(payload)`. The payload can be any type, including a record or another tag union:
+
+```nanyx
+type Shape =
+  | #circle(float)
+  | #rectangle(width: float, height: float)
+```
 
 ## Tags for function flags
 
@@ -59,9 +67,9 @@ def file = openFile("file.txt", #readwrite)
 
 ## Polymorphic tag unions
 
-Because tag unions are structural, you can write functions that require specific cases while allowing unknown cases to pass through. This is a common pattern for reusable APIs.
+Because tag unions are structural, functions can be written that require specific cases while allowing unknown cases to pass through. This is a common pattern for reusable APIs.
 
-For example, `Option.map` transforms only the `#some` case and preserves everything else:
+For example, the `nanyx/option` module contains a `map` function that transforms only the `#some` case of a given union type and preserves everything else:
 
 ```nanyx
 def Option.map

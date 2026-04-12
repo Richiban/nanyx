@@ -1,10 +1,8 @@
 ---
-title: "Standard library"
+title: Overview
 description: "Core abstractions and types"
 order: 1
 ---
-
-# Standard library
 
 This page gives a high-level overview of core standard library abstractions.
 
