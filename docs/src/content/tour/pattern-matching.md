@@ -129,11 +129,11 @@ def processRequests: list(Request) -> string = { requests ->
   match requests
     | [] -> 
       "No requests"
-    | [(id: 1, status: #some(value), tags: ["urgent", ...rest]), ...more] ->
+    | [(id = 1, status = #some(value), tags = ["urgent", ...rest]), ...more] ->
       "Urgent request 1 with value {value}"
-    | [(id: id, status: #error(msg), tags: []), { status: #some(val), ... }, ...tail] ->
+    | [(id, status = #error(msg), tags = []), (status = #some(val), ...), ...tail] ->
       "Error in request {id}: {msg}, followed by success"
-    | [(status: #some(n), ...), ...rest] & requests & { length: { > 5 } } ->
+    | [(status = #some(n), ...), ...rest] & requests & (length = { > 5 }) ->
       "Multiple requests with first one ok, total: {requests->length}"
     | _ -> 
       "Other pattern"
