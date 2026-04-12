@@ -6,7 +6,7 @@ order: 6
 
 While most languages have some kind of multi-way branching construct like `switch` statements, not all have pattern matching like Nanyx's `match`, which is far more powerful. Pattern matching allows you to extract nested values, check conditions, and handle different data shapes all in a single expression, making code more concise and safer by ensuring all possible cases are handled.
 
-## Basic matching
+## Overview
 
 The simplest form of pattern matching is matching against literal values, which is directly equivalent to a C-style `switch` statement:
 
@@ -19,7 +19,7 @@ match someValue
 
 Note the use of `_` as a wildcard pattern that matches anything not previously matched. This may be required to ensure exhaustiveness (depending on the type being matched), and all match expressions must be exhaustive in Nanyx.
 
-## Ordering
+## Pattern order
 
 Unlike a C-style `switch`, Nanyx's `match` patterns are evaluated in the order they are written. This allows for more flexible patterns and the ability to handle overlapping cases:
 
@@ -221,12 +221,12 @@ match num
   | _ -> "non-zero"
 ```
 
-Custom patterns can also return values that are then available in the match body:
+By returning a tag union of `#some(a) | #pass`, custom patterns can also return values that are then available in the match body:
 
 ```nanyx
 -- A pattern that checks whether a string contains a given character and splits on it
 pattern SplitOnChar: char, string -> #some(string, string) | #pass = { c, s ->
-  let parts = s.split(c)
+  def parts = s.split(c)
   if parts.length == 2 then #some(parts[0], parts[1]) else #pass
 }
 
