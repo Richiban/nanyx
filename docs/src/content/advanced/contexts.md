@@ -60,7 +60,7 @@ def greet: [$Console] = {
 
 This is also how scoped mutation is enforced: values that still require `memory` cannot escape into code that does not provide that context. See [Memory: Values cannot escape memory scope](../advanced/memory#values-cannot-escape-memory-scope).
 
-For a formal proposal of type-level context requirements, see [Specifications: Context-qualified types](../specifications/context-qualified-types.md).
+For a formal proposal of type-level context requirements, see [Specifications: Context-qualified types](../specifications/context-qualified-types).
 
 ## Combining contexts
 
@@ -93,11 +93,11 @@ export def sum: [Sum(a)] list(a) -> a
   = { items -> items \fold(`0`) { + } }
 ```
 
-For ergonomic generic API design with associated members and constrained capabilities, see [Associated types and constraints](./associated-types-and-constraints.md).
+For ergonomic generic API design with associated members and constrained capabilities, see [Associated types and constraints](./associated-types-and-constraints).
 
 ## Context synthesis using attached definitions
 
-When a function requires a context, you don't always have to load or even create it manually. If the type in question has [attached definitions](./attached-definitions.md) that match the context's members, the compiler can **synthesize** the context automatically.
+When a function requires a context, you don't always have to load or even create it manually. If the type in question has [attached definitions](./attached-definitions) that match the context's members, the compiler can **synthesize** the context automatically.
 
 For example, given a `Sum` context:
 

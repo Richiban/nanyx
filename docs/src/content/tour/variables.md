@@ -21,7 +21,7 @@ def x = 10
 x = 20  -- ✗ Compile error: cannot reassign a value
 ```
 
-> **Mutation:** In Nanyx mutation is considered an advanced topic and makes use of a context called `$Memory`. See [Memory](./memory.md) for more on how mutation works and how to use it safely.
+> **Mutation:** In Nanyx mutation is considered an advanced topic and makes use of a context called `$Memory`. See [Memory](../advanced/memory) for more on how mutation works and how to use it safely.
 
 ## Type annotations
 

@@ -80,4 +80,4 @@ x \Option.map { .length }
 y \Option.map { \Math.abs }
 ```
 
-For broader union and matching patterns, see [Pattern matching](./pattern-matching.md) and [Types](./types.md).
+For broader union and matching patterns, see [Pattern matching](./pattern-matching) and [Types](./types).

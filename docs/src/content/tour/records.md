@@ -184,4 +184,4 @@ def config = (
 
 --- 
 
-For the broader type-system overview, see [Types](./types.md).
+For the broader type-system overview, see [Types](./types).

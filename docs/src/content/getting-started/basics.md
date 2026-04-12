@@ -52,7 +52,7 @@ def answer =
   x + y
 ```
 
-For more on expression forms, see [Functions](../tour/functions.md) and [Pattern matching](../tour/pattern-matching.md).
+For more on expression forms, see [Functions](../tour/functions) and [Pattern matching](../tour/pattern-matching).
 
 ## Numbers
 
@@ -71,7 +71,7 @@ def total = 10 + 5 * 2
 def bigger = total > 12
 ```
 
-For operator behavior, see [Operators](../tour/operators.md). For range syntax, see [Ranges](../tour/ranges.md).
+For operator behavior, see [Operators](../tour/operators). For range syntax, see [Ranges](../tour/ranges).
 
 ## Strings
 
@@ -89,7 +89,7 @@ def name = "Alex"
 def greeting = "Hello, {name}!"
 ```
 
-For library string operations (`length`, `split`, `trim`, etc.), see [string stdlib](../stdlib/string.md).
+For library string operations (`length`, `split`, `trim`, etc.), see [string stdlib](../stdlib/string).
 
 ## Equality and comparison
 
@@ -106,13 +106,13 @@ Use `<`, `<=`, `>`, `>=` for ordering comparisons:
 def isAdult = 21 >= 18
 ```
 
-These operators are part of the language's operator system; see [Operators](../tour/operators.md) for details.
+These operators are part of the language's operator system; see [Operators](../tour/operators) for details.
 
 ## Mutability
 
 Mutability is available in Nanyx, but is considered a somewhat advanced feature. Read about [the Memory context](../advanced/memory) for more.
 
-For immutable record updates, see [Copy and update (non-destructive mutation)](../tour/records.md#copy-and-update-non-destructive-mutation).
+For immutable record updates, see [Copy and update (non-destructive mutation)](../tour/records#copy-and-update-non-destructive-mutation).
 
 ## Commas and newlines
 
@@ -156,7 +156,7 @@ Multi-line comments must be closed with the same number of dashes that they were
 
 ### Tags, ranges and records
 
-Nanyx also supports tags, ranges, and records as core value forms. See [Tags](../tour/tags.md), [Ranges](../tour/ranges.md), and [Records and tuples](../tour/records.md).
+Nanyx also supports tags, ranges, and records as core value forms. See [Tags](../tour/tags), [Ranges](../tour/ranges), and [Records and tuples](../tour/records).
 
 ## Table literals
 

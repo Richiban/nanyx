@@ -76,4 +76,4 @@ def headOr: [Iter(c)] (c, Iter(c).elem) -> Iter(c).elem = { items, fallback ->
 - Avoid over-constraining: require only the operations a function actually uses.
 - Start with simple constraints in public APIs and add richer ones as needed.
 
-For fundamentals, see [Contexts](./contexts.md). For collection overview, see [Collections](../tour/collections.md).
+For fundamentals, see [Contexts](./contexts). For collection overview, see [Collections](../tour/collections).

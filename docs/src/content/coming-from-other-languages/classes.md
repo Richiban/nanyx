@@ -9,7 +9,7 @@ Nanyx does not use classes or inheritance. Instead, it separates data, behavior,
 For people coming from C#, Java, TypeScript, or Kotlin, the mental model is:
 
 - **class fields** → record fields,
-- **instance/static methods** → regular functions or [attached definitions](../advanced/attached-definitions.md),
+- **instance/static methods** → regular functions or [attached definitions](../advanced/attached-definitions),
 - **inheritance hierarchies** → composition and tagged unions,
 - **private internals** → module boundaries and nominal/protected types.
 
@@ -32,7 +32,7 @@ def moved = p with (
 )
 ```
 
-See [Records and tuples](../tour/records.md) for the full model.
+See [Records and tuples](../tour/records) for the full model.
 
 ## Behavior: functions and attached definitions
 
@@ -64,7 +64,7 @@ Encapsulation is done with module exports and type boundaries, not class visibil
 - Expose smart constructors and helper functions.
 - Use nominal/protected types when representation must be controlled.
 
-See [Nominal and Protected Types](../advanced/nominal-and-protected-types.md).
+See [Nominal and Protected Types](../advanced/nominal-and-protected-types).
 
 ## State and mutation
 
@@ -72,7 +72,7 @@ Nanyx supports mutation, but it is explicit and scoped through contexts (for exa
 
 This keeps mutation local rather than making every instance implicitly mutable.
 
-See [Memory](../advanced/memory.md) for details.
+See [Memory](../advanced/memory) for details.
 
 ## Inheritance alternatives
 

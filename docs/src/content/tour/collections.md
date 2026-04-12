@@ -48,7 +48,7 @@ def lookup = ["a" => 1, "b" => 2]
 def unique: Set(int) = [1, 2, 2, 3]
 ```
 
-For advanced patterns such as associated types and constrained collection capabilities, see [Associated types and constraints](../advanced/associated-types-and-constraints.md).
+For advanced patterns such as associated types and constrained collection capabilities, see [Associated types and constraints](../advanced/associated-types-and-constraints).
 
 ## Syntax
 
@@ -108,4 +108,4 @@ def myList: MyList(int) = MyList.apply {
 }
 ```
 
-For iteration constructs, see [Loops](./loops.md). For query-style collection programming, see [Sequences and queries](../advanced/sequences-and-queries.md).
+For iteration constructs, see [Loops](./loops). For query-style collection programming, see [Sequences and queries](../advanced/sequences-and-queries).

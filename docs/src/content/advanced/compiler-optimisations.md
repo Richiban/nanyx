@@ -26,7 +26,7 @@ Depending on code shape and target backend, the compiler may perform optimisatio
 - copy elision and reduced temporary allocations,
 - improved passing strategy for values (for example by-value vs by-reference decisions).
 
-For allocation-specific behavior, see [Stack vs heap allocation](./stack-vs-heap-allocation.md).
+For allocation-specific behavior, see [Stack vs heap allocation](./stack-vs-heap-allocation).
 
 ## Writing optimisation-friendly Nanyx
 

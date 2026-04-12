@@ -45,7 +45,7 @@ def active: bool = true
 
 Records are structural types with named fields. They have their own Language Tour page covering record types, structural typing, optional fields, and the unified record/tuple model.
 
-See [Records and tuples](./records.md) for the full guide.
+See [Records and tuples](./records) for the full guide.
 
 ## Top and bottom types
 
@@ -81,7 +81,7 @@ def valid = (10, 20, x = 10, y = 20)
 -- def invalid = (x = 10, 20)
 ```
 
-See [Records and tuples](./records.md) for more on record shapes and field rules.
+See [Records and tuples](./records) for more on record shapes and field rules.
 
 ## Tag unions
 

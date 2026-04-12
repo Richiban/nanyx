@@ -31,7 +31,7 @@ Marks the program entry module in project-based apps.
 @entry module main
 ```
 
-See [Hello, World!](../getting-started/hello-world.md).
+See [Hello, World!](../getting-started/hello-world).
 
 ### `@workflow`
 
@@ -45,7 +45,7 @@ def optionChain = (
 )
 ```
 
-See [Option chaining](../cookbook/option-chaining.md) and [Workflows](../advanced/workflows.md).
+See [Option chaining](../cookbook/option-chaining) and [Workflows](../advanced/workflows).
 
 ### `@customKeywordType(...)`
 
@@ -58,7 +58,7 @@ def async = (
 )
 ```
 
-See [Workflows](../advanced/workflows.md).
+See [Workflows](../advanced/workflows).
 
 ### `@baseUnit`
 
@@ -68,7 +68,7 @@ Marks a unit declaration as a base/reference unit for unit-of-measure definition
 @baseUnit unit(s) Seconds = 10_000_000ticks
 ```
 
-See [Units and dimensions](../advanced/units-and-dimensions.md).
+See [Units and dimensions](../advanced/units-and-dimensions).
 
 ### `@builderPattern`
 
@@ -79,7 +79,7 @@ Marks types intended for builder-style initialization.
 type Point = (x: int, y: int)
 ```
 
-See [Higher-order functions](./lambdas-and-higher-order-functions.md).
+See [Higher-order functions](./lambdas-and-higher-order-functions).
 
 ## Notes
 
