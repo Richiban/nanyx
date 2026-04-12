@@ -65,7 +65,7 @@ def magnitude3: (x: int, y: int) -> ()
 
 ## Exported values
 
-Exported values should be annotated:
+By convention, exported values should be annotated:
 
 ```nanyx
 export def add = { a, b -> a + b }
@@ -73,6 +73,8 @@ export def add = { a, b -> a + b }
 
 export def add: Nat, Nat -> Nat = { a, b -> a + b }
 ```
+
+Although the language itself doesn't mandate this practice, the official Nanyx analyzer will emit a warning if this is not followed. See [Official style analyzer](./style-analyzer) for details.
 
 ## Target typing
 
