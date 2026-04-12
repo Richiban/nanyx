@@ -50,6 +50,19 @@ magnitude2(3, 4) -- ✗ This will not compile because the function expects named
 magnitude2(x = 3, y = 4) -- The correct way to call a function with named parameters
 ```
 
+Also, when fields in a function signature are named--as with any kind of deconstruction--deconstruction must also be by name in the function body (although if the deconstructed names are the same as the field names, you can collapse `field = field` to just `field`):
+
+```nanyx
+def magnitude2: (x: int, y: int) -> () = { x, y -> math.sqrt(x * x + y * y) }
+
+-- or 
+
+def magnitude3: (x: int, y: int) -> ()
+    = { x = innerX, y = innerY -> 
+        math.sqrt(innerX * innerX + innerY * innerY) 
+    }
+```
+
 ## Exported values
 
 Exported values should be annotated:
