@@ -199,6 +199,33 @@ match getValue()
 
 > **Note:** The Nanyx compiler ensures your patterns are exhaustive — every possible value must be handled. This prevents runtime crashes from unhandled cases.
 
+## If-matching
+
+Patterns can be used outside of `match` expressions as well. Simple variable assignments can make use of patterns to destructure values:
+
+```nanyx
+def (x, y) = getCoordinates()
+
+def Hsl(h, s, l) = getColor()
+```
+
+Bear in mind that patterns used in this way must be _total_, meaning they must match all possible values of the type being destructured. For example, if `getCoordinates()` returns a tuple of two integers, then the pattern `(x, y)` is total and will always match. However, if `getColor()` returns a union type that can be either an HSL color or an RGB color, then the pattern `Hsl(h, s, l)` is not total and will cause a compile-time error because it does not account for the RGB case.
+
+If the pattern is not total and you only care about a single case, you can use `if` with a pattern instead of a full `match` expression:
+
+```nanyx
+if #some(value) = getResult() then
+  println("Got a value: {value}")
+```
+
+This is equivalent to a `match` expression that only handles the `#some` case and ignores everything else:
+
+```nanyx
+match getResult()
+  | #some(value) -> println("Got a value: {value}")
+  | _ -> ()
+```
+
 ## Custom patterns
 
 The `pattern` keyword allows for the encapsulation of matching logic in reusable components. Custom patterns use the type naming scheme, meaning they must start with a capital letter.
