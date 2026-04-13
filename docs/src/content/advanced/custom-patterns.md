@@ -93,7 +93,7 @@ A pattern with arguments has the form `<args> -> <input> -> <output>`, where the
 -- A pattern that checks whether a string contains a given character and splits on it
 pattern char -> string -> #SplitOnChar(string, string) | _ = { c, s ->
   def parts = s.split(c)
-  if parts.length == 2 then #SplitOnChar(parts[0], parts[1]) else #_
+  if parts.length == 2 then #SplitOnChar(parts[0], parts[1]) else _
 }
 
 match "hello,world"
