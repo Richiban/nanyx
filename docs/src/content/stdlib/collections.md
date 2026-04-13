@@ -218,3 +218,20 @@ def f: list(Color) -> #some(string) | #emptyList = { items ->
     }
 }
 ```
+
+---
+
+### unfold
+
+```nanyx
+List.unfold: (b, (b -> #some(a, b) | #stop)) -> list(a)
+```
+
+Generates a sequence from an initial state value and a function that produces either `#stop` to end the sequence or `#some(element, newState)` to yield an element and a new state for the next step. Returns a list of all yielded elements.
+
+```nanyx
+def fibonacci = List.unfold((0, 1)) { current, next ->
+    if current > 100 then #stop
+    else #some(current, (next, current + next))
+}
+```
