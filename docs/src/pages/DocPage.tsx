@@ -149,7 +149,10 @@ export default function DocPage() {
         Contents
       </h2>
       <ul className={cn("toc-items", mobile ? "max-h-64 overflow-y-auto" : "max-h-[calc(100vh-9rem)] overflow-y-auto") }>
-        {headings.map((heading) => {
+        {headings.map((heading, index) => {
+          const tocLevel = entry && index === 0
+            ? 1
+            : Math.min(6, heading.level + 1);
           const isActive = activeIds.has(heading.id);
           return (
             <li key={heading.id}>
@@ -160,8 +163,8 @@ export default function DocPage() {
                     setTocOpen(false);
                   }
                 }}
-                className={cn("toc-link", isActive && "toc-active", heading.level === 1 && "toc-h1")}
-                style={{ paddingLeft: `calc(1ch + ${Math.max(0, heading.level - 1) * 12}px)` }}
+                className={cn("toc-link", isActive && "toc-active", tocLevel === 1 && "toc-h1")}
+                style={{ paddingLeft: `calc(1ch + ${Math.max(0, tocLevel - 1) * 12}px)` }}
               >
                 {heading.text}
               </a>

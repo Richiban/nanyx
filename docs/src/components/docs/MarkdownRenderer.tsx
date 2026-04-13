@@ -322,17 +322,19 @@ function MarkdownRendererImpl({
 
   let headingIndex = 0;
 
-  const makeHeading = (tag: "h1" | "h2" | "h3" | "h4" | "h5" | "h6") => {
+  const makeHeading = (
+    sourceLevel: 1 | 2 | 3 | 4 | 5 | 6,
+    renderTag: "h2" | "h3" | "h4" | "h5" | "h6"
+  ) => {
     return ({ children, ...props }: { children?: ReactNode }) => {
       const text = extractText(children ?? "").trim();
-      const level = Number(tag.slice(1));
       const heading = markdownHeadings[headingIndex];
       const id =
-        heading && heading.text === text && heading.level === level
+        heading && heading.text === text && heading.level === sourceLevel
           ? heading.id
           : slugifyHeading(text);
       headingIndex += 1;
-      const Tag = tag;
+      const Tag = renderTag;
 
       return (
         <Tag id={id} className="group scroll-mt-24" {...props}>
@@ -355,12 +357,12 @@ function MarkdownRendererImpl({
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          h1: makeHeading("h1"),
-          h2: makeHeading("h2"),
-          h3: makeHeading("h3"),
-          h4: makeHeading("h4"),
-          h5: makeHeading("h5"),
-          h6: makeHeading("h6"),
+          h1: makeHeading(1, "h2"),
+          h2: makeHeading(2, "h3"),
+          h3: makeHeading(3, "h4"),
+          h4: makeHeading(4, "h5"),
+          h5: makeHeading(5, "h6"),
+          h6: makeHeading(6, "h6"),
           pre({ children }) {
             return <PreContext.Provider value={true}>{children}</PreContext.Provider>;
           },
