@@ -47,7 +47,7 @@ Custom patterns can be partial (meaning they might not match all possible inputs
 As a convenience, Nanyx allows a partial pattern with exactly one choice and no output valuess to return a `bool` instead of an explicit tag:
 
 ```nanyx
-pattern int -> #Zero | _:  = { n -> n == 0 }
+pattern int -> #Zero | _  = { n -> n == 0 }
 
 match num
   | #Zero -> "zero"
@@ -80,7 +80,7 @@ match getUserInput()
 Patterns can also take arguments, which are values that are passed in when the pattern is used. This allows for more flexible and reusable patterns and are useful for complex conditions like regex matching:
 
 ```nanyx
-pattern Regex -> string -> #MatchesRegex | _:  = { s, r ->
+pattern Regex -> string -> #MatchesRegex | _  = { s, r ->
   s \Regex.matches(r)
 }
 
