@@ -6,7 +6,7 @@ order: 1
 
 Workflows are one of Nanyx's most distinctive features. They let libraries provide language-like constructs by rewriting a block into method calls on a builder value. This makes patterns like async/await, error chaining, and DSLs feel native.
 
-## The builder shape
+# The builder shape
 
 A workflow is just a unary higher order function (i.e. a function that takes a single argument that is, itself, a function) or a record with an `apply` function. That function will have some context attached that provides the body of the inner function with keyword methods such as `yield`, `await`, `try`, or `defer`.
 
@@ -57,7 +57,7 @@ debug.yield("Debug message 1", {
 })
 ```
 
-## Yield and collection builders
+# Yield and collection builders
 
 The standard `seq` builder provides `yield`, letting you build sequences with a clean syntax:
 
@@ -89,7 +89,7 @@ seq {
 }
 ```
 
-## Async and custom keywords
+# Async and custom keywords
 
 Workflows can introduce custom keywords. For example, an async workflow can expose `await` by implementing a method tagged as a keyword.
 
@@ -121,7 +121,7 @@ def retry = (
 )
 ```
 
-### Common keywords
+## Common keywords
 
 | Keyword | Description |
 |---------|-------------|
@@ -130,7 +130,7 @@ def retry = (
 | `try`    | Short-circuit on errors in a workflow that handles results |
 | | _More coming soon..._ |
 
-### Keyword kinds
+## Keyword kinds
 
 | Kind | Description |
 |---------|-------------|
@@ -138,7 +138,7 @@ def retry = (
 | `#bindF` | Like bind, but a function returning the target value is passed instead of the value itself. This allows for workflows such as lazy evaluation and querying |
 | | _More coming soon..._ |
 
-## Workflow keywords
+# Workflow keywords
 
 Builders can expose custom keywords by implementing special methods. Common examples include `yield`, `await`, `try`, and `defer`.
 
@@ -166,7 +166,7 @@ def main = {
 }
 ```
 
-## Error and option chaining
+# Error and option chaining
 
 A workflow can provide a `try` keyword to short-circuit on errors. This is useful for `Result` or `Option` chaining.
 
@@ -182,7 +182,7 @@ def lastOrderTotal = handle {
 }
 ```
 
-## Query and DSL workflows
+# Query and DSL workflows
 
 Workflows are a natural fit for DSLs. A query builder can turn a block into a pipeline of filtering, joining, and projection steps.
 
@@ -198,7 +198,7 @@ def result = query {
 
 Workflows are also how HTML-style builders or configuration DSLs are implemented.
 
-## When to use workflows
+# When to use workflows
 
 - You want syntax that reads like a language feature, but is implemented in libraries.
 - You need structured control flow around effects (async, retries, error handling).

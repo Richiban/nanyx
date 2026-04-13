@@ -6,7 +6,7 @@ order: 12
 
 Nanyx contexts can model typeclass-style capabilities. For generic APIs, you can pair constraints with associated-type members to avoid noisy signatures.
 
-## Why associated types?
+# Why associated types?
 
 A common pain point with generic constraints is having to carry both container type and element type everywhere:
 
@@ -23,7 +23,7 @@ context Iter(c) = (
 )
 ```
 
-## Constraining by associated type
+# Constraining by associated type
 
 Once `elem` is an associated type on `Iter(c)`, functions can constrain it directly:
 
@@ -35,7 +35,7 @@ def iterStrings: [Iter(c): (elem = string)] c -> () = { items ->
 
 This keeps signatures compact while preserving full type safety.
 
-## Layering collection capabilities
+# Layering collection capabilities
 
 You can build a hierarchy of constraints by composing contexts:
 
@@ -69,7 +69,7 @@ def headOr: [Iter(c)] (c, Iter(c).elem) -> Iter(c).elem = { items, fallback ->
 }
 ```
 
-## Practical guidance
+# Practical guidance
 
 - Prefer capability-focused contexts (`Iter`, `Sized`, `Indexed`) over concrete collection constraints.
 - Keep associated types on the context that owns the operation.

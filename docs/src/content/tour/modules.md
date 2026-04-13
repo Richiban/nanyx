@@ -8,7 +8,7 @@ Modules in Nanyx help organize code into logical units. They provide namespaces 
 
 The common case is that there is a 1:1 relationship between files and modules, but Nanyx also supports declaring multiple modules in a single file or splitting a module across multiple files. The module system is flexible to accommodate different organizational styles.
 
-## Module declaration
+# Module declaration
 
 Every Nanyx file optionally starts with a module declaration.
 
@@ -35,7 +35,7 @@ It is possible to write a module declaration without giving it a name, but by it
 println("Hello from MyApp!")
 ```
 
-## Module naming
+# Module naming
 
 Module names should be camel-cased and reflect the purpose of the code contained within:
 
@@ -53,7 +53,7 @@ module collections.list
 ...
 ```
 
-## Importing modules
+# Importing modules
 
 Import other modules to use their exports:
 
@@ -70,7 +70,7 @@ userManagement.createUser(...)
 d.process(...)
 ```
 
-### Importing modules by file path
+## Importing modules by file path
 
 For quick scripts or local utilities, you can import directly from a file path. When importing a file path, you must use an alias to give the module a name in your current scope.
 
@@ -81,7 +81,7 @@ import "./utils" as utils
 utils.someHelper(...)
 ```
 
-### Importing modules from other packages
+## Importing modules from other packages
 
 When importing external packages (such as those installed from a package manager), the import includes the package name as a prefix:
 
@@ -103,7 +103,7 @@ import nanyx/collections
 ...
 ```
 
-### Qualified imports
+## Qualified imports
 
 Access module members with the module name:
 
@@ -114,7 +114,7 @@ def result = m.sqrt(16)  -- 4.0
 def pi = m.pi
 ```
 
-### Selective imports
+## Selective imports
 
 Import specific items from a module using deconstruction syntax on the import:
 
@@ -133,7 +133,7 @@ def a = sqrt(16)
 def b = m.cos(0)
 ```
 
-## Exports
+# Exports
 
 Types and definitions are private to a module by default. Use `export` to make them available to other modules:
 
@@ -157,7 +157,7 @@ def transform: Data -> Data = { data ->
 
 Modules themselves do not need to be exported; they are available for import by other modules as long as they contain at least one exported definition.
 
-### Re-exporting
+## Re-exporting
 
 Export items from other modules:
 
@@ -169,7 +169,7 @@ export collections.list (map, filter, fold)
 export collections.map (empty, insert, lookup)
 ```
 
-## Nested modules
+# Nested modules
 
 You can declare module blocks inside a file. The block name is appended to the outer module name:
 
@@ -195,7 +195,7 @@ def validateEmail: string -> Result(Email, ValidationError) = { ... }
 def validateAge: int -> Result(Age, ValidationError) = { ... }
 ```
 
-## Partial modules
+# Partial modules
 
 A module can be split across multiple files using the same module name in each file. This is useful for large modules or when you want to separate public API from implementation details.
 
@@ -215,7 +215,7 @@ To prevent accidental misuse, each module declaration must be decorated with the
 ...
 ```
 
-## Circular dependencies
+# Circular dependencies
 
 Avoid circular module dependencies. If module A imports B, then B cannot import A.
 
@@ -242,7 +242,7 @@ module b
 import shared
 ```
 
-## Modules in the standard library
+# Modules in the standard library
 
 Nanyx's standard library appears as a package called `nanyx` and is organized into modules:
 
@@ -258,7 +258,7 @@ import (
 )
 ```
 
-## Example: User management module
+# Example: User management module
 
 ```nanyx
 module userManagement
@@ -297,7 +297,7 @@ def generateId: [Random] () -> UserId = {
 }
 ```
 
-## Module Organization Best Practices
+# Module Organization Best Practices
 
 1. **One module per file**: Keep modules focused and manageable
 2. **Clear naming**: Use descriptive names that reflect the module's purpose

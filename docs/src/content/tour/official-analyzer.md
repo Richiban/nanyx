@@ -10,7 +10,7 @@ The **official Nanyx style analyzer** enforces recommended coding conventions, i
 
 Analyzers are just Nanyx libraries that run during compilation and emit diagnostics. The official Nanyx style analyzer is installable / uninstallable in any project, and is included in the default project template. It is entirely possible (even encouraged) to write custom analyzers for your team or project.
 
-## Why it matters
+# Why it matters
 
 The style analyzer helps teams keep APIs predictable and readable by flagging patterns such as:
 
@@ -18,9 +18,9 @@ The style analyzer helps teams keep APIs predictable and readable by flagging pa
 - Convention or naming issues
 - Other style-oriented recommendations that do not block compilation
 
-## Rules 
+# Rules 
 
-### Exported annotations
+## Exported annotations
 
 ```nanyx
 -- Analyzer warning: missing type annotation
@@ -29,7 +29,7 @@ export def add = { a, b -> a + b }
 
 These diagnostics are warnings/hints from the analyzer, not the compiler.
 
-### Unused local value
+## Unused local value
 
 ```nanyx
 def total =
@@ -37,7 +37,7 @@ def total =
   100
 ```
 
-### Unused function argument
+## Unused function argument
 
 ```nanyx
 -- Analyzer warning: argument `title` is never used
@@ -46,7 +46,7 @@ def greet: (string, string) -> string = { name, title ->
 }
 ```
 
-### Unused pattern variable
+## Unused pattern variable
 
 ```nanyx
 match response
@@ -54,7 +54,7 @@ match response
   | #error(msg) -> "Error"  -- Analyzer warning: `msg` is introduced by pattern but never used
 ```
 
-### Unused import
+## Unused import
 
 ```nanyx
 import (
@@ -65,7 +65,7 @@ import (
 def x = m.sqrt(16)
 ```
 
-### Unreachable match branch
+## Unreachable match branch
 
 ```nanyx
 match n
@@ -74,13 +74,13 @@ match n
 -- Analyzer warning/error: unreachable pattern branch
 ```
 
-### Unreachable code path
+## Unreachable code path
 
 ```nanyx
 -- Analyzer warning: unreachable code
 ```
 
-### Unused return value
+## Unused return value
 
 ```nanyx
 def compute: [Console] int -> int = { n ->
@@ -89,6 +89,6 @@ def compute: [Console] int -> int = { n ->
 }
 ```
 
-## Learn more
+# Learn more
 
 For the full analyzer model (diagnostic levels, configuration, and custom analyzers), see [Analyzers](../advanced/analyzers).

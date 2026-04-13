@@ -6,14 +6,14 @@ order: 1
 
 Let's build a simple CLI tool that counts words in a file.
 
-## Setup
+# Setup
 
 ```bash
 nanyx new word_counter
 cd word_counter
 ```
 
-## The code
+# The code
 
 ```nanyx
 import (
@@ -35,7 +35,7 @@ match file.read("input.txt")
 
 ```
 
-## Run it
+# Run it
 
 ```bash
 echo "hello world from nanyx" > input.txt
@@ -43,7 +43,7 @@ nanyx run
 # Word count: 4
 ```
 
-## Key Concepts
+# Key Concepts
 
 - **File I/O** — the `file` module returns result types for safe error handling
 - **Pipelines** — chain transformations with `\` for readable data processing

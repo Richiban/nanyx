@@ -24,7 +24,7 @@ Currying can make some calls more concise, but it comes with significant downsid
 
 Those costs outweigh the conciseness upside for Nanyx. The sections below explain why.
 
-## Currying and the pipe operator
+# Currying and the pipe operator
 
 In Nanyx, these evaluate to the same result:
 
@@ -65,13 +65,13 @@ Because `\` passes the value as the first argument, both examples work without e
 
 Currying and `\` are in tension: the style that makes `\` feel natural works against currying's main advantage.
 
-## Currying and learning curve
+# Currying and learning curve
 
 Currying makes function types look unfamiliar to people coming from mainstream languages. For example, a binary `and` function would look like `Bool -> Bool -> Bool` instead of `Bool, Bool -> Bool`. Understanding why requires an explanation of partial application and why curried types are written that way.
 
 None of that is impossible to learn, but it is extra conceptual weight that does not pay for itself in Nanyx. The language is easier to pick up when function signatures look like they do in most other languages.
 
-## Pointfree composition
+# Pointfree composition
 
 Currying makes pointfree composition effortless, but pointfree code is often harder to read. Compare:
 
@@ -89,6 +89,6 @@ def reverseSort = { list -> List.reverse(List.sort(list)) }
 
 The second version is slightly longer, but it is clearer about what happens to `list`. In more complex examples, pointfree code makes readers do extra mental translation, which increases the chance of misunderstanding.
 
-## Summary
+# Summary
 
 Currying can make some expressions shorter, but it tends to make error messages worse, pipelines more surprising, higher-order calls more parenthesized, and the learning curve steeper. Nanyx keeps currying optional so you can write it when it helps, without making it the default everywhere.

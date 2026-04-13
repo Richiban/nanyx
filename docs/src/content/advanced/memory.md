@@ -6,7 +6,7 @@ order: 5
 
 Mutation in Nanyx is available but bounded. Mutable values require the `$Memory` context, and `memory { ... }` is the helper that creates and scopes that context. This allows internal mutation while keeping external interfaces pure.
 
-## Local mutation
+# Local mutation
 
 ```nanyx
 def sort: [Ord(a)] list(a) -> list(a) = { l ->
@@ -18,7 +18,7 @@ def sort: [Ord(a)] list(a) -> list(a) = { l ->
 }
 ```
 
-## Mutability requires context
+# Mutability requires context
 
 ```nanyx
 def main = {
@@ -33,7 +33,7 @@ def main = {
 }
 ```
 
-## Mutable collections
+# Mutable collections
 
 ```nanyx
 memory {
@@ -43,7 +43,7 @@ memory {
 }
 ```
 
-## Values cannot escape memory scope
+# Values cannot escape memory scope
 
 Values that require the `$Memory` context cannot be returned out of a `memory { ... }` scope.
 
@@ -73,6 +73,6 @@ For the detailed proposal, see [Specifications: Context-qualified types](../spec
 
 For the general model behind this, see [Contexts: Contexts Are Part of the Type](./contexts#contexts-are-part-of-the-type).
 
-## No global mutable state
+# No global mutable state
 
 Because `memory` is scoped, global mutable state is effectively impossible. Top-level `mut` values will fail to compile because a top-level definition cannot be inside a context.

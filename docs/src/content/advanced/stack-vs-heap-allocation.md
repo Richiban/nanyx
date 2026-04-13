@@ -8,13 +8,13 @@ Nanyx handles object allocation automatically. You write values normally, and th
 
 When an object is stack-allocated, Nanyx passes it either by value or by reference based on its size.
 
-## What this means today
+# What this means today
 
 - Allocation strategy is compiler-managed.
 - Stack-allocated objects may be passed by value or by ref depending on size.
 - You do not currently annotate values to force a specific strategy.
 
-## Planned configurability
+# Planned configurability
 
 Nanyx is planned to expose controls so you can choose allocation and passing behavior explicitly when needed, including:
 

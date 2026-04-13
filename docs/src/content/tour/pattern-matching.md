@@ -6,7 +6,7 @@ order: 6
 
 While most languages have some kind of multi-way branching construct like `switch` statements, not all have pattern matching like Nanyx's `match`, which is far more powerful. Pattern matching allows you to extract nested values, check conditions, and handle different data shapes all in a single expression, making code more concise and safer by ensuring all possible cases are handled.
 
-## Overview
+# Overview
 
 The simplest form of pattern matching is matching against literal values, which is directly equivalent to a C-style `switch` statement:
 
@@ -19,7 +19,7 @@ match someValue
 
 Note the use of `_` as a wildcard pattern that matches anything not previously matched. This may be required to ensure exhaustiveness (depending on the type being matched), and all match expressions must be exhaustive in Nanyx.
 
-## Pattern order
+# Pattern order
 
 Unlike a C-style `switch`, Nanyx's `match` patterns are evaluated in the order they are written. This allows for more flexible patterns and the ability to handle overlapping cases:
 
@@ -32,7 +32,7 @@ match value
 
 The compiler will emit an error if it detects that a pattern is unreachable due to a previous pattern matching all possible cases.
 
-## Introducing values
+# Introducing values
 
 Patterns can also introduce new variables that are bound to parts of the matched value:
 
@@ -43,11 +43,11 @@ match someFunction()
   | n -> "something else: {n}"
 ```
 
-## Destructuring
+# Destructuring
 
 Destructuring is a syntax that breaks a data structure into its components and binds them to variables. This is especially useful for working with tuples, lists, and custom data types.
 
-### Lists
+## Lists
 
 ```nanyx
 -- Match an empty list
@@ -58,7 +58,7 @@ match myList
 
 In this example, the pattern `[head, ...tail]` matches a non-empty list, binding the first element to `head` and the rest of the list to `tail`. The `...` syntax (called the spread operator) is used to indicate that `tail` should capture all remaining elements of the list.
 
-### Tuples
+## Tuples
 
 ```nanyx
 -- Destructure a tuple
@@ -78,7 +78,7 @@ Note how the patterns `(0, y)` and `(x, 0)` use a combination of literal matchin
 
 The final pattern `(x, y)` matches any tuple and binds both elements to variables.
 
-### Records
+## Records
 
 Records can also be destructured in patterns, allowing you to match on specific fields while ignoring others:
 
@@ -92,7 +92,7 @@ Here, the pattern `(name = "Alice", ...)` matches any record where the `name` fi
 
 As with tuples, records patterns must be of the correct shape to match the type being matched, and all fields must be accounted for either by matching them directly or using the spread operator to ignore them.
 
-### Tags
+## Tags
 
 Tags can also be destructured in patterns, using the same syntax that is used to construct them. For example, if you have a sum type representing shapes:
 
@@ -110,7 +110,7 @@ def area: Shape -> float = { shape ->
 }
 ```
 
-## Nesting patterns
+# Nesting patterns
 
 Where pattern matching really shines is in its ability to nest patterns inside each other, allowing you to make complex data structure comparisons and extract values in a single expression. Below is an artificial complex example that demonstrates this:
 
@@ -140,7 +140,7 @@ def processRequests: list(Request) -> string = { requests ->
 }
 ```
 
-## Guards
+# Guards
 
 Nanyx doesn't have guards in the traditional sense; instead it allows arbitrary function bodies to be used as patterns. This means you can write complex conditions directly in the pattern:
 
@@ -154,7 +154,7 @@ def describeNumber: int -> string = { n ->
 }
 ```
 
-## Pattern-matching functions
+# Pattern-matching functions
 
 Since a function whose entire body is a pattern match is so common, you can merge the function definition and match patterns together:
 
@@ -176,7 +176,7 @@ def map: list(a) -> (a -> b) -> list(b) = {
 
 In this example, the patterns can guide us in understanding the structure of the function, as the empty list case explicitly doesn't use the function argument (the function argument is discarded with `_`), while the non-empty case does.
 
-## "Or" patterns
+# "Or" patterns
 
 Sometimes we may wish to handle multiple patterns with the same result. This can be done with "or" patterns, which use the `|` operator to combine multiple patterns into one:
 
@@ -186,7 +186,7 @@ match day
   | _ -> "Weekday"
 ```
 
-## "And" patterns
+# "And" patterns
 
 "And" patterns allow for the combination of multiple patterns that must all match simultaneously. This is done with the `&` operator:
 
@@ -199,7 +199,7 @@ match getValue()
 
 > **Note:** The Nanyx compiler ensures your patterns are exhaustive — every possible value must be handled. This prevents runtime crashes from unhandled cases.
 
-## If-matching
+# If-matching
 
 Patterns can be used outside of `match` expressions as well. Simple variable assignments can make use of patterns to destructure values:
 
@@ -226,6 +226,6 @@ match getResult()
   | _ -> ()
 ```
 
-## Custom patterns
+# Custom patterns
 
 Custom patterns are covered in detail in [Advanced: Custom patterns](../advanced/custom-patterns).

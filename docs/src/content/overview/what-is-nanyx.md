@@ -10,7 +10,7 @@ It compiles to WASM, making it ideal for web development, but it's also great fo
 
 Nanyx is a modern, type-safe programming language designed for building reliable and maintainable software. It combines the expressiveness of functional programming with the practicality of systems-level control.
 
-## What Nanyx feels like
+# What Nanyx feels like
 
 - **Expression-oriented**: Everything returns a value. No statements, just composable expressions.
 - **Records and tags**: Carry the structure of your data with precision and clarity.
@@ -18,15 +18,15 @@ Nanyx is a modern, type-safe programming language designed for building reliable
 - **Type inference**: Rarely write types, but get strong static guarantees.
 - **Pattern matching**: Exhaustive matching on records, tag unions, and more.
 
-## Key features at a glance
+# Key features at a glance
 
-### Pipeline operator
+## Pipeline operator
 The `\` operator lets you chain transformations in a readable, left-to-right manner:
 ```nanyx
 data \parse \validate \transform \save
 ```
 
-### Context-based effects
+## Context-based effects
 Manage side effects explicitly through contexts, providing algebraic effect handlers without the complexity:
 ```nanyx
 context Console = (println: string -> ())
@@ -35,7 +35,7 @@ def greet: <Console> string -> () = { name ->
 }
 ```
 
-### Powerful pattern matching
+## Powerful pattern matching
 Exhaustive pattern matching on records, tag unions, literals, and more:
 ```nanyx
 match result
@@ -43,10 +43,10 @@ match result
   | #error(msg) -> logError(msg)
 ```
 
-### Strong static typing with inference
+## Strong static typing with inference
 Full Hindley-Milner type inference means you rarely need to write type annotations, but you can when it improves clarity.
 
-## Why Nanyx?
+# Why Nanyx?
 
 - **Type-safe by default**: Catch errors at compile time, not at runtime.
 - **Pattern matching**: Elegant control flow with exhaustive checking.
@@ -55,7 +55,7 @@ Full Hindley-Milner type inference means you rarely need to write type annotatio
 - **Fast compilation**: Incremental builds that keep you in the flow.
 - **Friendly errors**: Helpful compiler messages that guide you to a fix.
 
-## Who is Nanyx for?
+# Who is Nanyx for?
 
 Nanyx is designed for developers who want the safety guarantees of a statically-typed language without sacrificing developer experience. Whether you're building CLI tools, web services, or data pipelines, Nanyx provides the tools you need.
 
@@ -66,7 +66,7 @@ println("Welcome to Nanyx!")
 
 Ready to get started? Let's [install Nanyx](/docs/getting-started/installation) and write your first program.
 
-## Goals and philosophy
+# Goals and philosophy
 
 Nanyx is designed with a few guiding goals:
 
@@ -80,7 +80,7 @@ Nanyx is designed with a few guiding goals:
 
 This philosophy shows up in error handling. Functions return errors explicitly via tag unions, and the compiler forces you to handle them.
 
-## Productivity focus
+# Productivity focus
 
 Nanyx emphasizes developer experience: rich editor tooling, clear error messages, and fast feedback loops.
 

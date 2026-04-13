@@ -14,7 +14,7 @@ def naturalNumbers = 0..
 def oneToTen = 1..10
 ```
 
-## Types and ranges
+# Types and ranges
 
 Any type can be used in a range if it supports `succ` and comparison:
 
@@ -30,7 +30,7 @@ def Point.`<=`(p1: Point, p2: Point) -> magnitude(p1) <= magnitude(p2)
 def points = Point(1, 1)..Point(8, 8)
 ```
 
-## Implementing ranges
+# Implementing ranges
 
 You can implement your own range generator when you have `succ` and a comparison:
 

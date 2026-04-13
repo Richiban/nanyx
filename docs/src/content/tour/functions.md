@@ -8,7 +8,7 @@ Functions are first-class values in Nanyx, meaning they can be passed as argumen
 
 Functions are written with braces, `{ ... }`, and optionally define parameters: `{ x -> ... }`. The parameter list is a comma-separated list of names, and the body is an expression that computes the result.
 
-## Function basics
+# Function basics
 
 A function that takes no parameters (or, more specifically, take `unit` as input) is simply `{ ... }`:
 
@@ -38,7 +38,7 @@ def double: int -> int = { x -> x * 2 }
 def result = double(21)  -- 42
 ```
 
-## Multi-parameter functions
+# Multi-parameter functions
 
 Since all functions take one argument, multi-parameter functions actually take a record (or tuple, see [Records and tuples](./records)) as their argument:
 
@@ -50,7 +50,7 @@ def add: (int, int) -> int = { x, y -> x + y }
 def sum = add(5, 10)  -- 15
 ```
 
-## Unit type
+# Unit type
 
 The `()` type (unit) represents the absence of a meaningful value. It's used for functions that don't take input or don't return output:
 
@@ -67,7 +67,7 @@ def getMessage: () -> string = {
 }
 ```
 
-## Lambda expressions
+# Lambda expressions
 
 Lambda expressions (also called anonymous functions) are created with braces:
 
@@ -82,7 +82,7 @@ def increment = { x -> x + 1 }
 def names = data \map { item -> item.name }
 ```
 
-### Shorthand lambdas
+## Shorthand lambdas
 
 Nanyx provides convenient shorthand syntax for common lambda patterns:
 
@@ -103,9 +103,9 @@ def adults = users \filter { .age > 18 }
 -- Equivalent to: users \filter { user -> user.age > 18 }
 ```
 
-## Parameters
+# Parameters
 
-### Optional parameters
+## Optional parameters
 
 Prefix a parameter name with `?` to make it optional. The compiler wraps the type in `Option` and inserts `#none` when omitted.
 
@@ -126,7 +126,7 @@ def printResults(left = "left", middle, right = "right") ->
   print "{left}, {middle}, {right}"
 ```
 
-### Named parameters
+## Named parameters
 
 If you name parameters in the signature, callers can (in fact, _must_) pass a record with matching fields:
 
@@ -136,7 +136,7 @@ def replace: (string, replace: string, with: string) -> string = { s, o, r -> ??
 replace("Hello world", replace = "world", with = "Nanyx")
 ```
 
-## Callable values
+# Callable values
 
 Any value with a type `a -> b` can be called like a function, including dictionaries and strings:
 
@@ -146,7 +146,7 @@ def dict: string -> string = ["Hello" => "Bonjour", "Goodbye" => "Au revoir"]
 dict("Hello") -- "Bonjour"
 ```
 
-## Higher-order functions
+# Higher-order functions
 
 Functions that take other functions as arguments or return functions are called higher-order functions:
 
@@ -163,7 +163,7 @@ def add5 = makeAdder(5)
 def result = add5(10)  -- 15
 ```
 
-## Pattern-matching functions
+# Pattern-matching functions
 
 Since a function that consists only of a pattern match on its arguments is so common, a shorthand syntax is available: functions can pattern match directly on their arguments:
 
@@ -189,7 +189,7 @@ def classify: int -> string = {
 }
 ```
 
-## Recursive functions
+# Recursive functions
 
 Use the `rec` keyword to define recursive functions:
 
@@ -206,7 +206,7 @@ rec length: list(a) -> int = {
 }
 ```
 
-### Tail recursion
+## Tail recursion
 
 Tail recursion is a recursive style where the recursive call is the **last** operation in the function. This is much more efficient because the compiler can reuse the same stack frame for each call, effectively turning the recursive function into a loop and preventing stack overflow on large inputs.
 
@@ -225,7 +225,7 @@ def sum: list(int) -> int = { xs ->
 
 Here `loop` is internal to `sum`, and `acc` stores the running result. Each recursive step passes the updated accumulator forward, and the base case returns it directly.
 
-## Function composition
+# Function composition
 
 Functions can be composed to create new functions:
 
@@ -241,7 +241,7 @@ def addOneThenDouble = compose(double, addOne)
 def result = addOneThenDouble(5)  -- 12
 ```
 
-## Currying
+# Currying
 
 While Nanyx functions naturally take one argument, you can create curried-style functions:
 
@@ -254,7 +254,7 @@ def add5 = add(5)
 def result = add5(10)  -- 15
 ```
 
-## Partial application
+# Partial application
 
 With records, you can simulate partial application:
 
@@ -267,7 +267,7 @@ def process: (config: Config, data: Data) -> Result = { config, data ->
 def processWithConfig = { data -> process(myConfig, data) }
 ```
 
-## Type Annotations for clarity
+# Type Annotations for clarity
 
 While type inference works well, annotating function signatures is recommended for exported functions:
 
@@ -281,7 +281,7 @@ export def add: (int, int) -> int = { x, y -> x + y }
 
 Type annotations serve as documentation and help catch errors early.
 
-## Pure functions
+# Pure functions
 
 Functions without effects (no contexts) are pure - they always return the same output for the same input:
 
@@ -295,9 +295,9 @@ def greet: <Console> string -> () = { name ->
 }
 ```
 
-## Function examples
+# Function examples
 
-### Map Implementation
+## Map Implementation
 
 ```nanyx
 rec map: (list(a), (a -> b)) -> list(b) = { xs, f ->
@@ -307,7 +307,7 @@ rec map: (list(a), (a -> b)) -> list(b) = { xs, f ->
 }
 ```
 
-### Filter implementation
+## Filter implementation
 
 ```nanyx
 rec filter: (list(a), (a -> bool)) -> list(a) = { xs, predicate ->
@@ -320,7 +320,7 @@ rec filter: (list(a), (a -> bool)) -> list(a) = { xs, predicate ->
 }
 ```
 
-### Fold implementation
+## Fold implementation
 
 ```nanyx
 rec fold: (list(a), b, (b, a) -> b) -> b = { xs, acc, f ->
@@ -330,7 +330,7 @@ rec fold: (list(a), b, (b, a) -> b) -> b = { xs, acc, f ->
 }
 ```
 
-## Polymorphic functions
+# Polymorphic functions
 
 In Nanyx a polymorphic function is simply one whose return type depends on 
 the types of its argument(s)

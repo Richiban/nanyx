@@ -10,7 +10,7 @@ A custom pattern is ultimately a function with a signature but no name; instead 
 
 The function body contains the logic for matching and extracting values, and returns one of the tags used in the pattern signature. As with tags elsewhere in the language, members of the pattern union can carry payloads. This gives the custom pattern the ability to return values that are then available in the match body.
 
-## Total patterns
+# Total patterns
 
 A pattern is _total_ if it matches all possible inputs.
 
@@ -40,7 +40,7 @@ or many:
 pattern int -> #Even | #Odd = { n -> if n % 2 == 0 then #Even else #Odd }
 ```
 
-## Partial patterns
+# Partial patterns
 
 Custom patterns can be partial (meaning they might not match all possible inputs). For a pattern to be partial, one of its return values must be a wildcard (`_`).
 
@@ -75,7 +75,7 @@ match getUserInput()
   | _ -> println("Input is neither an integer nor a boolean.")
 ```
 
-## Patterns with arguments
+# Patterns with arguments
 
 Patterns can also take arguments, which are values that are passed in when the pattern is used. This allows for more flexible and reusable patterns and are useful for complex conditions like regex matching:
 

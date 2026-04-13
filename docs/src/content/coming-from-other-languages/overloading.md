@@ -6,7 +6,7 @@ order: 3
 
 Many languages let multiple functions share the same name as long as their type signatures differ, a feature called _overloading_. Nanyx intentionally does not support it.
 
-## Why Nanyx avoids overloading
+# Why Nanyx avoids overloading
 
 Overloading looks convenient, but it adds costs that show up in everyday use:
 
@@ -20,7 +20,7 @@ Nanyx prefers a single, explicit meaning for each function name. That keeps call
 
 We find that Nanyx's optional/named parameters, tag unions, and pattern matching provide enough flexibility to express different behaviors without needing overloading. If you need different behavior based on types, you can use pattern matching or tag unions to achieve that without overloading. See [Option-like types](../advanced/option-like-types) for an example of how to abstract across different unions with a shared convention.
 
-## Alternatives
+# Alternatives
 
 Where definitions would normally be ambigous and result in a compiler error (such as when implementing a commonly-understood function for your type, like `map`), Nanyx encourages [attaching the function to the type](../advanced/attached-definitions).
 

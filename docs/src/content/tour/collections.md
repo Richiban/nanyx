@@ -6,7 +6,7 @@ order: 8
 
 Collections are typically immutable in Nanyx, although [it is possible to use and create mutable versions](../advanced/memory). Mutable versions live in `nanyx/collections.mutable` and, by convention, have an `M` prefix in their name (for example, `MList` vs `List`).
 
-## Immutable vs mutable
+# Immutable vs mutable
 
 Immutable collections are persistent data structures, while mutable collections are optimized for in-place updates.
 
@@ -29,7 +29,7 @@ def addItems = {
 
 Use immutable collections by default. Reach for mutable variants when profiling shows a hot path that benefits from in-place updates.
 
-## Common collection abstractions
+# Common collection abstractions
 
 Most of the time, Nanyx programs don't care very much about the specific implementation of a collection, just that it supports certain operations. For this reason, the standard library provides a number of common collection abstractions that can be implemented by any type:
 
@@ -50,7 +50,7 @@ def unique: Set(int) = [1, 2, 2, 3]
 
 For advanced patterns such as associated types and constrained collection capabilities, see [Associated types and constraints](../advanced/associated-types-and-constraints).
 
-## Syntax
+# Syntax
 
 Nanyx supports a generalisable literal syntax for all collection types; the square bracket form is available to any target type that implements the correct builder context:
 

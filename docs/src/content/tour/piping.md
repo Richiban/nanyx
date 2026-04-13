@@ -25,7 +25,7 @@ def personObj = request
   \serialisePerson
 ```
 
-## Piping with extra arguments
+# Piping with extra arguments
 
 The piped value fills the first parameter. Other parameters are supplied normally:
 
@@ -37,7 +37,7 @@ def result = 1
   \add(3)
 ```
 
-## Qualified piping
+# Qualified piping
 
 If the function is [attached](../advanced/attached-definitions) to the type on the left-hand side of the `\`, you can omit the module qualifier:
 

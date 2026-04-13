@@ -6,7 +6,7 @@ order: 8
 
 Attached definitions let you add functions and values directly onto a type. This is how you define methods, operators, and static-like members without classes.
 
-## Attaching a function
+# Attaching a function
 
 Use dot syntax to attach a definition to a type.
 
@@ -32,7 +32,7 @@ Or use it in a pipeline without needing to specify the type name:
 def len = p \length
 ```
 
-## Attaching operators
+# Attaching operators
 
 Operators are just attached definitions with symbolic names:
 
@@ -42,7 +42,7 @@ export def Point.`+` = { a, b ->
 }
 ```
 
-## Attached functions as typeclass defaults
+# Attached functions as typeclass defaults
 
 Attached definitions can satisfy contexts or typeclass-style constraints. For example, defining `+` and `0` on a type can allow a `Sum` context to be synthesized.
 
@@ -52,7 +52,7 @@ def Point.`+` = { a, b -> Point(x = a.x + b.x, y = a.y + b.y) }
 def Point.`0` = Point(x = 0, y = 0)
 ```
 
-## Namespacing utilities
+# Namespacing utilities
 
 Attached definitions are also useful for namespacing helpers:
 
@@ -63,7 +63,7 @@ def Option.map
       | other, _ -> other }
 ```
 
-## When to use attached definitions
+# When to use attached definitions
 
 - You want method-style access without classes.
 - You want to group helpers under a type name.

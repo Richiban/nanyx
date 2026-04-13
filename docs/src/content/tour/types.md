@@ -6,7 +6,7 @@ order: 2
 
 Nanyx features a strong static type system with Hindley-Milner type inference. Types are descriptive and readable, and you can use record types for structure and tag unions for variants.
 
-## Type inference
+# Type inference
 
 Nanyx can infer most types automatically:
 
@@ -18,7 +18,7 @@ def add = { x, y -> x + y }
 def length = { s -> s.length }
 ```
 
-## Type annotations
+# Type annotations
 
 While inference works well, you can (and should) annotate exported functions:
 
@@ -30,7 +30,7 @@ def double: int -> int = { x -> x * 2 }
 def multiply: (int, int) -> int = { x, y -> x * y }
 ```
 
-## Basic types
+# Basic types
 
 Nanyx has several built-in primitive types:
 
@@ -41,17 +41,17 @@ def name: string = "Alice"
 def active: bool = true
 ```
 
-## Record types
+# Record types
 
 Records are structural types with named fields. They have their own Language Tour page covering record types, structural typing, optional fields, and the unified record/tuple model.
 
 See [Records and tuples](./records) for the full guide.
 
-## Top and bottom types
+# Top and bottom types
 
 `any` is the top type (accepts any value), and `undefined` is the bottom type (no values). These appear when you build generic or unreachable code paths.
 
-## Tuple types
+# Tuple types
 
 Tuples are anonymous records with numbered fields:
 
@@ -63,7 +63,7 @@ def point: (int, int) = (10, 20)
 def coords: (x: int, y: int) = (x = 10, y = 20)
 ```
 
-## Unified tuples and records
+# Unified tuples and records
 
 In Nanyx, tuples and records are one unified structure. You can mix positional and named fields in the same record, making a tuple just a record with all positional fields.
 
@@ -83,7 +83,7 @@ def valid = (10, 20, x = 10, y = 20)
 
 See [Records and tuples](./records) for more on record shapes and field rules.
 
-## Tag unions
+# Tag unions
 
 Tag unions (also called sum types or discriminated unions) represent values that can be one of several variants:
 
@@ -106,7 +106,7 @@ def area: Shape -> float = { shape ->
 }
 ```
 
-## Option types
+# Option types
 
 Nanyx has no null values. Use tag unions to represent optional values instead:
 
@@ -117,7 +117,7 @@ def findUser: UserId -> #some(User) | #notFound = { id ->
 }
 ```
 
-## Generic types
+# Generic types
 
 Types can be parameterized with type variables:
 
@@ -141,7 +141,7 @@ def zip: (list(a), list(b)) -> list((a, b)) = { xs, ys ->
 }
 ```
 
-## Type aliases
+# Type aliases
 
 Create meaningful names for complex types:
 
@@ -158,7 +158,7 @@ type UserProfile = (
 )
 ```
 
-## Function types
+# Function types
 
 Functions have specific type signatures:
 

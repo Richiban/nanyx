@@ -19,7 +19,7 @@ This page defines the design direction for units, with two goals:
 1. Unit-safe arithmetic with automatic unit derivation (for example `m / s -> m/s`)
 2. Ergonomic value construction at call sites (for example `delay(500ms)`)
 
-## Two concepts: dimensions and units
+# Two concepts: dimensions and units
 
 Nanyx should model **dimensions** and **units** separately:
 
@@ -28,7 +28,7 @@ Nanyx should model **dimensions** and **units** separately:
 
 Type checking operates on dimensions. Units are syntax and conversion metadata for constructing and displaying values.
 
-## Defining units
+# Defining units
 
 Units are always numeric in Nanyx. Unit declarations do not specify an underlying primitive type.
 
@@ -47,7 +47,7 @@ unit(KB) Kilobyte: Bytes = 1024B
 unit(MB) Megabyte: Bytes = 1024KB
 ```
 
-### Base vs derived units
+## Base vs derived units
 
 A dimension can define one or more base units.
 
@@ -75,7 +75,7 @@ unit(b) B: Time = 3a
 -- error: cyclic derived-unit definition (A -> B -> A)
 ```
 
-### Design model
+## Design model
 
 Each measured numeric type carries a compile-time _dimension vector_.
 
@@ -95,13 +95,13 @@ The compiler stores normalized dimensions (sorted bases + integer exponents), so
 - `Length/Time` == `Length*Time^-1`
 - `(Length/Time)*Time` == `Length`
 
-## Derived units
+# Derived units
 
 ```nanyx
 def transferRate = 50(MB / s)
 ```
 
-## Type rules (F#-style behavior)
+# Type rules (F#-style behavior)
 
 Dimensions participate in type inference and unification, not runtime values.
 
@@ -128,7 +128,7 @@ def bad = 10m + 2s
 -- error: cannot add number(Length) and number(Time)
 ```
 
-### Generic constraints over dimensions
+## Generic constraints over dimensions
 
 Functions can stay generic over dimensions:
 
@@ -139,7 +139,7 @@ def avgSpeed: (number(Length), number(Time)) -> number(Length/Time) = { dist, ti
 
 This keeps APIs reusable while preserving dimension correctness.
 
-## Conversion rules
+# Conversion rules
 
 Unit declarations define scale factors between units of the same dimension.
 
@@ -162,7 +162,7 @@ Invalid conversion is rejected:
 def impossible = 1m as s
 ```
 
-## Ergonomics for `delay(500ms)`
+# Ergonomics for `delay(500ms)`
 
 Use unit suffix literals as typed numeric constructors.
 
@@ -181,7 +181,7 @@ delay(2min)       -- ok
 delay(42)         -- error: expected Duration, found dimensionless number
 ```
 
-## Function parameters: dimensions vs units
+# Function parameters: dimensions vs units
 
 Both are useful, but they should mean different things.
 
@@ -209,12 +209,12 @@ setTimeoutRaw(1s)      -- error (or require explicit `as ms`)
 
 Recommendation: keep most APIs dimension-based, and reserve unit-specific parameters for boundaries (wire formats, hardware APIs, legacy contracts).
 
-### Why this satisfies both goals
+## Why this satisfies both goals
 
 - Goal 1: unit algebra happens in inference/unification, so results derive automatically
 - Goal 2: suffix literals construct measured values directly at call sites
 
-## Runtime model
+# Runtime model
 
 Dimensions and units are erased after type checking.
 
@@ -222,7 +222,7 @@ Dimensions and units are erased after type checking.
 - No runtime penalty for unit checking
 - Optional debug metadata can be emitted by tooling, not required by execution
 
-## Recommended implementation phases
+# Recommended implementation phases
 
 1. **Core type algebra**: represent normalized dimension vectors and unit unification
 2. **Operator typing**: enforce `+/-` compatibility and `*//` exponent arithmetic

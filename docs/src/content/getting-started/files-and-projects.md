@@ -6,7 +6,7 @@ order: 4
 
 You can run a single Nanyx file directly, or you can organize code as a multi-file project. The compiler supports both workflows.
 
-## Single-file scripts
+# Single-file scripts
 
 A single file can be executed on its own. It does not need module or members declarations; you can write imports and top-level statements directly.
 
@@ -28,7 +28,7 @@ match file.read("input.txt")
 
 You can run this file with `nanyx run filename.nyx`. The compiler treats the file as an implicit module and executes top-level statements. This is great for quick scripts, experiments, and learning.
 
-## Importing by file path
+# Importing by file path
 
 Files can import each other by file path. 
 
@@ -52,11 +52,11 @@ This works well for small scripts, but there is one important rule: a file with 
 
 That means shared files should avoid top-level statements and only define values, functions, types, and modules.
 
-## Project files and module imports
+# Project files and module imports
 
 For larger projects, introduce a project file. In that mode, modules are imported by their declared names instead of by file paths. This keeps imports stable as the project grows and clarifies ownership of modules.
 
-### Project file format (TOML)
+## Project file format (TOML)
 
 Use a `nanyx.toml` file at the project root to declare the entrypoint, source roots, and build options. This is a simple, declarative format that works well for tooling.
 

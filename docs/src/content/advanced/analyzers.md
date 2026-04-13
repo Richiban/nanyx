@@ -18,7 +18,7 @@ Thus the compiler itself will only ever emit error-level diagnostics -- things t
 
 The compiler itself never emits warnings, info, or hints. That responsibility belongs to **analyzers**.
 
-## What is an analyzer?
+# What is an analyzer?
 
 An analyzer is a pluggable Nanyx module that hooks into the compiler pipeline and inspects your code to produce additional diagnostics. This is the same model used by .NET's Roslyn analyzers: the compiler does its job, and analyzers layer on extra checks that go beyond correctness.
 
@@ -32,13 +32,13 @@ Analyzers can check for things like:
 
 Because analyzers produce diagnostics through the same infrastructure as the compiler, their output appears inline in your editor alongside any compiler errors -- with the appropriate severity level.
 
-## The default analyzer
+# The default analyzer
 
 Nanyx ships with a **default analyzer** that is automatically included in the standard project template. This analyzer covers common checks that most projects will want, such as flagging unused bindings or warning about shadowed names.
 
 When you create a new project with `nanyx init`, the default analyzer is already configured and active. You do not need to install or enable it manually.
 
-## Configuring analyzers
+# Configuring analyzers
 
 Analyzers are declared in your project configuration. Each analyzer can be enabled, disabled, or have its individual rules configured:
 
@@ -62,7 +62,7 @@ analyzers = (
 )
 ```
 
-## Writing custom analyzers
+# Writing custom analyzers
 
 Because analyzers are just modules that conform to the analyzer interface, you can write your own. A custom analyzer receives the typed syntax tree and returns a list of diagnostics:
 
@@ -83,7 +83,7 @@ def analyze: TypedAst -> list(Diagnostic) = { ast ->
 
 Custom analyzers can be distributed as packages and added to any project.
 
-## Why separate analyzers from the compiler?
+# Why separate analyzers from the compiler?
 
 Keeping the compiler free of warnings and style checks has several benefits:
 

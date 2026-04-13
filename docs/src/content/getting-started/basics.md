@@ -6,7 +6,7 @@ order: 4
 
 This page covers core syntax and expression rules to help you read and write simple Nanyx code.
 
-## Expressions
+# Expressions
 
 Everything is an expression that produces a value.
 
@@ -14,7 +14,7 @@ Everything is an expression that produces a value.
 def message = "Hello world"
 ```
 
-## Definitions
+# Definitions
 
 Use `def` to bind a name to a value. The value can be any expression, including another definition or a function:
 
@@ -24,7 +24,7 @@ def version = 4
 def getMessage = { name -> "Hello, {name}!" }
 ```
 
-## Blocks and indentation
+# Blocks and indentation
 
 Blocks use indentation. A more-indented line belongs to the previous line. If a line ends with `->`, the next indented block is part of the expression.
 
@@ -54,7 +54,7 @@ def answer =
 
 For more on expression forms, see [Functions](../tour/functions) and [Pattern matching](../tour/pattern-matching).
 
-## Numbers
+# Numbers
 
 Nanyx includes familiar numeric literals:
 
@@ -73,7 +73,7 @@ def bigger = total > 12
 
 For operator behavior, see [Operators](../tour/operators). For range syntax, see [Ranges](../tour/ranges).
 
-## Strings
+# Strings
 
 String literals can use double quotes or single quotes:
 
@@ -91,7 +91,7 @@ def greeting = "Hello, {name}!"
 
 For library string operations (`length`, `split`, `trim`, etc.), see [string stdlib](../stdlib/string).
 
-## Equality and comparison
+# Equality and comparison
 
 Use `==` and `!=` for equality and inequality:
 
@@ -108,13 +108,13 @@ def isAdult = 21 >= 18
 
 These operators are part of the language's operator system; see [Operators](../tour/operators) for details.
 
-## Mutability
+# Mutability
 
 Mutability is available in Nanyx, but is considered a somewhat advanced feature. Read about [the Memory context](../advanced/memory) for more.
 
 For immutable record updates, see [Copy and update (non-destructive mutation)](../tour/records#copy-and-update-non-destructive-mutation).
 
-## Commas and newlines
+# Commas and newlines
 
 You can use commas or newlines to separate items in lists and records:
 
@@ -136,7 +136,7 @@ def myRecord = (
 )
 ```
 
-## Comments
+# Comments
 
 Single-line comments use `--`. Multi-line comments start and end with a line containing only three or more `---`.
 
@@ -154,11 +154,11 @@ This is also a multi-line comment.
 
 Multi-line comments must be closed with the same number of dashes that they were opened with.
 
-### Tags, ranges and records
+## Tags, ranges and records
 
 Nanyx also supports tags, ranges, and records as core value forms. See [Tags](../tour/tags), [Ranges](../tour/ranges), and [Records and tuples](../tour/records).
 
-## Table literals
+# Table literals
 
 Table literals are a shorthand for lists of records with the same shape:
 
@@ -171,7 +171,7 @@ def namesAndAges =
    | "Morgan" | 45  |]
 ```
 
-## Conditionals
+# Conditionals
 
 Nanyx uses `if` and supports multi-branch forms:
 
@@ -189,7 +189,7 @@ if | cond1 ->
      yetMoreCode()
 ```
 
-## Unimplemented code
+# Unimplemented code
 
 Use `???` as a placeholder to keep code compiling while you iterate:
 

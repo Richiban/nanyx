@@ -6,7 +6,7 @@ order: 11
 
 Nanyx applies compiler optimisations automatically during compilation. These optimisations are intended to make programs faster and smaller without changing program meaning.
 
-## Optimisation model
+# Optimisation model
 
 Nanyx optimisations are implementation details of the compiler pipeline. You should treat them as performance improvements, not language-level guarantees.
 
@@ -16,7 +16,7 @@ In practice this means:
 - The exact set of optimisations can evolve between compiler versions.
 - Optimisations must preserve observable behaviour.
 
-## Typical optimisation areas
+# Typical optimisation areas
 
 Depending on code shape and target backend, the compiler may perform optimisations such as:
 
@@ -28,7 +28,7 @@ Depending on code shape and target backend, the compiler may perform optimisatio
 
 For allocation-specific behavior, see [Stack vs heap allocation](./stack-vs-heap-allocation).
 
-## Writing optimisation-friendly Nanyx
+# Writing optimisation-friendly Nanyx
 
 You usually get the best results by writing clear, idiomatic code first:
 
@@ -36,6 +36,6 @@ You usually get the best results by writing clear, idiomatic code first:
 - Keep data flow explicit (especially around large records).
 - Profile real workloads before changing code for performance.
 
-## Future direction
+# Future direction
 
 Nanyx is expected to expose more user control over selected performance behaviors over time (for example allocation and passing strategy controls), while keeping automatic optimisation as the default experience.

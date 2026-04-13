@@ -6,7 +6,7 @@ order: 1
 
 This page defines the proposed syntax and semantics for attaching context requirements to any type, not just function definitions.
 
-## Motivation
+# Motivation
 
 Today, context requirements are most visible on function signatures, for example:
 
@@ -16,7 +16,7 @@ def f: [C] (x, y) -> z
 
 To support values like `MArray` and `MRef` safely, context requirements need to be expressible for value types as well.
 
-## Syntax
+# Syntax
 
 Use the same syntax form already used by function signatures:
 
@@ -30,7 +30,7 @@ This means:
 
 This keeps signatures and aliases aligned: any type expression from a signature can be extracted into a `type` alias unchanged.
 
-## Core semantics
+# Core semantics
 
 `[C] T` means a value of type `T` with required context `C`.
 
@@ -39,7 +39,7 @@ Requirements are part of the type and flow with the value:
 - Combining values unions requirements.
 - A value can only be used where all its required contexts are available.
 
-## Scope and escape
+# Scope and escape
 
 A scoped context can discharge its own requirement inside the scope, but not outside it.
 
@@ -67,7 +67,7 @@ def good = {
 }
 ```
 
-## Generality
+# Generality
 
 This mechanism is intentionally generic and applies to any context, not only `$Memory`:
 - mutable memory capabilities,
@@ -75,7 +75,7 @@ This mechanism is intentionally generic and applies to any context, not only `$M
 - transaction or resource capabilities,
 - user-defined contexts.
 
-## Design notes
+# Design notes
 
 - Prefer wording like "requires context" over "can only exist".
 - Context requirements should be tracked uniformly by type inference and assignability.

@@ -10,7 +10,7 @@ Fields can be either _positional_ or _named_, meaning that you can mix and match
 
 Records and tuples are actually one unified feature in Nanyx; a tuple is just a special case of record where all the fields are positional.
 
-## Record values
+# Record values
 
 Create a record by listing its fields and values inside parentheses. For named fields, use `name = value`:
 
@@ -37,7 +37,7 @@ Because records and tuples are unified, both styles can be combined in one value
 def mixed = (1, 2, label = "origin", unit = "px")
 ```
 
-## Record types
+# Record types
 
 A record type uses the same shape as a record value, but with type annotations on fields:
 
@@ -68,7 +68,7 @@ def alice: Person = (
 )
 ```
 
-## Structural typing
+# Structural typing
 
 Record types are structural, meaning compatibility is based on shape rather than explicit inheritance. If two types have compatible fields, they can be used interchangeably where appropriate.
 
@@ -85,7 +85,7 @@ You can also compose record requirements with intersections:
 type Person = Named & (age: int)
 ```
 
-## Records vs tuples
+# Records vs tuples
 
 In Nanyx, tuples and records are one unified structure. A tuple is just a record whose fields are all positional.
 
@@ -105,7 +105,7 @@ def valid = (10, 20, x = 10, y = 20)
 -- def invalid = (x = 10, 20)
 ```
 
-## Optional fields
+# Optional fields
 
 Records can contain optional members when a field may be absent:
 
@@ -115,7 +115,7 @@ type Person = (name: string; petsName?: string)
 
 Optional fields can also be modeled explicitly with tag unions if you need stricter control.
 
-## Copy and update (non-destructive mutation)
+# Copy and update (non-destructive mutation)
 
 Records are typically treated immutably. To create a modified copy, use `with`.
 
@@ -156,7 +156,7 @@ def updatedLine = line with (
 
 This preserves the original value and returns a new record with only the specified fields changed. This means that the result of a `with` expression is always of the same type as the input record.
 
-## Record spread (`...`)
+# Record spread (`...`)
 
 Nanyx also supports record spread using the `...` sigil (similar to JavaScript).
 

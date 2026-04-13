@@ -6,7 +6,7 @@ order: 1
 
 This page gives a high-level overview of core standard library abstractions.
 
-## Collections
+# Collections
 
 - `seq(a)` for possibly infinite sequences
 - `series(a)` for finite sequences
@@ -15,12 +15,12 @@ This page gives a high-level overview of core standard library abstractions.
 - `map(k, v)` for key/value lookup
 - `lookup(k, v)` for multi-value lookups
 
-## Async collections
+# Async collections
 
 - `stream(a)` for async streams
 - `async(a)` for async computations
 
-## Option and result
+# Option and result
 
 ```nanyx
 type Option(a) = #some(a) | #nil
@@ -28,7 +28,7 @@ type Option(a) = #some(a) | #nil
 type Result(ok, err) = #ok(ok) | #error(err)
 ```
 
-## Map builders
+# Map builders
 
 Builders like `map` expose a `=>` operator in a workflow:
 

@@ -6,7 +6,7 @@ order: 13
 
 Attributes are annotations that start with `@` and modify how the compiler treats the declaration that follows.
 
-## Basic syntax
+# Basic syntax
 
 Place an attribute immediately before the declaration it applies to:
 
@@ -21,9 +21,9 @@ def optionChain = (...)
 
 A declaration can have one or more attributes, each on its own line.
 
-## Common attributes
+# Common attributes
 
-### `@entry`
+## `@entry`
 
 Marks the program entry module in project-based apps.
 
@@ -33,7 +33,7 @@ Marks the program entry module in project-based apps.
 
 See [Hello, World!](../getting-started/hello-world).
 
-### `@workflow`
+## `@workflow`
 
 Marks a workflow builder definition and enables workflow helper generation.
 
@@ -47,7 +47,7 @@ def optionChain = (
 
 See [Option chaining](../cookbook/option-chaining) and [Workflows](../advanced/workflows).
 
-### `@customKeywordType(...)`
+## `@customKeywordType(...)`
 
 Used in workflow builders to specify how a custom keyword behaves.
 
@@ -60,7 +60,7 @@ def async = (
 
 See [Workflows](../advanced/workflows).
 
-### `@baseUnit`
+## `@baseUnit`
 
 Marks a unit declaration as a base/reference unit for unit-of-measure definitions.
 
@@ -70,7 +70,7 @@ Marks a unit declaration as a base/reference unit for unit-of-measure definition
 
 See [Units and dimensions](../advanced/units-and-dimensions).
 
-### `@builderPattern`
+## `@builderPattern`
 
 Marks types intended for builder-style initialization.
 
@@ -81,7 +81,7 @@ type Point = (x: int, y: int)
 
 See [Higher-order functions](./lambdas-and-higher-order-functions).
 
-## Notes
+# Notes
 
 - Attributes are compile-time metadata.
 - Their meaning is defined by the compiler and language features that consume them.

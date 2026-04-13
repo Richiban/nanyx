@@ -6,7 +6,7 @@ order: 3
 
 Build a basic HTTP server with Nanyx using the `http` package.
 
-## Setup
+# Setup
 
 ```bash
 nanyx new my_server
@@ -14,7 +14,7 @@ cd my_server
 nanyx install nanyx.http
 ```
 
-## The code
+# The code
 
 ```nanyx
 module main
@@ -32,14 +32,14 @@ println("Server running on http://localhost:3000")
 server.start(handler, port = 3000)
 ```
 
-## Run it
+# Run it
 
 ```bash
 nanyx run
 # Server running on http://localhost:3000
 ```
 
-## Key concepts
+# Key concepts
 
 - **Pattern matching on routes** — clean, readable routing without a framework
 - **String interpolation** — extract path parameters with `{name}`

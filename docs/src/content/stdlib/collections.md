@@ -6,11 +6,11 @@ order: 3
 
 The `collections` module provides functions for working with lists, maps, sets, and other collection types.
 
-## List
+# List
 
 Since lists are immutable, all transform operations on lists return new lists.
 
-### all
+## all
 
 ```nanyx
 List.all: (list(a), (a -> bool)) -> bool
@@ -27,7 +27,7 @@ Note: it can seem counter intuitive, but `List.all` always returns `true` for an
 
 ---
 
-### any
+## any
 
 ```nanyx
 List.any: (list(a), (a -> bool)) -> bool
@@ -44,7 +44,7 @@ Note: it can seem counter intuitive, but `List.any` returns `false` for an empty
 
 ---
 
-### append
+## append
 
 ```nanyx
 List.append: (list(a), a) -> list(a)
@@ -57,7 +57,7 @@ Returns a new list with the element added to the end.
 -- [1, 2, 3]
 ```
 
-### filter
+## filter
 
 ```nanyx
 List.filter: (list(a), (a -> bool)) -> list(a)
@@ -72,7 +72,7 @@ Keeps only elements that satisfy the predicate.
 
 ---
 
-### find
+## find
 
 ```nanyx
 List.find: (list(a), (a -> bool)) -> #some(a) | #notFound
@@ -87,7 +87,7 @@ Returns the first element matching the predicate.
 
 ---
 
-### flatten
+## flatten
 
 ```nanyx
 List.flatten: list(list(a)) -> list(a)
@@ -102,7 +102,7 @@ List.flatten([[1, 2], [3, 4]])
 
 ---
 
-### fold
+## fold
 
 ```nanyx
 List.fold: (list(a), b, ((b, a) -> b)) -> b
@@ -117,7 +117,7 @@ Reduces a list to a single value. Runs through the list from left to right, appl
 
 ---
 
-### foldBack
+## foldBack
 
 ```nanyx
 List.foldBack: (list(a), b, ((b, a) -> b)) -> b
@@ -132,7 +132,7 @@ Reduces a list to a single value. Runs through the list backwards (from right to
 
 ---
 
-### groupBy
+## groupBy
 
 ```nanyx
 List.groupBy: (list(a), (a -> b)) -> map(b, list(a))
@@ -147,7 +147,7 @@ Groups elements of a list by a key function, returning a map from keys to lists 
 
 ---
 
-### length
+## length
 
 ```nanyx
 List.length: list(a) -> int
@@ -162,7 +162,7 @@ List.length([1, 2, 3])
 
 ---
 
-### map
+## map
 
 ```nanyx
 List.map: (list(a), (a -> b)) -> list(b)
@@ -177,7 +177,7 @@ Applies a function to every element in a list, collecting the results in a new l
 
 ---
 
-### select
+## select
 
 ```nanyx
 List.select: (list(a), [Yield(b)] (a -> ())) -> list(b)
@@ -199,7 +199,7 @@ def f: list(Color) -> list(string) = { items ->
 
 ---
 
-### selectOne
+## selectOne
 
 ```nanyx
 List.selectOne: (list(a), [Yield(b)] (a -> ())) -> #some(b) | #emptyList
@@ -221,7 +221,7 @@ def f: list(Color) -> #some(string) | #emptyList = { items ->
 
 ---
 
-### unfold
+## unfold
 
 ```nanyx
 List.unfold: (b, (b -> #some(a, b) | #stop)) -> list(a)

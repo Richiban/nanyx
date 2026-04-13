@@ -6,7 +6,7 @@ order: 2
 
 Nanyx provides a `json` module for encoding and decoding JSON.
 
-## Setup
+# Setup
 
 ```bash
 nanyx new json_parsing
@@ -36,7 +36,7 @@ def main = {
 }
 ```
 
-## Encoding JSON
+# Encoding JSON
 
 ```nanyx
 def jsonString =
@@ -50,7 +50,7 @@ def jsonString =
 -- {"name":"Alice","age":30,"active":true}
 ```
 
-## Working with arrays
+# Working with arrays
 
 ```nanyx
 def usersJson = 

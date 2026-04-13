@@ -13,7 +13,7 @@ For people coming from C#, Java, TypeScript, or Kotlin, the mental model is:
 - **inheritance hierarchies** → composition and tagged unions,
 - **private internals** → module boundaries and nominal/protected types.
 
-## Data: records instead of class instances
+# Data: records instead of class instances
 
 Use records to model object-like data:
 
@@ -34,7 +34,7 @@ def moved = p with (
 
 See [Records and tuples](../tour/records) for the full model.
 
-## Behavior: functions and attached definitions
+# Behavior: functions and attached definitions
 
 Behavior is defined separately from data:
 
@@ -56,7 +56,7 @@ def Point.origin = Point(x = 0, y = 0)
 
 This gives method-like ergonomics without classes.
 
-## Encapsulation: modules and type boundaries
+# Encapsulation: modules and type boundaries
 
 Encapsulation is done with module exports and type boundaries, not class visibility modifiers.
 
@@ -66,7 +66,7 @@ Encapsulation is done with module exports and type boundaries, not class visibil
 
 See [Nominal and Protected Types](../advanced/nominal-and-protected-types).
 
-## State and mutation
+# State and mutation
 
 Nanyx supports mutation, but it is explicit and scoped through contexts (for example `memory { ... }`).
 
@@ -74,7 +74,7 @@ This keeps mutation local rather than making every instance implicitly mutable.
 
 See [Memory](../advanced/memory) for details.
 
-## Inheritance alternatives
+# Inheritance alternatives
 
 Most inheritance use-cases map to one of these patterns:
 
@@ -84,7 +84,7 @@ Most inheritance use-cases map to one of these patterns:
 
 This usually leads to APIs that are easier to read and evolve because behavior is explicit at call sites.
 
-## Quick mapping
+# Quick mapping
 
 | Class-based concept | Nanyx approach |
 |---|---|

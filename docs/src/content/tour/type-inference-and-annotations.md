@@ -6,7 +6,7 @@ order: 7
 
 Type inference is foundational in Nanyx; type annotations very rarely _need_ to be written as the compiler infers types from values and usage. Annotations are, however, recommended for definitions exported from a module and _strongly_ recommended for definitions exported from a package.
 
-## Inference by value
+# Inference by value
 
 ```nanyx
 def message = "Hello world" -- inferred as string
@@ -14,7 +14,7 @@ def message = "Hello world" -- inferred as string
 def message: string = "Hello world" -- explicitly annotated
 ```
 
-## Inference for functions
+# Inference for functions
 
 ```nanyx
 def add = { a, b -> a + b }
@@ -28,7 +28,7 @@ def identity = { x -> x }
 -- inferred as `a -> a`, meaning it can take any type `a` and returns the same type `a`
 ```
 
-### Positional vs named inference
+## Positional vs named inference
 
 When functions are unannotated, Nanyx assumes that any deconstructed arguments are positional. If you want to use named parameters, annotate the function type:
 
@@ -63,7 +63,7 @@ def magnitude3: (x: int, y: int) -> ()
     }
 ```
 
-## Exported values
+# Exported values
 
 By convention, exported values should be annotated:
 
@@ -76,7 +76,7 @@ export def add: Nat, Nat -> Nat = { a, b -> a + b }
 
 Although the language itself doesn't mandate this practice, the [official style analyzer](./official-analyzer) will emit a warning if this is not followed.
 
-## Target typing
+# Target typing
 
 Nanyx can infer types based on how values are used:
 

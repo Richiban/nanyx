@@ -6,7 +6,7 @@ order: 2
 
 Contexts are implicit parameters in Nanyx. A function can declare the contexts it needs, and the members of those contexts become available inside its body. This is how Nanyx models effects, state, and typeclass-style constraints.
 
-## Declaring a context
+# Declaring a context
 
 A context definition looks like a record type, but uses the `context` keyword:
 
@@ -16,7 +16,7 @@ context Console = (
 )
 ```
 
-## Requiring a context
+# Requiring a context
 
 A function can specify required contexts in its type signature. Here, `sayHello` can call `println` because it runs in `$Console`:
 
@@ -26,7 +26,7 @@ def sayHello: [$Console] () -> () = {
 }
 ```
 
-## Loading a context
+# Loading a context
 
 Use the `use` keyword to load an instance of a context into scope. Once loaded, any functions that require it can be called:
 
@@ -48,7 +48,7 @@ def result = use Console(println = hostPrint) in {
 }
 ```
 
-## Contexts are part of the type
+# Contexts are part of the type
 
 A value's context requirement is part of its type. You can annotate just the contexts and let the rest infer:
 
@@ -62,7 +62,7 @@ This is also how scoped mutation is enforced: values that still require `memory`
 
 For a formal proposal of type-level context requirements, see [Specifications: Context-qualified types](../specifications/context-qualified-types).
 
-## Combining contexts
+# Combining contexts
 
 You can require multiple contexts by combining them:
 
@@ -75,11 +75,11 @@ def readAndPrintFile
   }
 ```
 
-## Console by default
+# Console by default
 
 The program entrypoint runs in `Console`, which is why `println` is available in `main` without extra setup.
 
-## Contexts as typeclasses
+# Contexts as typeclasses
 
 Contexts can also express typeclass-style constraints. Define a context with the required operations and use it as a constraint:
 
@@ -95,7 +95,7 @@ export def sum: [Sum(a)] list(a) -> a
 
 For ergonomic generic API design with associated members and constrained capabilities, see [Associated types and constraints](./associated-types-and-constraints).
 
-## Context synthesis using attached definitions
+# Context synthesis using attached definitions
 
 When a function requires a context, you don't always have to load or even create it manually. If the type in question has [attached definitions](./attached-definitions) that match the context's members, the compiler can **synthesize** the context automatically.
 
@@ -131,7 +131,7 @@ def total = sum(points)
 
 This is analogous to how Haskell derives typeclass instances or how Rust resolves trait implementations. The key difference is that in Nanyx the "instance" is just a collection of attached definitions -- there is no separate declaration required.
 
-### When synthesis applies
+## When synthesis applies
 
 Context synthesis occurs when:
 
@@ -141,7 +141,7 @@ Context synthesis occurs when:
 
 If any member is missing or has an incompatible type, synthesis fails and the compiler requires you to load the context explicitly.
 
-### Explicit loading takes priority
+## Explicit loading takes priority
 
 If you manually load a context with `use`, that instance is always used, even if attached definitions exist. This lets you override the default behavior when needed:
 
@@ -156,7 +156,7 @@ def reverseSum = {
 }
 ```
 
-## Why contexts matter
+# Why contexts matter
 
 - Effects are explicit: if a function touches IO or state, it must declare a context.
 - You can swap implementations by loading different context instances.

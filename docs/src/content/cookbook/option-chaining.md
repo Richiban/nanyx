@@ -6,14 +6,14 @@ order: 4
 
 Let's build our understanding of workflows by implementing a simple `Option` chaining workflow. We want a workflow that allows us to chain together computations that may return `Option` values, short-circuiting if any step returns `None`.
 
-## Setup
+# Setup
 
 ```bash
 nanyx new option_chaining
 cd option_chaining
 ```
 
-## The code
+# The code
 
 ```nanyx
 @workflow -- This attribute will give you a helper function for free
