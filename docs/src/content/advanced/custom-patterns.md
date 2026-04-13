@@ -56,8 +56,6 @@ match num
 -- Alternatively, we can use if-matching style:
 if #Zero = num then
   println("It's zero!")
-else
-  println("It's not zero.")
 ```
 
 In the case of partial patterns with multiple choices or output values, the wildcard case must be explicitly returned using the `_` value:
