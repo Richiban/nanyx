@@ -4,13 +4,9 @@ description: "Input and output operations"
 order: 2
 ---
 
-# io
-
 The `io` module provides functions for reading from and writing to standard I/O.
 
-# Functions
-
-## println
+# println
 
 ```nanyx
 io.println: string -> ()
@@ -24,7 +20,7 @@ println("Hello, World!")
 
 ---
 
-## print
+# print
 
 ```nanyx
 io.print: string -> ()
@@ -38,7 +34,7 @@ print("Enter your name: ")
 
 ---
 
-## dbg
+# dbg
 
 ```nanyx
 io.dbg: a -> a
@@ -55,7 +51,7 @@ Prints a debug representation of any value and returns it. Useful for inspecting
 
 ---
 
-## readLine
+# readLine
 
 ```nanyx
 io.readLine: () -> #ok(string) | #error(IoError)
