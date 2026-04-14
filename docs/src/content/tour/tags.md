@@ -4,9 +4,18 @@ description: "Literal tags and tag unions"
 order: 3
 ---
 
-Tags are a foundational feature in Nanyx, somewhat similar to symbols in Ruby or atoms in Erlang.
+Tags are a foundational feature in Nanyx, somewhat similar to symbols/atoms in Ruby and Erlang or string literal types in TypeScript and Scala.
 
 A tag is both a value and a type. The tag name identifies the exact value, which makes tags useful for precise modeling and pattern matching.
+
+# Tag naming rules
+
+Tag naming has both conventions and requirements:
+
+- **Recommended for ordinary tags:** use lower-case tag names such as `#ok`, `#error`, `#readwrite`.
+- **Required for custom-pattern result tags:** tags must start with an uppercase letter after `#` (for example `#Hsl`, `#ParseInt`).
+
+For the full custom-pattern model and examples, see [Custom patterns](../advanced/custom-patterns).
 
 # Tags as values and types
 
@@ -21,6 +30,20 @@ You can also annotate with a specific tag type:
 ```nanyx
 def y: #mySecondTag = #mySecondTag
 ```
+
+# Runtime behavior
+
+Despite their similarity to string literal types, tags are **not** strings at runtime. A tag is its own runtime value kind, so `#ok` is not the same thing as `"ok"`.
+
+That said, converting a tag to text gives the expected name:
+
+```nanyx
+def t = #readwrite
+
+t.toString()   -- "#readwrite"
+```
+
+This is useful for logging and debugging, but it does not change the underlying runtime type of the value.
 
 # Tag unions
 
