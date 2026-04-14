@@ -30,7 +30,7 @@ value \Option.map { .length }
 # bind
 
 ```nanyx
-Option.bind: ((#some(a) | rest), (a -> (#some(b) | rest))) -> (#some(b) | rest)
+Option.bind: ((#some(a) | r1), (a -> (#some(b) | r2))) -> (#some(b) | r1 | r2)
 ```
 
 Chains option-producing operations.
