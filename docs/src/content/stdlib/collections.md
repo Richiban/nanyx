@@ -57,6 +57,21 @@ Returns a new list with the element added to the end.
 -- [1, 2, 3]
 ```
 
+---
+
+## distinct
+
+```nanyx
+List.distinct: list(a) -> list(a)
+```
+
+Returns a new list with duplicate values removed, keeping first occurrence order.
+
+```nanyx
+List.distinct([1, 2, 2, 3, 1])
+-- [1, 2, 3]
+```
+
 ## filter
 
 ```nanyx
@@ -98,6 +113,21 @@ Flattens a list of lists into a single list.
 ```nanyx
 List.flatten([[1, 2], [3, 4]])
 -- [1, 2, 3, 4]
+```
+
+---
+
+## head
+
+```nanyx
+List.head: list(a) -> #some(a) | #emptyList
+```
+
+Returns the first element if the list is non-empty.
+
+```nanyx
+List.head([10, 20, 30])
+-- #some(10)
 ```
 
 ---
@@ -177,6 +207,66 @@ Applies a function to every element in a list, collecting the results in a new l
 
 ---
 
+## reverse
+
+```nanyx
+List.reverse: list(a) -> list(a)
+```
+
+Returns a new list with elements in reverse order.
+
+```nanyx
+List.reverse([1, 2, 3])
+-- [3, 2, 1]
+```
+
+---
+
+## skip
+
+```nanyx
+List.skip: (list(a), int) -> list(a)
+```
+
+Returns a list without the first `count` elements.
+
+```nanyx
+List.skip([1, 2, 3, 4], 2)
+-- [3, 4]
+```
+
+---
+
+## sortBy
+
+```nanyx
+List.sortBy: (list(a), (a -> b)) -> list(a)
+```
+
+Sorts a list using the projection function as the key.
+
+```nanyx
+List.sortBy(["bbb", "a", "cc"], { .length })
+-- ["a", "cc", "bbb"]
+```
+
+---
+
+## take
+
+```nanyx
+List.take: (list(a), int) -> list(a)
+```
+
+Returns the first `count` elements.
+
+```nanyx
+List.take([1, 2, 3, 4], 2)
+-- [1, 2]
+```
+
+---
+
 ## select
 
 ```nanyx
@@ -234,4 +324,19 @@ def fibonacci = List.unfold((0, 1)) { current, next ->
     if current > 100 then #stop
     else #some(current, (next, current + next))
 }
+```
+
+---
+
+## zip
+
+```nanyx
+List.zip: (list(a), list(b)) -> list((a, b))
+```
+
+Combines two lists element-by-element into tuples. Length is the smaller input length.
+
+```nanyx
+List.zip([1, 2, 3], ["a", "b"])
+-- [(1, "a"), (2, "b")]
 ```

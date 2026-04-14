@@ -34,6 +34,34 @@ print("Enter your name: ")
 
 ---
 
+# eprintln
+
+```nanyx
+io.eprintln: string -> ()
+```
+
+Prints a string followed by a newline to stderr.
+
+```nanyx
+eprintln("Configuration file missing")
+```
+
+---
+
+# eprint
+
+```nanyx
+io.eprint: string -> ()
+```
+
+Prints a string to stderr without a trailing newline.
+
+```nanyx
+eprint("warning: ")
+```
+
+---
+
 # dbg
 
 ```nanyx
@@ -63,4 +91,35 @@ Reads a line of input from stdin.
 match readLine()
   | #ok(line) -> println("You said: {line}")
   | #error(_) -> println("Failed to read input")
+```
+
+---
+
+# readToEnd
+
+```nanyx
+io.readToEnd: () -> #ok(string) | #error(IoError)
+```
+
+Reads all remaining input from stdin.
+
+```nanyx
+match readToEnd()
+  | #ok(text) -> println("Read {text.length} chars")
+  | #error(_) -> eprintln("Failed to read stdin")
+```
+
+---
+
+# flush
+
+```nanyx
+io.flush: () -> ()
+```
+
+Flushes buffered output streams.
+
+```nanyx
+print("processing...")
+flush()
 ```

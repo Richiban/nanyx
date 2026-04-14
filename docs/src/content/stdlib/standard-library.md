@@ -6,7 +6,17 @@ order: 1
 
 This page gives a high-level overview of core standard library abstractions.
 
-# Collections
+# Modules in this section
+
+- [io](./io) — console and stream-style input/output helpers
+- [collections](./collections) — list and collection transforms
+- [string](./string) — UTF-8 string utilities
+- [option](./option) — optional-value helpers
+- [result](./result) — success/error composition helpers
+- [math](./math) — numeric utilities
+- [sequence](./sequence) — lazy/iterable sequence helpers
+
+# Core abstractions
 
 - `seq(a)` for possibly infinite sequences
 - `series(a)` for finite sequences
