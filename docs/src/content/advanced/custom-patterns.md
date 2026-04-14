@@ -10,7 +10,9 @@ A custom pattern is ultimately a function with a signature but no name; instead 
 
 The function body contains the logic for matching and extracting values, and returns one of the tags used in the pattern signature. As with tags elsewhere in the language, members of the pattern union can carry payloads. This gives the custom pattern the ability to return values that are then available in the match body.
 
-> **Note:** Because custom patterns are used only by their return tags, return tags must be unique within the module. This means that two custom patterns cannot share a return tag (because then the compiler would not know which pattern code should be executed when that tag is used in a pattern match). Custom pattern tags don't conflict with regular tags (due to the relative naming conventions).
+> **Note:** Because custom patterns are used only by their return tags, return tags must be unique within the module. This means that two custom patterns cannot share a return tag (because then the compiler would not know which pattern code should be executed when that tag is used in a pattern match). 
+> 
+> Custom pattern tags don't conflict with regular tags due to the relative naming conventions.
 
 # Total patterns
 
