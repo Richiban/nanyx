@@ -8,24 +8,93 @@ Nanyx includes a standard formatter for producing consistent code layout across 
 
 The formatter focuses on whitespace, indentation, line wrapping, and other presentational concerns. It does not change program behavior.
 
-## Why use it
+The formatter is available as a command line tool and can be integrated into editor workflows.
+
+The formatter is minimally configurable by design, with the goal of keeping style consistent across contributors and reducing formatting-only diffs in reviews. It also works well with analyzer guidance and editor tooling to help you write clean, idiomatic Nanyx code.
+
+# Why use it
 
 - Keeps style consistent across contributors
 - Reduces formatting-only diffs in reviews
 - Works well with analyzer guidance and editor tooling
 
-## Typical workflow
+# Usage modes
+
+The formatter is available as a command within the Nanyx CLI. You can run it in different modes:
+
+## Check
+
+Check mode verifies that files are already formatted according to the standard style. It exits with a non-zero status if any files would be changed by formatting.
+
+```bash
+# Check all files in the current working directory
+nanyx format --check
+
+# Check all files in the `src/` directory
+nanyx format --check src/
+
+# Check specific files
+nanyx format --check src/file1.nyx src/file2.nyx
+```
+
+## Write
+
+Write mode applies formatting changes to the specified files. This is the default mode if no flags are provided.
+
+```bash
+# Format all files in the current working directory
+nanyx format
+# or
+nanyx format --write
+
+# Format all files in the `src/` directory
+nanyx format src/
+
+# Format specific files
+nanyx format src/file1.nyx src/file2.nyx
+```
+
+# Typical workflow
 
 Format files before committing changes, and enable format-on-save in your editor where possible.
 
+We also recommend adding a `nanyx format --check` step to your CI pipeline to ensure that all committed code adheres to the standard style when trying to merge a PR.
+
+# Examples
+
 ```nanyx
 -- before
-def add=(a,b)=>a+b
+def add={a,b=>a+b}
 
 -- after
-def add: (int, int) -> int = { a, b -> a + b }
+def add = { a, b -> a + b }
 ```
 
-## Related
+```nanyx
+-- before
+def Option.map: (#some(a) | rest), (a -> b) -> (#some(b) | rest) = { 
+  | #some(a), f -> #some(f(a))
+  | other, _ -> other }
+
+-- after
+def Option.map
+  : (#some(a) | rest), (a -> b) -> (#some(b) | rest)
+  = { | #some(a), f -> #some(f(a))
+      | other, _ -> other }
+```
+
+# Configuration
+
+The formatter has a small set of configuration options that can be set in a project's `nanyx.toml` file at the project root. These options are intentionally limited to keep style consistent across contributors and projects.
+
+```toml
+[formatter]
+# The maximum line width before wrapping occurs (default: 100)
+lineWidth = 100
+# The number of spaces to use for indentation (default: 2)
+indentSize = 2
+```
+
+# Related
 
 See [Official style analyzer](./official-analyzer) for style diagnostics that complement formatting.
