@@ -10,7 +10,11 @@ The `io` module provides functions for reading from and writing to standard I/O.
 
 # Functions
 
-## `println: string -> ()`
+## println
+
+```nanyx
+io.println: string -> ()
+```
 
 Prints a string followed by a newline to stdout.
 
@@ -18,7 +22,13 @@ Prints a string followed by a newline to stdout.
 println("Hello, World!")
 ```
 
-## `print: string -> ()`
+---
+
+## print
+
+```nanyx
+io.print: string -> ()
+```
 
 Prints a string to stdout without a trailing newline.
 
@@ -26,7 +36,13 @@ Prints a string to stdout without a trailing newline.
 print("Enter your name: ")
 ```
 
-## `dbg: a -> a`
+---
+
+## dbg
+
+```nanyx
+io.dbg: a -> a
+```
 
 Prints a debug representation of any value and returns it. Useful for inspecting values in pipelines.
 
@@ -37,7 +53,13 @@ Prints a debug representation of any value and returns it. Useful for inspecting
 -- Prints: [2, 4, 6]
 ```
 
-## `readLine: () -> #ok(string) | #error(IoError)`
+---
+
+## readLine
+
+```nanyx
+io.readLine: () -> #ok(string) | #error(IoError)
+```
 
 Reads a line of input from stdin.
 
