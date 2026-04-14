@@ -31,20 +31,6 @@ You can also annotate with a specific tag type:
 def y: #mySecondTag = #mySecondTag
 ```
 
-# Runtime behavior
-
-Despite their similarity to string literal types, tags are **not** strings at runtime. A tag is its own runtime value kind, so `#ok` is not the same thing as `"ok"`.
-
-That said, converting a tag to text gives the expected name:
-
-```nanyx
-def t = #readwrite
-
-t.toString()   -- "#readwrite"
-```
-
-This is useful for logging and debugging, but it does not change the underlying runtime type of the value.
-
 # Tag unions
 
 Single tags are most useful when combined into unions. A tag union is a type that can be one of several tagged cases:
@@ -112,3 +98,17 @@ y \Option.map { \Math.abs }
 ```
 
 For broader union and matching patterns, see [Pattern matching](./pattern-matching) and [Types](./types).
+
+# Runtime behavior
+
+Despite their similarity to string literal types, tags are **not** strings at runtime. A tag is its own runtime value kind, so `#ok` is not the same thing as `"ok"`.
+
+That said, converting a tag to text gives the expected name:
+
+```nanyx
+def t = #readwrite
+
+t.toString()   -- "#readwrite"
+```
+
+This is useful for logging and debugging, but it does not change the underlying runtime type of the value.
