@@ -1,6 +1,6 @@
 import { Link, useLocation } from "react-router-dom";
 import { navSections } from "@/content/navigation";
-import { ChevronDown, Rocket, Map, Library, BookOpen, ScrollText, Menu, X, View, Sparkles, Languages } from "lucide-react";
+import { ChevronDown, Rocket, Map, Library, BookOpen, ScrollText, Menu, X, View, Sparkles, Languages, Wrench } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -12,6 +12,7 @@ const iconMap: Record<string, React.ElementType> = {
   Sparkles,
   Languages,
   Library,
+  Wrench,
   BookOpen,
   ScrollText,
 };

@@ -1,7 +1,7 @@
 ---
 title: "Official style analyzer"
 description: "Style-focused diagnostics from the official Nanyx analyzer"
-order: 7.5
+order: 1
 ---
 
 Nanyx keeps compiler errors focused on correctness, while style and convention checks are handled by analyzers.

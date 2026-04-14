@@ -14,7 +14,7 @@ Overloading looks convenient, but it adds costs that show up in everyday use:
 - It weakens error messages. When a call fails, the compiler has to explain a failed overload resolution rather than a direct mismatch.
 - It makes refactors riskier. Adding a new overload can change which implementation existing code picks, even if nothing else changed.
 - It complicates tooling. Jump-to-definition, auto-complete, and documentation become less precise because the name is ambiguous.
-- It makes type inference harder. The compiler needs more context to decide which function you meant, especially in pipelines.
+- It hinders or even blocks future language changes. Adding new features becomes harder when the compiler must resolve ambiguities across an expanding set of overloads. Language evolution slows as a result.
 
 Nanyx prefers a single, explicit meaning for each function name. That keeps call sites readable and makes the language easier to reason about.
 

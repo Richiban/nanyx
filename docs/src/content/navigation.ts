@@ -6,6 +6,7 @@ import {
   advancedPages,
   comingFromOtherLanguagesPages,
   stdlibPages,
+  standardToolsPages,
   cookbookPages,
   specificationsPages,
 } from "./getting-started";
@@ -54,6 +55,12 @@ export const navSections: NavSection[] = [
     basePath: "/docs/stdlib",
     icon: "Library",
     pages: stdlibPages,
+  },
+  {
+    title: "Standard tools",
+    basePath: "/docs/standard-tools",
+    icon: "Wrench",
+    pages: standardToolsPages,
   },
   {
     title: "Foundations",

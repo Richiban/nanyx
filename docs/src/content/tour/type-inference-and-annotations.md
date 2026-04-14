@@ -74,7 +74,7 @@ export def add = { a, b -> a + b }
 export def add: Nat, Nat -> Nat = { a, b -> a + b }
 ```
 
-Although the language itself doesn't mandate this practice, the [official style analyzer](./official-analyzer) will emit a warning if this is not followed.
+Although the language itself doesn't mandate this practice, the [official style analyzer](../standard-tools/official-analyzer) will emit a warning if this is not followed.
 
 # Target typing
 
