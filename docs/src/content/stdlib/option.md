@@ -36,7 +36,8 @@ Option.bind: ((#some(a) | r1), (a -> (#some(b) | r2))) -> (#some(b) | r1 | r2)
 Chains option-producing operations.
 
 ```nanyx
-#some("42") \Option.bind { int.parse }
+def a: (#some(string) | #notFound) = #some("42")
+def b: a \Option.bind(int.parse) -- b: (#some(int) | #notFound | #invalidInt)
 ```
 
 ---
