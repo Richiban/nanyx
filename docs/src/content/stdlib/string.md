@@ -4,13 +4,13 @@ description: "String manipulation functions"
 order: 4
 ---
 
-# string
-
 The `string` module provides functions for working with UTF-8 strings.
 
-# Functions
+# length
 
-## `length: string -> int`
+```nanyx
+string.length: string -> int
+```
 
 Returns the number of grapheme clusters in the string.
 
@@ -19,42 +19,78 @@ string.length("hello")
 -- 5
 ```
 
-## `uppercase: string -> string`
+---
+
+# uppercase
+
+```nanyx
+string.uppercase: string -> string
+```
 
 ```nanyx
 string.uppercase("hello")
 -- "HELLO"
 ```
 
-## `lowercase: string -> string`
+---
+
+# lowercase
+
+```nanyx
+string.lowercase: string -> string
+```
 
 ```nanyx
 string.lowercase("HELLO")
 -- "hello"
 ```
 
-## `split: (string, on: string) -> list(string)`
+---
+
+# split
+
+```nanyx
+string.split: (string, on: string) -> list(string)
+```
 
 ```nanyx
 string.split("a,b,c", on = ",")
 -- ["a", "b", "c"]
 ```
 
-## `contains: (string, string) -> bool`
+---
+
+# contains
+
+```nanyx
+string.contains: (string, string) -> bool
+```
 
 ```nanyx
 string.contains("hello world", "world")
 -- true
 ```
 
-## `replace: (string, pattern: string, with: string) -> string`
+---
+
+# replace
+
+```nanyx
+string.replace: (string, pattern: string, with: string) -> string
+```
 
 ```nanyx
 string.replace("hello world", pattern = "world", with = "Nanyx")
 -- "hello Nanyx"
 ```
 
-## `trim: string -> string`
+---
+
+# trim
+
+```nanyx
+string.trim: string -> string
+```
 
 Removes leading and trailing whitespace.
 
@@ -63,7 +99,13 @@ string.trim("  hello  ")
 -- "hello"
 ```
 
-## `concat: list(string) -> string`
+---
+
+# concat
+
+```nanyx
+string.concat: list(string) -> string
+```
 
 ```nanyx
 string.concat(["Hello", ", ", "World"])
