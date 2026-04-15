@@ -21,30 +21,16 @@ The element type for the iterable is stored as an [associated type](../advanced/
 
 # Definitions
 
-## firstOr
+## all
 
 ```nanyx
-firstOr: [Iter(a)] (a, elem) -> elem
+all: [Iter(a)] (a, (elem -> bool)) -> bool
 ```
 
-Returns the first element, or the fallback when the iterable is empty.
+Returns `true` if all elements satisfy the predicate.
 
 ```nanyx
-items\firstOr(fallback)
-```
-
----
-
-## first
-
-```nanyx
-first: [Iter(a)] a -> #some(elem) | #emptyIterable
-```
-
-Returns the first element wrapped in `#some`, or `#emptyIterable`.
-
-```nanyx
-first(items)
+items\all { > 0 }
 ```
 
 ---
@@ -63,16 +49,16 @@ items\any { > 0 }
 
 ---
 
-## all
+## count
 
 ```nanyx
-all: [Iter(a)] (a, (elem -> bool)) -> bool
+count: [Iter(a)] a -> int
 ```
 
-Returns `true` if all elements satisfy the predicate.
+Counts elements by iterating through the input.
 
 ```nanyx
-items\all { > 0 }
+items\count
 ```
 
 ---
@@ -91,16 +77,30 @@ items\find { .id == targetId }
 
 ---
 
-## count
+## first
 
 ```nanyx
-count: [Iter(a)] a -> int
+first: [Iter(a)] a -> #some(elem) | #emptyIterable
 ```
 
-Counts elements by iterating through the input.
+Returns the first element wrapped in `#some`, or `#emptyIterable`.
 
 ```nanyx
-items\count
+items\first
+```
+
+---
+
+## firstOr
+
+```nanyx
+firstOr: [Iter(a)] (a, elem) -> elem
+```
+
+Returns the first element, or the fallback when the iterable is empty.
+
+```nanyx
+items\firstOr(fallback)
 ```
 
 ---
