@@ -6,37 +6,39 @@ order: 9
 
 The `iter` module provides generic operations for any type `a` for which an `Iter(a)` context is provided.
 
-# Iter context model
+# Contexts
 
-These functions assume an iteration capability like:
+## Iter(a)
 
 ```nanyx
 context Iter(a) = (
-  elem: type
+  type elem
   next: a -> #some(elem, a) | #done
 )
 ```
 
-The element type for an iterable argument is always available as `Iter(a).elem`.
+The element type for the iterable is stored as an [associated type](../advanced/associated-types-and-constraints) on the `Iter(..)` context with the name `elem`; for an iterable argument, it is always available as `elem` in the function signature (or `Iter(a).elem`, if disambiguation is needed).
 
-# firstOr
+# Definitions
+
+## firstOr
 
 ```nanyx
-firstOr: [Iter(a)] (a, Iter(a).elem) -> Iter(a).elem
+firstOr: [Iter(a)] (a, elem) -> elem
 ```
 
 Returns the first element, or the fallback when the iterable is empty.
 
 ```nanyx
-firstOr(items, fallback)
+items\firstOr(fallback)
 ```
 
 ---
 
-# first
+## first
 
 ```nanyx
-first: [Iter(a)] a -> #some(Iter(a).elem) | #emptyIterable
+first: [Iter(a)] a -> #some(elem) | #emptyIterable
 ```
 
 Returns the first element wrapped in `#some`, or `#emptyIterable`.
@@ -47,49 +49,49 @@ first(items)
 
 ---
 
-# any
+## any
 
 ```nanyx
-any: [Iter(a)] (a, (Iter(a).elem -> bool)) -> bool
+any: [Iter(a)] (a, (elem -> bool)) -> bool
 ```
 
 Returns `true` if any element satisfies the predicate.
 
 ```nanyx
-any(items, { > 0 })
+items\any { > 0 }
 ```
 
 ---
 
-# all
+## all
 
 ```nanyx
-all: [Iter(a)] (a, (Iter(a).elem -> bool)) -> bool
+all: [Iter(a)] (a, (elem -> bool)) -> bool
 ```
 
 Returns `true` if all elements satisfy the predicate.
 
 ```nanyx
-all(items, { > 0 })
+items\all { > 0 }
 ```
 
 ---
 
-# find
+## find
 
 ```nanyx
-find: [Iter(a)] (a, (Iter(a).elem -> bool)) -> #some(Iter(a).elem) | #notFound
+find: [Iter(a)] (a, (elem -> bool)) -> #some(elem) | #notFound
 ```
 
 Finds the first matching element.
 
 ```nanyx
-find(items, { .id == targetId })
+items\find { .id == targetId }
 ```
 
 ---
 
-# count
+## count
 
 ```nanyx
 count: [Iter(a)] a -> int
@@ -98,35 +100,33 @@ count: [Iter(a)] a -> int
 Counts elements by iterating through the input.
 
 ```nanyx
-count(items)
+items\count
 ```
 
 ---
 
-# fold
+## fold
 
 ```nanyx
-fold: [Iter(a)] (a, state, ((state, Iter(a).elem) -> state)) -> state
+fold: [Iter(a)] (a, state, ((state, elem) -> state)) -> state
 ```
 
 Folds elements from left to right.
 
 ```nanyx
-fold(items, 0) { + }
+items\fold(0) { + }
 ```
 
 ---
 
-# toList
+## toList
 
 ```nanyx
-toList: [Iter(a)] a -> list(Iter(a).elem)
+toList: [Iter(a)] a -> list(elem)
 ```
 
 Materializes an iterable into a list.
 
 ```nanyx
-toList(items)
+items\toList
 ```
-
-For deeper background on `Iter` and associated types, see [Associated types and constraints](../advanced/associated-types-and-constraints).
