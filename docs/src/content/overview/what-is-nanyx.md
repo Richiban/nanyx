@@ -39,7 +39,7 @@ def greet: <Console> string -> () = { name ->
 Exhaustive pattern matching on records, tag unions, literals, and more:
 ```nanyx
 match result
-  | #ok(value) -> process(value)
+  | #some(value) -> process(value)
   | #error(msg) -> logError(msg)
 ```
 

@@ -4,19 +4,19 @@ description: "Composing success/error values"
 order: 6
 ---
 
-The `result` module provides helpers for values represented as `#ok(a) | #error(e)`.
+The `result` module provides helpers for values represented as `#some(a) | #error(e)`.
 
 # map
 
 ```nanyx
-Result.map: (#ok(a) | #error(e), (a -> b)) -> #ok(b) | #error(e)
+Result.map: (#some(a) | #error(e), (a -> b)) -> #some(b) | #error(e)
 ```
 
 Transforms successful values and leaves errors unchanged.
 
 ```nanyx
-#ok(21) \Result.map { * 2 }
--- #ok(42)
+#some(21) \Result.map { * 2 }
+-- #some(42)
 ```
 
 ---
@@ -24,7 +24,7 @@ Transforms successful values and leaves errors unchanged.
 # mapError
 
 ```nanyx
-Result.mapError: (#ok(a) | #error(e1), (e1 -> e2)) -> #ok(a) | #error(e2)
+Result.mapError: (#some(a) | #error(e1), (e1 -> e2)) -> #some(a) | #error(e2)
 ```
 
 Transforms error values.
@@ -39,7 +39,7 @@ Transforms error values.
 # bind
 
 ```nanyx
-Result.bind: (#ok(a) | #error(e), (a -> (#ok(b) | #error(e)))) -> #ok(b) | #error(e)
+Result.bind: (#some(a) | #error(e), (a -> (#some(b) | #error(e)))) -> #some(b) | #error(e)
 ```
 
 Chains result-producing operations.
@@ -54,7 +54,7 @@ readLine()
 # defaultValue
 
 ```nanyx
-Result.defaultValue: ((#ok(a) | #error(e)), a) -> a
+Result.defaultValue: ((#some(a) | #error(e)), a) -> a
 ```
 
 Returns the success value or fallback.
@@ -69,11 +69,11 @@ Result.defaultValue(#error("x"), 0)
 # isOk
 
 ```nanyx
-Result.isOk: (#ok(a) | #error(e)) -> bool
+Result.isOk: (#some(a) | #error(e)) -> bool
 ```
 
 ```nanyx
-Result.isOk(#ok(1))
+Result.isOk(#some(1))
 -- true
 ```
 
@@ -82,7 +82,7 @@ Result.isOk(#ok(1))
 # isError
 
 ```nanyx
-Result.isError: (#ok(a) | #error(e)) -> bool
+Result.isError: (#some(a) | #error(e)) -> bool
 ```
 
 ```nanyx

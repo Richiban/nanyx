@@ -36,7 +36,7 @@ This page gives a high-level overview of core standard library abstractions.
 ```nanyx
 type Option(a) = #some(a) | #nil
 
-type Result(ok, err) = #ok(ok) | #error(err)
+type Result(ok, err) = #some(ok) | #error(err)
 ```
 
 # Map builders

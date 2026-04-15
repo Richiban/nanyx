@@ -86,7 +86,7 @@ Option.isNone(#none)
 # toResult
 
 ```nanyx
-Option.toResult: ((#some(a) | rest), err) -> #ok(a) | #error(err)
+Option.toResult: ((#some(a) | rest), err) -> #some(a) | #error(err)
 ```
 
 Converts an option to a result with a supplied error value.

@@ -17,7 +17,7 @@ import (
 )
 
 match file.read("input.txt")
-  | #ok(content) ->
+  | #some(content) ->
     def words = content
       \string.split(" ")
       \list.filter { != "" }

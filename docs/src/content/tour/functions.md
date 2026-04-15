@@ -177,7 +177,7 @@ rec sumList: list(int) -> int = {
 -- Multiple arguments with patterns
 def divide: (int, int) -> Result(int, #divideByZero) = { 
   | _, 0 -> #error(#divideByZero)
-  | x, y -> #ok(x / y)
+  | x, y -> #some(x / y)
 }
 
 -- Pattern matching with guards

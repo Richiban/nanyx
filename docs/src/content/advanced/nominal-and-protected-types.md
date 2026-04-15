@@ -29,7 +29,7 @@ export def $User.new: (UserId, string) -> Result($User, list(string)) = { id, na
     if errors.length > 0 then
       #error(errors)
     else
-      #ok($User(id = id, name = name))
+      #some($User(id = id, name = name))
   }
 }
 ```

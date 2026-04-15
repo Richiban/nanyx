@@ -57,7 +57,7 @@ data \parse \validate \transform \save
 Exhaustive pattern matching on records, tag unions, literals, and more:
 ```nanyx
 match result
-  | #ok(value) -> process(value)
+  | #some(value) -> process(value)
   | #error(msg) -> logError(msg)
 ```
 
@@ -316,7 +316,7 @@ Tag unions (also known as sum types or discriminated unions) represent values th
 ```nanyx
 -- Simple tag union
 type Result(a) = 
-  | #ok(a)
+  | #some(a)
   | #error(string)
 
 -- Tag union with multiple variants

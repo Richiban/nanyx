@@ -89,7 +89,7 @@ Tag unions (also called sum types or discriminated unions) represent values that
 
 ```nanyx
 -- Simple tag union
-type Result(a) = #ok(a) | #error(string)
+type Result(a) = #some(a) | #error(string)
 
 -- Multiple variants
 type Shape =

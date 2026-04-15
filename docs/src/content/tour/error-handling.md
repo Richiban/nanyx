@@ -14,7 +14,7 @@ In Nanyx, functions that can fail return a result type using tag unions:
 
 ```nanyx
 -- A function that might fail
-def getCustomer: CustomerId -> #ok(Customer) | #error(#notFound | #databaseError)
+def getCustomer: CustomerId -> #some(Customer) | #error(#notFound | #databaseError)
   = { id -> ... }
 ```
 
@@ -22,7 +22,7 @@ Handle the result with pattern matching:
 
 ```nanyx
 match getCustomer(someId)
-  | #ok(customer) -> println("Found: {customer.name}")
+  | #some(customer) -> println("Found: {customer.name}")
   | #error(#notFound) -> println("Customer not found")
   | #error(#databaseError) -> println("Database error")
 ```
@@ -37,7 +37,7 @@ def result = handle {
   def latestOrder = try getLatestOrder(customer)
   return latestOrder.total
 }
--- `result` has type `#ok(int) | #error(#notFound | #databaseError | #noOrders)`
+-- `result` has type `#some(int) | #error(#notFound | #databaseError | #noOrders)`
 ```
 
 If any step returns an error, the function immediately returns that error.
@@ -60,7 +60,7 @@ The `except` keyword is similar to `match` but doesn't require exhaustive handli
 
 ```nanyx
 def g = {
-  def f: () -> #ok(int) | #error(#notFound) = ...
+  def f: () -> #some(int) | #error(#notFound) = ...
   
   def result = f() except #error(#notFound) -> return 0
   

@@ -6,10 +6,12 @@ order: 2
 
 The `io` module provides functions for reading from and writing to standard I/O.
 
+All functions in this module require a `Console` context.
+
 # println
 
 ```nanyx
-io.println: string -> ()
+println: [Console] string -> ()
 ```
 
 Prints a string followed by a newline to stdout.
@@ -23,7 +25,7 @@ println("Hello, World!")
 # print
 
 ```nanyx
-io.print: string -> ()
+print: [Console] string -> ()
 ```
 
 Prints a string to stdout without a trailing newline.
@@ -37,7 +39,7 @@ print("Enter your name: ")
 # eprintln
 
 ```nanyx
-io.eprintln: string -> ()
+eprintln: [Console] string -> ()
 ```
 
 Prints a string followed by a newline to stderr.
@@ -51,7 +53,7 @@ eprintln("Configuration file missing")
 # eprint
 
 ```nanyx
-io.eprint: string -> ()
+eprint: [Console] string -> ()
 ```
 
 Prints a string to stderr without a trailing newline.
@@ -65,7 +67,7 @@ eprint("warning: ")
 # dbg
 
 ```nanyx
-io.dbg: a -> a
+dbg: [Console] a -> a
 ```
 
 Prints a debug representation of any value and returns it. Useful for inspecting values in pipelines.
@@ -82,14 +84,14 @@ Prints a debug representation of any value and returns it. Useful for inspecting
 # readLine
 
 ```nanyx
-io.readLine: () -> #ok(string) | #error(IoError)
+readLine: [Console] () -> #some(string) | #error(IoError)
 ```
 
 Reads a line of input from stdin.
 
 ```nanyx
 match readLine()
-  | #ok(line) -> println("You said: {line}")
+  | #some(line) -> println("You said: {line}")
   | #error(_) -> println("Failed to read input")
 ```
 
@@ -98,14 +100,14 @@ match readLine()
 # readToEnd
 
 ```nanyx
-io.readToEnd: () -> #ok(string) | #error(IoError)
+readToEnd: [Console] () -> #some(string) | #error(IoError)
 ```
 
 Reads all remaining input from stdin.
 
 ```nanyx
 match readToEnd()
-  | #ok(text) -> println("Read {text.length} chars")
+  | #some(text) -> println("Read {text.length} chars")
   | #error(_) -> eprintln("Failed to read stdin")
 ```
 
@@ -114,7 +116,7 @@ match readToEnd()
 # flush
 
 ```nanyx
-io.flush: () -> ()
+flush: [Console] () -> ()
 ```
 
 Flushes buffered output streams.

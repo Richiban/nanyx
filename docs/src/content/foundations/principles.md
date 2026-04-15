@@ -49,7 +49,7 @@ An example of a good error message:
 |-------|---------|-------------|-------|
 | `E001: Type mismatch at 10:5` | Expected type `int` but found type `string` in the expression `x + 1` | Did you mean to convert `x` to an int with `int(x)`? | Apply `int(x)` conversion |
 | `E002: Unsatisfied context at 115:8` | The function `println` can only be run from within a `$Console` context | Did you mean to add the context `$Console` to the containing function `main`? | Add context `$Console` to `main` |
-| `E003: Non-exhaustive pattern match at 42:3` | The match expression does not handle the case `#error(#databaseError)` of the result type `#ok(Customer) \| #error(#notFound \| #databaseError)` | Did you forget to handle the `#databaseError` case? | Add a case for `#error(#databaseError)` |
+| `E003: Non-exhaustive pattern match at 42:3` | The match expression does not handle the case `#error(#databaseError)` of the result type `#some(Customer) \| #error(#notFound \| #databaseError)` | Did you forget to handle the `#databaseError` case? | Add a case for `#error(#databaseError)` |
 
 ## Structural type errors
 

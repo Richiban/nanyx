@@ -282,12 +282,12 @@ export def createUser
       #error(#nameTooShort)
     else
       def id = generateId()
-      #ok(id = id, name = name, email = email, role = #user)
+      #some(id = id, name = name, email = email, role = #user)
   }
 
 def validateEmail: Email -> Result(Email, ValidationError) = { email ->
   if email \contains("@") then
-    #ok(email)
+    #some(email)
   else #error(#invalidEmail)
 }
 
