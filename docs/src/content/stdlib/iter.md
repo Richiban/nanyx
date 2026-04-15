@@ -1,10 +1,10 @@
 ---
-title: "iterables"
+title: "iter"
 description: "Generic iterable helpers via Iter(a) context"
 order: 9
 ---
 
-The `iterables` module provides generic operations for any type `a` that has an `Iter(a)` context.
+The `iter` module provides generic operations for any type `a` for which an `Iter(a)` context is provided.
 
 # Iter context model
 
@@ -22,13 +22,13 @@ The element type for an iterable argument is always available as `Iter(a).elem`.
 # firstOr
 
 ```nanyx
-Iterables.firstOr: [Iter(a)] (a, Iter(a).elem) -> Iter(a).elem
+iter.firstOr: [Iter(a)] (a, Iter(a).elem) -> Iter(a).elem
 ```
 
 Returns the first element, or the fallback when the iterable is empty.
 
 ```nanyx
-Iterables.firstOr(items, fallback)
+iter.firstOr(items, fallback)
 ```
 
 ---
@@ -36,13 +36,13 @@ Iterables.firstOr(items, fallback)
 # first
 
 ```nanyx
-Iterables.first: [Iter(a)] a -> #some(Iter(a).elem) | #emptyIterable
+iter.first: [Iter(a)] a -> #some(Iter(a).elem) | #emptyIterable
 ```
 
 Returns the first element wrapped in `#some`, or `#emptyIterable`.
 
 ```nanyx
-Iterables.first(items)
+iter.first(items)
 ```
 
 ---
@@ -50,13 +50,13 @@ Iterables.first(items)
 # any
 
 ```nanyx
-Iterables.any: [Iter(a)] (a, (Iter(a).elem -> bool)) -> bool
+iter.any: [Iter(a)] (a, (Iter(a).elem -> bool)) -> bool
 ```
 
 Returns `true` if any element satisfies the predicate.
 
 ```nanyx
-Iterables.any(items, { > 0 })
+iter.any(items, { > 0 })
 ```
 
 ---
@@ -64,13 +64,13 @@ Iterables.any(items, { > 0 })
 # all
 
 ```nanyx
-Iterables.all: [Iter(a)] (a, (Iter(a).elem -> bool)) -> bool
+iter.all: [Iter(a)] (a, (Iter(a).elem -> bool)) -> bool
 ```
 
 Returns `true` if all elements satisfy the predicate.
 
 ```nanyx
-Iterables.all(items, { > 0 })
+iter.all(items, { > 0 })
 ```
 
 ---
@@ -78,13 +78,13 @@ Iterables.all(items, { > 0 })
 # find
 
 ```nanyx
-Iterables.find: [Iter(a)] (a, (Iter(a).elem -> bool)) -> #some(Iter(a).elem) | #notFound
+iter.find: [Iter(a)] (a, (Iter(a).elem -> bool)) -> #some(Iter(a).elem) | #notFound
 ```
 
 Finds the first matching element.
 
 ```nanyx
-Iterables.find(items, { .id == targetId })
+iter.find(items, { .id == targetId })
 ```
 
 ---
@@ -92,13 +92,13 @@ Iterables.find(items, { .id == targetId })
 # count
 
 ```nanyx
-Iterables.count: [Iter(a)] a -> int
+iter.count: [Iter(a)] a -> int
 ```
 
 Counts elements by iterating through the input.
 
 ```nanyx
-Iterables.count(items)
+iter.count(items)
 ```
 
 ---
@@ -106,13 +106,13 @@ Iterables.count(items)
 # fold
 
 ```nanyx
-Iterables.fold: [Iter(a)] (a, state, ((state, Iter(a).elem) -> state)) -> state
+iter.fold: [Iter(a)] (a, state, ((state, Iter(a).elem) -> state)) -> state
 ```
 
 Folds elements from left to right.
 
 ```nanyx
-Iterables.fold(items, 0) { + }
+iter.fold(items, 0) { + }
 ```
 
 ---
@@ -120,13 +120,13 @@ Iterables.fold(items, 0) { + }
 # toList
 
 ```nanyx
-Iterables.toList: [Iter(a)] a -> list(Iter(a).elem)
+iter.toList: [Iter(a)] a -> list(Iter(a).elem)
 ```
 
 Materializes an iterable into a list.
 
 ```nanyx
-Iterables.toList(items)
+iter.toList(items)
 ```
 
 For deeper background on `Iter` and associated types, see [Associated types and constraints](../advanced/associated-types-and-constraints).

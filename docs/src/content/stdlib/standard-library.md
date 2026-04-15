@@ -15,7 +15,7 @@ This page gives a high-level overview of core standard library abstractions.
 - [result](./result) — success/error composition helpers
 - [math](./math) — numeric utilities
 - [sequence](./sequence) — lazy/iterable sequence helpers
-- [iterables](./iterables) — generic `Iter(a)`-based helpers
+- [iter](./iter) — generic `Iter(a)`-based helpers
 
 # Core abstractions
 
