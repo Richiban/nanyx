@@ -22,13 +22,13 @@ The element type for an iterable argument is always available as `Iter(a).elem`.
 # firstOr
 
 ```nanyx
-iter.firstOr: [Iter(a)] (a, Iter(a).elem) -> Iter(a).elem
+firstOr: [Iter(a)] (a, Iter(a).elem) -> Iter(a).elem
 ```
 
 Returns the first element, or the fallback when the iterable is empty.
 
 ```nanyx
-iter.firstOr(items, fallback)
+firstOr(items, fallback)
 ```
 
 ---
@@ -36,13 +36,13 @@ iter.firstOr(items, fallback)
 # first
 
 ```nanyx
-iter.first: [Iter(a)] a -> #some(Iter(a).elem) | #emptyIterable
+first: [Iter(a)] a -> #some(Iter(a).elem) | #emptyIterable
 ```
 
 Returns the first element wrapped in `#some`, or `#emptyIterable`.
 
 ```nanyx
-iter.first(items)
+first(items)
 ```
 
 ---
@@ -50,13 +50,13 @@ iter.first(items)
 # any
 
 ```nanyx
-iter.any: [Iter(a)] (a, (Iter(a).elem -> bool)) -> bool
+any: [Iter(a)] (a, (Iter(a).elem -> bool)) -> bool
 ```
 
 Returns `true` if any element satisfies the predicate.
 
 ```nanyx
-iter.any(items, { > 0 })
+any(items, { > 0 })
 ```
 
 ---
@@ -64,13 +64,13 @@ iter.any(items, { > 0 })
 # all
 
 ```nanyx
-iter.all: [Iter(a)] (a, (Iter(a).elem -> bool)) -> bool
+all: [Iter(a)] (a, (Iter(a).elem -> bool)) -> bool
 ```
 
 Returns `true` if all elements satisfy the predicate.
 
 ```nanyx
-iter.all(items, { > 0 })
+all(items, { > 0 })
 ```
 
 ---
@@ -78,13 +78,13 @@ iter.all(items, { > 0 })
 # find
 
 ```nanyx
-iter.find: [Iter(a)] (a, (Iter(a).elem -> bool)) -> #some(Iter(a).elem) | #notFound
+find: [Iter(a)] (a, (Iter(a).elem -> bool)) -> #some(Iter(a).elem) | #notFound
 ```
 
 Finds the first matching element.
 
 ```nanyx
-iter.find(items, { .id == targetId })
+find(items, { .id == targetId })
 ```
 
 ---
@@ -92,13 +92,13 @@ iter.find(items, { .id == targetId })
 # count
 
 ```nanyx
-iter.count: [Iter(a)] a -> int
+count: [Iter(a)] a -> int
 ```
 
 Counts elements by iterating through the input.
 
 ```nanyx
-iter.count(items)
+count(items)
 ```
 
 ---
@@ -106,13 +106,13 @@ iter.count(items)
 # fold
 
 ```nanyx
-iter.fold: [Iter(a)] (a, state, ((state, Iter(a).elem) -> state)) -> state
+fold: [Iter(a)] (a, state, ((state, Iter(a).elem) -> state)) -> state
 ```
 
 Folds elements from left to right.
 
 ```nanyx
-iter.fold(items, 0) { + }
+fold(items, 0) { + }
 ```
 
 ---
@@ -120,13 +120,13 @@ iter.fold(items, 0) { + }
 # toList
 
 ```nanyx
-iter.toList: [Iter(a)] a -> list(Iter(a).elem)
+toList: [Iter(a)] a -> list(Iter(a).elem)
 ```
 
 Materializes an iterable into a list.
 
 ```nanyx
-iter.toList(items)
+toList(items)
 ```
 
 For deeper background on `Iter` and associated types, see [Associated types and constraints](../advanced/associated-types-and-constraints).
