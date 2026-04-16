@@ -25,4 +25,4 @@ Nanyx is planned to expose controls so you can choose allocation and passing beh
 
 Until these controls land, allocation and passing decisions remain automatic.
 
-For a broader overview, see [Compiler optimisations](./compiler-optimisations).
+For a broader overview, see [Compiler optimisations](../foundations/compiler-optimisations).
