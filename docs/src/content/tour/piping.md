@@ -77,6 +77,6 @@ Note that the function can still be qualified in a pipe expression if desired; i
 ```nanyx
 def f = { x ->
   x\foo -- Error: cannot resolve function 'foo' because the type of 'x' is not yet known
-  x\someModule.foo -- OK: the function is qualified, so it can be resolved 
+  x\SomeType.foo -- OK: the function is qualified, so it can be resolved 
 }
 ```
