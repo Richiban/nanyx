@@ -66,8 +66,8 @@ import (
   dataProcessing as d
 )
 
-userManagement.createUser(...)
-d.process(...)
+createUser(...) -- from userManagement
+d.process(...) -- uses the alias `d` for dataProcessing
 ```
 
 ## Importing modules by file path
@@ -171,9 +171,10 @@ export collections.map (empty, insert, lookup)
 
 # Nested modules
 
-You can declare module blocks inside a file. The block name is appended to the outer module name:
+You can declare module blocks inside a file. The block name is appended to the outer module name (if one exists):
 
 ```nanyx
+-- myModule.nanyx
 module myModule
 
 -- The full name of this module is `myModule.functions`
@@ -184,6 +185,24 @@ module functions =
   module helpers =
     def helper1() = ...
     def helper2() = ...
+
+    -- If any of the definitions in this module were exported, the full name would be `myModule.functions.helpers`
+```
+
+If the file has no file-level module declaration, the nested module names are not prefixed:
+
+```nanyx
+-- looseCode.nanyx
+
+-- The full name of this module is simply `functions`
+module helpers =
+  export def f(x) -> x * 2
+  export def g(x) -> x ** 2
+
+-- And the full name of this module is `utils`
+module utils =
+  def helper1() = ...
+  def helper2() = ...
 ```
 
 Create hierarchies with dot notation:
