@@ -6,6 +6,8 @@ order: 9
 
 Nanyx supports a pipe operator that sends the value on the left into the first argument of a function: `x \f(...)`.
 
+# Why piping?
+
 In any programming language, if the user wishes to call a series of functions on a value (passing the result of one function to the next), they can nest the function calls. The problem with nested function calls is that the functions execute from the inside out and must therefore be read backwards (from right to left), which can be hard to follow:
 
 ```nanyx
@@ -62,7 +64,7 @@ def result = fold([1, 2, 3], 0, { + })
 
 # Qualified piping
 
-If the function is [attached](../advanced/attached-definitions) to the type on the left-hand side of the `\`, you can omit the module qualifier:
+If the function is [attached](../advanced/attached-definitions) to the type on the left-hand side of the `\`, the function does not need to be qualified with the module or type name:
 
 ```nanyx
 -- In regular function synax we must qualify the function with the module name

@@ -26,7 +26,7 @@ If the module declaration is omitted, the module remains anonymous and can only 
 println("Hello from MyApp!")
 ```
 
-It is possible to write a module declaration without giving it a name, but by itself this doesn't provide any benefits over omitting the declaration entirely and is only used in order to attach attributes or documentation to the module:
+It is possible to write a module declaration without giving it a name; by itself this doesn't provide any benefits over omitting the declaration entirely but is used in order to attach attributes or documentation to the module:
 
 ```nanyx
 -- Here we use the module declaration syntax to attach the @entry attribute, even though we don't give the module a name
