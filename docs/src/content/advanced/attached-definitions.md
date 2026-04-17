@@ -13,10 +13,12 @@ Use dot syntax to attach a definition to a type.
 ```nanyx
 type Point = (x: int, y: int)
 
-export def Point.length = { p ->
+def Point.length = { p ->
   Math.sqrt(p.x ** 2 + p.y ** 2)
 }
 ```
+
+> **Note**: In an attached function the inference engine will assume that unannotated types are the type being attached to. In the above example, `p` is inferred to be of type `Point`. If the function definition had a tuple `def foo = { x, y -> ... }` instead, the inference engine would assume the type `(Point, Point) -> ...` etc.
 
 Call it in a qualified way like any other function:
 
@@ -29,7 +31,7 @@ def len = Point.length(p)
 Or use it in a pipeline without needing to specify the type name:
 
 ```nanyx
-def len = p \length
+def len = p\length
 ```
 
 # Attaching operators
@@ -65,6 +67,6 @@ def Option.map
 
 # When to use attached definitions
 
-- You want method-style access without classes.
-- You want to group helpers under a type name.
+- You want method-style access in pipes.
+- It feels like these definitions *belong* to the type.
 - You want to provide operators or context defaults for a type.
