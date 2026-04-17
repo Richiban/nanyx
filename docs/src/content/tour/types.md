@@ -132,7 +132,6 @@ def map: (list(a), (a -> b)) -> list(b) = { xs, f ->
     | [head, ...tail] -> [f(head), ...map(tail, f)]
 }
 
--- Multiple type parameters
 def zip: (list(a), list(b)) -> list((a, b)) = { xs, ys ->
   match (xs, ys)
     | ([], _) -> []
@@ -140,6 +139,8 @@ def zip: (list(a), list(b)) -> list((a, b)) = { xs, ys ->
     | ([x, ...xs2], [y, ...ys2]) -> [(x, y), ...zip(xs2, ys2)]
 }
 ```
+
+Type variables are automatically created when used in a function definition, and must be a single lowercase character such as `a`, `b`, or `c`. Type variables with multiple characters are reserved for [associated types](../advanced/associated-types-and-constraints).
 
 # Type aliases
 

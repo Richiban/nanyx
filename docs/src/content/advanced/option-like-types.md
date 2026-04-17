@@ -14,12 +14,12 @@ The function below accepts any union that contains `#some(a)` and transforms tha
 
 ```nanyx
 def Option.map
-  : (#some(a) | rest), (a -> b) -> (#some(b) | rest)
+  : (#some(a) | r), (a -> b) -> (#some(b) | r)
   = { | #some(a), f -> #some(f(a))
       | other, _ -> other }
 ```
 
-The type variable `rest` represents all other tags in the union, allowing us to use it in an output position in the function type.
+The type variable `r` represents all other tags in the union, allowing us to use it in an output position in the function type.
 
 # Works with options
 

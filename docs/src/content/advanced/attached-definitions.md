@@ -60,7 +60,7 @@ Attached definitions are also useful for namespacing helpers:
 
 ```nanyx
 def Option.map
-  : (#some(a) | rest), (a -> b) -> (#some(b) | rest)
+  : (#some(a) | r), (a -> b) -> (#some(b) | r)
   = { | #some(a), f -> #some(f(a))
       | other, _ -> other }
 ```

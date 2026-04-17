@@ -8,6 +8,8 @@ A higher-order function takes a function as an argument or returns one. Nanyx tr
 
 # Passing functions
 
+The simplest higher-order pattern is passing a named function to another function. This keeps reusable logic (`add1`) separate from traversal logic (`map`) and makes call sites easier to scan.
+
 ```nanyx
 def add1 = { x -> x + 1 }
 
@@ -17,6 +19,8 @@ def biggerNumbers = numbers \map(add1)
 ```
 
 # Trailing Lambdas
+
+When the final argument is a function, Nanyx supports a trailing-lambda style. Use the full form when you want explicit types, and the inline form for short local transformations.
 
 ```nanyx
 -- Full lambda
@@ -39,6 +43,8 @@ def increment = numbers \map { + 1 }
 ```
 
 # Pattern matching in lambdas
+
+Lambdas can use pattern-matching syntax directly, which is useful when transforming tagged unions. This keeps branching logic close to the point where values are mapped.
 
 ```nanyx
 things \map {
@@ -91,7 +97,7 @@ For example, what context does a `List.map` function run in? It could be a pure 
 List.map: [c] (list(a), [c] (a -> b)) -> list(b)
 ```
 
-This function takes a context parameter, written as a single lowercase character (just like a type parameter). This means that the caller can choose any context `c` for the callback, and `List.map` will work with it. The callback can be a pure function, a stateful computation, or an effectful operation, depending on the caller's needs.
+This function takes a context parameter, written as a single lowercase character (just like an automatically introduced type variable, which must also be one character). This means that the caller can choose any context `c` for the callback, and `List.map` will work with it. The callback can be a pure function, a stateful computation, or an effectful operation, depending on the caller's needs.
 
 ```nanyx
 def f: list(int) -> list(int) = { numbers ->

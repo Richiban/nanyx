@@ -82,7 +82,7 @@ For example, the `nanyx/option` module contains a `map` function that transforms
 
 ```nanyx
 def Option.map
-  : (#some(a) | rest), (a -> b) -> (#some(b) | rest)
+  : (#some(a) | r), (a -> b) -> (#some(b) | r)
   = { | #some(a), f -> #some(f(a))
       | other, _ -> other }
 ```

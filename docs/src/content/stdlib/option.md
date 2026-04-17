@@ -11,7 +11,7 @@ In Nanyx, any union that includes `#some(a)` is considered option-like. These he
 # map
 
 ```nanyx
-Option.map: ((#some(a) | rest), (a -> b)) -> (#some(b) | rest)
+Option.map: ((#some(a) | r), (a -> b)) -> (#some(b) | r)
 ```
 
 Transforms the value when present.
@@ -30,7 +30,7 @@ value \Option.map { .length }
 # bind
 
 ```nanyx
-Option.bind: ((#some(a) | r1), (a -> (#some(b) | r2))) -> (#some(b) | r1 | r2)
+Option.bind: ((#some(a) | r), (a -> (#some(b) | s))) -> (#some(b) | r | s)
 ```
 
 Chains option-producing operations.
@@ -45,7 +45,7 @@ def b: a \Option.bind(int.parse) -- b: (#some(int) | #notFound | #invalidInt)
 # defaultValue
 
 ```nanyx
-Option.defaultValue: ((#some(a) | rest), a) -> a
+Option.defaultValue: ((#some(a) | r), a) -> a
 ```
 
 Returns the wrapped value or a fallback.
@@ -60,7 +60,7 @@ Option.defaultValue(#none, 0)
 # isSome
 
 ```nanyx
-Option.isSome: (#some(a) | rest) -> bool
+Option.isSome: (#some(a) | r) -> bool
 ```
 
 ```nanyx
@@ -73,7 +73,7 @@ Option.isSome(#some(10))
 # isNone
 
 ```nanyx
-Option.isNone: (#some(a) | rest) -> bool
+Option.isNone: (#some(a) | r) -> bool
 ```
 
 ```nanyx
@@ -86,7 +86,7 @@ Option.isNone(#none)
 # toResult
 
 ```nanyx
-Option.toResult: ((#some(a) | rest), err) -> #some(a) | #error(err)
+Option.toResult: ((#some(a) | r), err) -> #some(a) | #error(err)
 ```
 
 Converts an option to a result with a supplied error value.
@@ -101,7 +101,7 @@ Option.toResult(#none, "missing user")
 # mapOr
 
 ```nanyx
-Option.mapOr: ((#some(a) | rest), default: b, (a -> b)) -> b
+Option.mapOr: ((#some(a) | r), default: b, (a -> b)) -> b
 ```
 
 Maps the contained value or returns a default.
@@ -119,7 +119,7 @@ Option.mapOr(#none, default = 0) { .length }
 # mapOrElse
 
 ```nanyx
-Option.mapOrElse: ((#some(a) | rest), defaultFactory: () -> b, (a -> b)) -> b
+Option.mapOrElse: ((#some(a) | r), defaultFactory: () -> b, (a -> b)) -> b
 ```
 
 Maps the contained value or computes a fallback lazily.
