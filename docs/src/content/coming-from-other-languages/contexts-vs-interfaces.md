@@ -19,7 +19,12 @@ A good starting point is: a context is like an interface constraint, but passed 
 In interface-heavy languages, you might write:
 
 ```text
-sum<T>(items: List<T>) where T : IAddable<T>
+interface ISummable<T> {
+  T zero();
+  T add(T other);
+}
+
+sum<T>(items: List<T>) where T : ISummable<T>
 ```
 
 In Nanyx, you model that as a context constraint:
@@ -35,7 +40,9 @@ def sum: [Sum(a)] list(a) -> a = { items ->
 }
 ```
 
-The function says exactly what it needs (`Sum(a)`), not which concrete type hierarchy it depends on.
+The mindset shift here is to think in terms of capabilities (what operations are needed) for a type _which are not required to be intrinsic to the type_. Think of it as "Given a way of summing `a`" rather than "Given a type `a` that **is** `Summable`." A function states what it needs (`Sum(a)`), not which concrete type hierarchy it depends on.
+
+This allows capabilities to be "bolted on" to types without modifying their definitions, and for functions to be more flexible in what they can operate on (since abstractions and their implementations don't have to have been defined by the type's author).
 
 # Where contexts differ most
 

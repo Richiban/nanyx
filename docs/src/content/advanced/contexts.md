@@ -40,12 +40,12 @@ def main = {
 }
 ```
 
-You can also load a context for a single expression with `use ... in`:
+You can also load a context for a single expression or block with `use ... in`:
 
 ```nanyx
-def result = use Console(println = hostPrint) in {
+def result = use Console(println = hostPrint) in
   println("Hello from a scoped context")
-}
+
 ```
 
 # Contexts are part of the type
@@ -95,9 +95,58 @@ export def sum: [Sum(a)] list(a) -> a
 
 For ergonomic generic API design with associated members and constrained capabilities, see [Associated types and constraints](./associated-types-and-constraints).
 
-# Context synthesis using attached definitions
+# Common contexts
 
-When a function requires a context, you don't always have to load or even create it manually. If the type in question has [attached definitions](./attached-definitions) that match the context's members, the compiler can **synthesize** the context automatically.
+In practice, a small set of capability contexts appears frequently in generic APIs.
+
+## Eq(a)
+
+Use `Eq(a)` when a function needs equality checks but should stay generic over the concrete type.
+
+```nanyx
+context Eq(a) = (
+  `==`: a, a -> bool
+)
+
+def contains: [Eq(a)] (list(a), a) -> bool = { xs, target ->
+  xs \any { == target }
+}
+```
+
+## Default(a)
+
+Use `Default(a)` when a function needs a fallback value for a type.
+
+```nanyx
+context Default(a) = (
+  default: () -> a
+)
+
+def valueOrDefault: [Default(a)] (#some(a) | #none) -> a = {
+  | #some(v) -> v
+  | #none -> default()
+}
+```
+
+## Sum(a)
+
+`Sum(a)` is a common algebraic context for additive combination.
+
+```nanyx
+context Sum(a) = (
+  `0`: a
+  `+`: a, a -> a
+)
+
+def sum: [Sum(a)] list(a) -> a
+  = { items -> items \fold(`0`) { + } }
+```
+
+These contexts compose naturally. For example, a generic algorithm can require both `Eq(a)` and `Default(a)` by declaring `[Eq(a) & Default(a)]`.
+
+# Context synthesis
+
+When a function requires a context, you don't always have to load or create one manually. If the type in question has [attached definitions](./attached-definitions) that match the context's members, the compiler can **synthesize** the context automatically.
 
 For example, given a `Sum` context:
 

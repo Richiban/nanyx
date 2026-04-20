@@ -84,7 +84,7 @@ def names = data \map { item -> item.name }
 
 ## Shorthand lambdas
 
-Nanyx provides convenient shorthand syntax for common lambda patterns:
+Nanyx provides convenient shorthand syntax for common lambda patterns, including member access and binary operators:
 
 ```nanyx
 -- Property access
@@ -95,8 +95,8 @@ def names = users \map { .name }
 def doubled = numbers \map { * 2 }
 -- Equivalent to: numbers \map { x -> x * 2 }
 
-def incremented = numbers \map { + 1 }
--- Equivalent to: numbers \map { x -> x + 1 }
+def incremented = numbers \fold(0) { + }
+-- Equivalent to: numbers \fold(0) { x, y -> x + y }
 
 -- Comparison operators
 def adults = users \filter { .age > 18 }
@@ -165,7 +165,7 @@ def result = add5(10)  -- 15
 
 # Pattern-matching functions
 
-Since a function that consists only of a pattern match on its arguments is so common, a shorthand syntax is available: functions can pattern match directly on their arguments:
+Since a function that consists only of a pattern match on its arguments is so common, a shorthand syntax is available where functions can pattern match directly on their arguments:
 
 ```nanyx
 -- Simple pattern matching function
@@ -184,7 +184,7 @@ def divide: (int, int) -> Result(int, #divideByZero) = {
 def classify: int -> string = {
   | 0 -> "zero"
   | 1 -> "one"
-  | n if n < 0 -> "negative"
+  | n & { < 0 } -> "negative: {n}"
   | _ -> "other"
 }
 ```
@@ -195,9 +195,8 @@ Use the `rec` keyword to define recursive functions:
 
 ```nanyx
 rec factorial: int -> int = { n ->
-  if n <= 1
-    -> 1
-    else -> n * factorial(n - 1)
+  if n <= 1 then 1
+  else n * factorial(n - 1)
 }
 
 rec length: list(a) -> int = {

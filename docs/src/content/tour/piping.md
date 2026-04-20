@@ -29,9 +29,7 @@ def personObj = request
 
 # Piping with extra arguments
 
-The piped value will be combined with any additional written arguments into a record to form the argument of the function. 
-
-For example, `x \f(y)` is equivalent to `f(x, y)`. This allows you to pipe into functions that take more than one argument and, unlike curried functions, the argument order remains the same as the non-piped version. 
+The piped value will be combined with any additional written arguments into a record to form the argument of the function. For example, `x \f(y)` is equivalent to `f(x, y)` and `x \f(y, z)` is equivalent to `f(x, y, z)` etc. This allows you to pipe into functions that take more than one argument and, unlike curried functions, the argument order remains the same as the non-piped version. 
 
 ```nanyx
 def add = { x, y -> x + y }

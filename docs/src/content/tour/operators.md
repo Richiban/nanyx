@@ -16,12 +16,28 @@ def `+++`: string, string -> string = { a, b -> a + b }
 def r = "one" +++ "two"
 ```
 
-Operators can take more than two arguments. Extra arguments are passed as a record:
+Operators can take more than two arguments. Extra arguments are passed as a record, [in the same way as piping](../tour/piping#piping-with-extra-arguments):
 
 ```nanyx
 def `+?` = { a, b, c -> ... }
 
 def r = a +? (b, c)
+```
+
+# Using operators as functions
+
+Since operators are just specially-named functions, you can also use them in a non-operator way:
+
+```nanyx
+def r1 = "one" +++ "two"
+def r2 = `+++`("one", "two")
+def f = `+++`
+```
+
+Also, lambda syntax supports an [operator-based shorthand](../tour/functions#shorthand-lambdas) for using operators:
+
+```nanyx
+[1, 2, 3] \fold(0) { + }
 ```
 
 # Arithmetic and comparison

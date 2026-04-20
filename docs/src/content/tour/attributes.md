@@ -40,8 +40,8 @@ Marks a workflow builder definition and enables workflow helper generation.
 ```nanyx
 @workflow
 def optionChain = (
-  def try = { ... }
-  def unit = #none
+  try = { ... }
+  unit = #none
 )
 ```
 
