@@ -174,11 +174,27 @@ A workflow can provide a `try` keyword to short-circuit on errors. This is usefu
 def getCustomer(id: int): Result(Customer, #customerNotFound) = ...
 def getLastOrder(c: Customer): Result(Order, #orderNotFound) = ...
 
-spec Result(Money, #customerNotFound | #orderNotFound)
-def lastOrderTotal = proc {
+def lastOrderTotal: () -> Result(Money, #customerNotFound | #orderNotFound) = proc {
   def customer = try getCustomer(5)
   def order = try getLastOrder(customer)
   return order.total
+}
+```
+
+# Early return and defer
+
+A workflow can also provide a `return` keyword that exits the block early, and a `defer` keyword that runs a thunk at the end of the block.
+
+```nanyx
+def main = {
+  async {
+    defer println("This runs at the end of the block")
+
+    if b then return "Early exit"
+
+    println("This runs first")
+    return "Done"
+  }
 }
 ```
 
