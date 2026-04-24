@@ -16,7 +16,7 @@ export def detectAddressTypeToScriptHash
   : string -> (output: string, scriptHash: string, address: string)
   ={ address ->
   -- Detect legacy address
-  handle {
+  proc {
     try bitcoin.address.fromBase58Check(address, #network)
     def p2pkh = try addressToP2PKH(address)
     def p2pkhBuf = p2pkh \Buffer.from(#hex)

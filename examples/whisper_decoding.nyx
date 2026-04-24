@@ -587,7 +587,7 @@ type def DecodingTask(model: "Whisper", options: DecodingOptions) ->
     def sumLogprobs: Tensor = torch.zeros(nBatch, device = audioFeatures.device)
     def noSpeechProbs = (np.nan) * nBatch
 
-    handle {
+    proc {
       for 0..sampleLen | i ->
         mut logits = inference.logits(tokens, audioFeatures)
 

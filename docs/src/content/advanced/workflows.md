@@ -175,7 +175,7 @@ def getCustomer(id: int): Result(Customer, #customerNotFound) = ...
 def getLastOrder(c: Customer): Result(Order, #orderNotFound) = ...
 
 spec Result(Money, #customerNotFound | #orderNotFound)
-def lastOrderTotal = handle {
+def lastOrderTotal = proc {
   def customer = try getCustomer(5)
   def order = try getLastOrder(customer)
   return order.total

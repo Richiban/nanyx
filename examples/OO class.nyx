@@ -61,7 +61,7 @@ export type def AttestationLifetimeManager(
       if | not featureIsEnabled -> return
          | not needsRefresh() -> return -- Double-checked locking
 
-      handle {
+      proc {
         --  Ensure that only one thread at a time can check freshness and maybe create a background
         -- job
         semaphore.acquire()

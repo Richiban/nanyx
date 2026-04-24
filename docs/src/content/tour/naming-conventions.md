@@ -13,14 +13,10 @@ def message = "Hello world"
 
 -- Function
 
-def sayHello() -> println("Hello!")
+def sayHello = { println("Hello!") }
 
 -- Type
 
 type Greeter = (greet: () -> ())
 
--- Type + function with the same name
-
-def Greeter() =
-  (greet<$Console> = { println("Hello!") })
 ```

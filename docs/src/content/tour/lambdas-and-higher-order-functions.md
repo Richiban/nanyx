@@ -94,7 +94,7 @@ Sometimes, a higher-order function wants to be flexible about what kinds of cont
 For example, what context does a `List.map` function run in? It could be a pure function, but it could also be a stateful computation or an effectful operation. To support all of these, `List.map` can be defined with a parametric context:
 
 ```nanyx
-List.map: [c] (list(a), [c] (a -> b)) -> list(b)
+List.map: [c] list(a), ([c] a -> b) -> list(b)
 ```
 
 This function takes a context parameter, written as a single lowercase character (just like an automatically introduced type variable, which must also be one character). This means that the caller can choose any context `c` for the callback, and `List.map` will work with it. The callback can be a pure function, a stateful computation, or an effectful operation, depending on the caller's needs.

@@ -32,7 +32,7 @@ match getCustomer(someId)
 Use `handle` with `try` to short-circuit on errors:
 
 ```nanyx
-def result = handle {
+def result = proc {
   def customer = try getCustomer("someid")
   def latestOrder = try getLatestOrder(customer)
   return latestOrder.total

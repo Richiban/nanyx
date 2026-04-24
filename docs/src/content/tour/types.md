@@ -126,13 +126,13 @@ Types can be parameterized with type variables:
 def identity: a -> a = { x -> x }
 
 -- Generic list operations
-def map: (list(a), (a -> b)) -> list(b) = { xs, f ->
+def map: list(a), (a -> b) -> list(b) = { xs, f ->
   match xs
     | [] -> []
     | [head, ...tail] -> [f(head), ...map(tail, f)]
 }
 
-def zip: (list(a), list(b)) -> list((a, b)) = { xs, ys ->
+def zip: list(a), list(b) -> list((a, b)) = { xs, ys ->
   match (xs, ys)
     | ([], _) -> []
     | (_, []) -> []
@@ -171,5 +171,5 @@ type Validator(a) = a -> bool
 type Transformer(a, b) = a -> b
 
 -- Higher-order function type
-type Mapper(a, b) = ((a -> b), list(a)) -> list(b)
+type Mapper(a, b) = (a -> b), list(a) -> list(b)
 ```

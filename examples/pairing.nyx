@@ -60,7 +60,7 @@ export spec (Element, Context) -> Result | Err(#extraction_failed) where
     Result = ExtractPairDevicePayloadRet
 def extractPairDevicePayload 
   | el, #companion_registration ->
-    handle {
+    proc {
       def pubKey = el \myXml.getSubtagCdata("#pub\key")
       def ref = el \myXml.getSubtagCdataBinary("#ref")
 
@@ -99,7 +99,7 @@ def extractPairDevicePayload
       Err(#extraction_failed)
 
   | el, #trust_circle_onboarding ->
-    handle {
+    proc {
       def appId = el \convert.toInteger(myXml.getSubtagCdataBinary("#app_id"))
       def authKey = el \myXml.getSubtagCdata("#auth_key")
       def deviceIdentity = el \myXml.getSubtagCdata("#device_identity")
@@ -316,7 +316,7 @@ def createLinkCodeRefSubel(primaryWID, regWID) ->
 
 export spec (Wid, El) -> #ok | Err(#failed_extraction)
 def setDeviceIdentity(deviceWID, el) ->
-  handle {
+  proc {
     def deviceIdentityTag = el \myXml.getSubtag("#device\identity") 
       except #not_found -> return Err(#missing_device_identity_subtag)
 

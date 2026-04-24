@@ -175,7 +175,7 @@ rec sumList: list(int) -> int = {
 }
 
 -- Multiple arguments with patterns
-def divide: (int, int) -> Result(int, #divideByZero) = { 
+def divide: int, int -> Result(int, #divideByZero) = { 
   | _, 0 -> #error(#divideByZero)
   | x, y -> #some(x / y)
 }
@@ -229,7 +229,7 @@ Here `loop` is internal to `sum`, and `acc` stores the running result. Each recu
 Functions can be composed to create new functions:
 
 ```nanyx
-def compose: ((b -> c), (a -> b)) -> (a -> c) = { f, g ->
+def compose: (b -> c), (a -> b) -> (a -> c) = { f, g ->
   { x -> f(g(x)) }
 }
 
@@ -286,10 +286,10 @@ Functions without effects (no contexts) are pure - they always return the same o
 
 ```nanyx
 -- Pure function
-def add: (int, int) -> int = { x, y -> x + y }
+def add: int, int -> int = { x, y -> x + y }
 
 -- Effectful function (requires context)
-def greet: <Console> string -> () = { name ->
+def greet: [Console] string -> () = { name ->
   println("Hello, {name}!")
 }
 ```
@@ -299,7 +299,7 @@ def greet: <Console> string -> () = { name ->
 ## Map Implementation
 
 ```nanyx
-rec map: (list(a), (a -> b)) -> list(b) = { xs, f ->
+rec map: list(a), (a -> b) -> list(b) = { xs, f ->
   match xs
     | [] -> []
     | [head, ...tail] -> [f(head), ...map(tail, f)]
@@ -309,7 +309,7 @@ rec map: (list(a), (a -> b)) -> list(b) = { xs, f ->
 ## Filter implementation
 
 ```nanyx
-rec filter: (list(a), (a -> bool)) -> list(a) = { xs, predicate ->
+rec filter: list(a), (a -> bool) -> list(a) = { xs, predicate ->
   match xs
     | [] -> []
     | [head, ...tail] ->
