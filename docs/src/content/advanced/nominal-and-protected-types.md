@@ -20,7 +20,7 @@ export type $User = (
   name: string
 )
 
-export def $User.new: (UserId, string) -> Result($User, list(string)) = { id, name ->
+export def $User.new: UserId, string -> Result($User, list(string)) = { id, name ->
   memory {
     def errors = mut []
     if id <= 0 then errors += "ID must be positive"

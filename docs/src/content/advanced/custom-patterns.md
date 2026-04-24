@@ -41,7 +41,10 @@ def #Hsl(h, s, l) = getRgbColor()
 or many:
 
 ```nanyx
-pattern int -> #Even | #Odd = { n -> if n % 2 == 0 then #Even else #Odd }
+pattern int -> #Even | #Odd = { n -> 
+  if n % 2 == 0 then #Even 
+  else #Odd 
+}
 ```
 
 # Partial patterns

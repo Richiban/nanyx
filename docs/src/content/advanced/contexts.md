@@ -122,7 +122,7 @@ context Default(a) = (
   default: () -> a
 )
 
-def valueOrDefault: [Default(a)] (#some(a) | #none) -> a = {
+def valueOrDefault: [Default(a)] #some(a) | #none -> a = {
   | #some(v) -> v
   | #none -> default()
 }

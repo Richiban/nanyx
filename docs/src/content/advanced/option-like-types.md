@@ -14,7 +14,7 @@ The function below accepts any union that contains `#some(a)` and transforms tha
 
 ```nanyx
 def Option.map
-  : (#some(a) | r), (a -> b) -> (#some(b) | r)
+  : (#some(a) | r), (a -> b) -> #some(b) | r
   = { | #some(a), f -> #some(f(a))
       | other, _ -> other }
 ```
@@ -24,7 +24,7 @@ The type variable `r` represents all other tags in the union, allowing us to use
 # Works with options
 
 ```nanyx
-def name: (#some(string) | #none) = ...
+def name: #some(string) | #none = ...
 
 def upper = name \Option.map { .toUpperCase() }
 ```
@@ -32,7 +32,7 @@ def upper = name \Option.map { .toUpperCase() }
 # Works with results
 
 ```nanyx
-def value: (#some(int) | #err(#notFound | #dbDown)) = ...
+def value: #some(int) | #err(#notFound | #dbDown) = ...
 
 def doubled = value \Option.map { * 2 }
 ```
