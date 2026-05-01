@@ -23,11 +23,11 @@ resource {
   def stocksFile = using file.open("stocks.csv", "r")
   def stocks = csv.reader(stocksFile)
 
-  def statusLabels = dict {
+  def statusLabels = [
     -1 => "down"
     0  => "unchanged"
-    1  => "up" 
-  }
+    1  => "up"
+  ]
 
   for stocks | (ticker, name, price, change, pct) ->
     def status = statusLabels[cmp(float(change), 0.0)]

@@ -1,30 +1,30 @@
 --  Some types are meant to be implemented directly
 --  This is an ".. is a .." relationship
-type Iterator(α) = (moveNext :: () -> α | #done)
+type Iterator(a) = (moveNext: () -> a | #done)
 
-type Seq(α) = (getIterator :: () -> Iterator(α))
+type Seq(a) = (getIterator: () -> Iterator(a))
 
-type Collection(α) = 
-  Seq(α) & 
-  (size :: () -> int)
+type Collection(a) = 
+  Seq(a) & 
+  (size: () -> int)
     
-type Set(α) = 
-  Collection(α) & 
-  (contains :: a -> bool)
+type Set(a) = 
+  Collection(a) & 
+  (contains: a -> bool)
 
-type SortedSet(α) = 
-  Set(α) & 
-  (min :: a; max :: a)
+type SortedSet(a) = 
+  Set(a) & 
+  (min: a; max: a)
 
-type NumericRange(a :: number) = 
-  SortedSet(α)
-  & (min :: a, max :: a) where min <= max
+type NumericRange(a: number) = 
+  SortedSet(a)
+  & (min: a, max: a) where min <= max
 
 --  Others are meant to be implemented via a separate instance
 --  This is a "there exists a .. for .." relationship
 context Monad(m: type -> type) = (
-  lift: a -> m(α)
-  bind: m(α), (a -> m(β)) -> m(β)
+  lift: a -> m(a)
+  bind: m(a), (a -> m(b)) -> m(b)
 )
 
 default Monad(Option) = (
@@ -40,9 +40,9 @@ default Monad(Option) = (
 --  But, crucially, there are multiple ways to make a monoid out of int
 --  such as addition, multiplication, bitwise and, bitwise or, etc.
 
-context Monoid(α) = (
-  empty:   α
-  combine: α, α -> α
+context Monoid(a) = (
+  empty:   a
+  combine: a, a -> a
 )
 
 def additiveMonoid: Monoid(int) = (
@@ -65,7 +65,7 @@ def bitwiseOrMonoid: Monoid(int) = (
   combine = { x, y -> x .| y }
 )
 
-def reduce: [Monoid(α)] Seq(α) -> α
+def reduce: [Monoid(a)] Seq(a) -> a
   = { xs ->
     xs \fold(empty, combine)
   }
@@ -74,19 +74,19 @@ def sum(xs) = use multiplicativeMonoid in reduce(xs)
 
 type Point = (x: int, y: int)
 
-def points = Point[
-  (1, 2)
-  (3, 4) 
-  (5, 6)
+def points = [
+  Point(1, 2)
+  Point(3, 4)
+  Point(5, 6)
 ]
 
 def Point.`+` = { a, b -> Point(x = a.x + b.x, y = a.y + b.y) }
 
 def Point.`0` = Point(x = 0, y = 0)
 
-context Sum(α) = (
-  `0`: α
-  `+`: α, α -> α
+context Sum(a) = (
+  `0`: a
+  `+`: a, a -> a
 )
 
 --  We could explicitly define the Sum typeclass instance for Point, but
@@ -95,11 +95,11 @@ context Sum(α) = (
 --  These methods are in the global context, so narrower contexts can be automatically
 --  synthesized from them.
 default Sum(Point) = (
-  `0` = Point(x: 0, y: 0)
-  `+` = { a, b -> Point(x: a.x + b.x, y: a.y + b.y) }
+  `0` = Point(x = 0, y = 0)
+  `+` = { a, b -> Point(x = a.x + b.x, y = a.y + b.y) }
 )
 
-def sum: [Sum(Point)] List(Point) -> Point
+def sum: [Sum(Point)] list(Point) -> Point
   = { items ->
     items \fold(0) { + }
   }

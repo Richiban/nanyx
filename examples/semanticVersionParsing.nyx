@@ -9,7 +9,7 @@ type SemanticVersion =
 
 export def tryParse: string?, FormatProvider? -> Result(SemanticVersion, #invalidVersionNumber) 
   = result { value, formatProvider ->
-    if value is #nil | #some("") ->
+    if value is #nil | #some("") then
       throw #invalidVersionNumber
 
     mut major = 0
@@ -52,7 +52,7 @@ export def tryParse: string?, FormatProvider? -> Result(SemanticVersion, #invali
       except #err -> return #err(#invalidVersionNumber)
 
     -- Parse Tag (if present)
-    if index < value.Length and value[index] == '-' ->
+    if index < value.Length and value[index] == '-' then
       set index++ -- Move past the '-'
       set startIndex = index
       
@@ -62,7 +62,7 @@ export def tryParse: string?, FormatProvider? -> Result(SemanticVersion, #invali
       set tag = value.substring(startIndex, index - startIndex)
 
     -- Parse Build Metadata (if present)
-    if index < value.Length and value(index) == '+' ->
+    if index < value.Length and value[index] == '+' then
       set index++ -- Move past the '+'
       set startIndex = index
 

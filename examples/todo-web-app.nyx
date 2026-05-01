@@ -10,7 +10,7 @@ import (
 
 def createUsing: LiteDatabase -> ITodoProtocol = { db ->
 
-  def todos = db.getCollection("todos"): List(Todo)
+  def todos = db.getCollection("todos"): list(Todo)
 
   TodoProtocol(
     allTodos = {
@@ -60,10 +60,11 @@ def createUsingInMemoryStorage: () -> ITodoProtocol = {
 }
 
 def seedIntitialData: ITodoProtocol -> () = { todos -> 
-  list(
+  [
     "Learn F#"
     "Learn Fable"
-    "Build Awesome Apps!" )
+    "Build Awesome Apps!"
+  ]
   \map (Description >> todos.addTodo)
   \Async.parallel
   \Async.runSynchronously

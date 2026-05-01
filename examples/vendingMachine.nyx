@@ -12,7 +12,7 @@ def VendingMachine() ->
 
   mut coinsDeposited = 0
 
-  def vend: [Throws + Console] string -> () 
+  def vend: [Throws & Console] string -> () 
     = throws { name ->
       def item = 
         inventory \tryGet(name) except 
@@ -20,7 +20,7 @@ def VendingMachine() ->
             return #invalidSelection
           | #some(count = 0) ->
             return #outOfStock
-          | #some(price) if price > coinsDeposited -> 
+          | #some(price) & { price > coinsDeposited } -> 
             return #insufficientFunds(item.price - coinsDeposited)
 
       set coinsDeposited -= item.price

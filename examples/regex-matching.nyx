@@ -3,24 +3,28 @@ import nyx/text/regex
 def emailPattern = """^(\w+)@(\w+(.\w+)+)$""" --Regex
 def phonePattern = """^(\d{3}-\d{3}-\d{4})$""" --Regex
 
-pattern Email | _ = { s -> 
+pattern string -> #Email(string, string) | _ = { s ->
   def matches = emailPattern.matches(s)
-  if matches.length == 2 -> (matches(0), matches(1))
-  else -> #nil
+  if matches.length == 2 then
+    #Email(matches(0), matches(1))
+  else
+    _
 }
 
-pattern Phone | _ = { s ->
+pattern string -> #Phone(string) | _ = { s ->
   def matches = phonePattern.matches(s)
 
-  if matches.length == 1 -> matches(0)
-  else -> #nil
+  if matches.length == 1 then
+    #Phone(matches(0))
+  else
+    _
 }
 
 def saveContactInformation: <@Console> string -> () = {
-  | Email(localPart, domainName) ->
-      println(s"Hi $localPart, we have saved your email address.")
-  | Phone(phoneNumber) ->
-      println(s"Hi, we have saved your phone number $phoneNumber.")
+  | #Email(localPart, domainName) ->
+      println("Hi {localPart}, we have saved your email address.")
+  | #Phone(phoneNumber) ->
+      println("Hi, we have saved your phone number {phoneNumber}.")
   | _ ->
       println("Invalid contact information, neither an email address nor phone number.")
 }

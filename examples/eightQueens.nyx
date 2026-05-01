@@ -2,29 +2,30 @@ module eightQueens
 
 def boardSize = 8
 
-spec list(_) -> Result((), #invalid)
-def validate(queens) ->
+def validate: list(int) -> Result((), #invalid) = { queens ->
     def left, right, col = queens(-1), queens(-1), queens(-1)
 
     for reversed(queens[:-1]) | r ->
         set left, right = left - 1, right + 1
 
-        if r in (left, col, right) ->
-            return (#err, #invalid)
+        if r in (left, col, right) then
+            return #error(#invalid)
+}
 
-def addQueen(queens) ->
-    for 0..BOARD_SIZE | i ->
+def addQueen: list(int) -> list(int) = { queens ->
+    for 0..boardSize | i ->
         def testQueens = queens + [i]
 
-        except {
-            try validate(testQueens)
-
-            if testQueens.length == BOARD_SIZE ->
+        match validate(testQueens)
+          | #error(#invalid) -> ()
+          | _ ->
+            if testQueens.length == boardSize then
                 return testQueens
-            else ->
+            else
                 return addQueen(testQueens)
-        }
+}
 
 def queens = addQueen([])
-print(queens)
-print("\n".join(". "*q + "Q " + ". "*(BOARD_SIZE-q-1) for q in queens))
+println(queens)
+def rows = queens \map { q -> ". " * q + "Q " + ". " * (boardSize - q - 1) }
+rows \String.join("\n") \println

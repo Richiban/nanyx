@@ -1,7 +1,7 @@
 def encode2: string, int -> string 
   = { s, shift ->
     s\map { c ->
-      if c !in 'a'..'z' -> return c
+      if c !in 'a'..'z' then return c
 
       def base = c - 'a' \int
       def rot  = (base + shift) % 26
@@ -11,9 +11,9 @@ def encode2: string, int -> string
   }
 
 
-def sublist: List(a), int, int -> List(a) 
+def sublist: list(a), int, int -> list(a) 
   = { xs, start, len = xs.length ->
-    if start <= 0 -> return xs.take(len)
+    if start <= 0 then return xs.take(len)
 
     match xs
       | []         -> []
@@ -32,13 +32,13 @@ def percent: int, int -> float = { n, m ->
   100.0 * (float64(n) / float64(m))
 }
 
-def rotate: List(a), int -> List(a) = { xs, n ->
+def rotate: list(a), int -> list(a) = { xs, n ->
   xs\drop(n) ++ xs\take(n)
 }
 
 -- Calculate a frequency table for a string
-def freqs: string -> List(float64) = { s ->
-  def lowers = list('a', 'z')
+def freqs: string -> list(float64) = { s ->
+  def lowers = ['a', 'z']
   def occurs = lowers\map { c -> s\count(c\string) }
   def total  = occurs\sum
   
@@ -47,7 +47,7 @@ def freqs: string -> List(float64) = { s ->
 
 -- Calculate how well two frequency tables match according
 -- to the _chi-square_ statistic.
-def chisqr: List(float64), List(float64) -> float64 = { xs, ys ->
+def chisqr: list(float64), list(float64) -> float64 = { xs, ys ->
   (xs, ys)
   \map { x, y -> ((x - y) ^ 2.0) / y }
   \fold(0.0) { + }
@@ -74,22 +74,21 @@ def testUncaesar = {
 
 ------------------------------------
 
-context type Raise = (
-  ctx raise: (msg: string) -> a
+context Raise = (
+  raise: (msg: string) -> a
 )
 
-def safeDivide: <Raise> int, int -> int
+def safeDivide: [Raise] int, int -> int
   = { x, y ->
-    if y == 0 -> raise("divide by zero")
-    else -> x / y
+    if y == 0 then raise("divide by zero")
+    else x / y
   }
 
 def raiseConst: () -> int
   = {
     use Raise(                  -- The `use` construct puts the relevant record into the context
-      ctx raise = { _ -> 42 }
-    )
-
+      raise = { _ -> 42 }
+    ) in
     8 + safeDivide(1, 0)          -- Returns 42, not 50
   }
 
@@ -97,17 +96,16 @@ def raiseConst: () -> int
 def raiseConst2: () -> int
   = {
     use Raise(                  -- The `use` construct puts the relevant record into the context
-      ctx raise = { _ -> resume 42 }
-    )
-
+      raise = { _ -> resume 42 }
+    ) in
     8 + safeDivide(1, 0)          -- Returns 50
   }
 
-context type Ask(a) = (
+context Ask(a) = (
   ask: () -> a
 )
 
-def addTwice: <Ask(int)> () -> int
+def addTwice: [Ask(int)] () -> int
   = {
     ask() + ask()
   }
@@ -116,44 +114,42 @@ def askConst: () -> int
   = {
     use Ask(int)(
       ask = { 21 }
-    )
-
+    ) in
     addTwice()
   }
 
-def askRandom: <Random> () -> int
+def askRandom: [Random] () -> int
   = {
-    use Ask(int) (
+    use Ask(int)(
       ask = { randomInt() }
-    )
-
+    ) in
     addTwice()
   }
 
 
 ------------------------------------
 
-context type State(a) = (
+context State(a) = (
   get: () -> a
   set: a -> ()
 )
 
-def sumdown: <State(int)> int -> int 
+def sumdown: [State(int)] int -> int 
   = { sum = 0 ->
     def i = get()
 
-    if i <= 0 -> sum 
-    else ->
+    if i <= 0 then sum
+    else
       set(i - 1)
       sumdown(sum + i)
   }
 
-def state: <c> a, (<State(a) + c> () -> b) -> b
+def state: [c] a, ([State(a) & c] () -> b) -> b
   = { init, action ->
     memory {
       mut st = init
 
-      use: State(a) = (
+      use State(a) = (
         get = { st }
         set = { i -> set st = i }
       )

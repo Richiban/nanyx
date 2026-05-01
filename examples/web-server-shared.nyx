@@ -46,7 +46,7 @@ type Description = #description(string)
 -- Every record field must have the type : 'a -> Async('b) where 'a can also be `unit`
 -- Add more such fields, implement them on the server and they be directly available on client
 type TodoProtocol =
-  ( allTodos        : () -> Async(List(Todo))
+  ( allTodos        : () -> Async(list(Todo))
     addTodo         : Description -> Async(Todo?)
     toggleCompleted : TodoId -> Async(UpdateResult)
     deleteTodo      : TodoId -> Async(DeleteResult) )

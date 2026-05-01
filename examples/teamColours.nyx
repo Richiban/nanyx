@@ -1,7 +1,7 @@
 -- Official championship's colors
 type TeamColor = #yellow | #black
 
-module TeamColor =
+module TeamColor
   def create = {
     | "yellow" -> #some(#yellow)
     | "black" -> #some(#black)
@@ -13,15 +13,15 @@ module TeamColor =
     | #black -> "black" 
   }
 
-module Game =
+module Game
   type GameId = bigint
 
   type Errors = #teamsMustBeUnique
   type Rules = ( maxSetPoints: byte; maxSets: byte )
   type TeamId = NotEmptyString
   type Score = ( by: (TeamId, TeamColor); at: Moment )
-  type SetScores = ( number: byte; scores: List(Score) )
-  type GameScores = List(List(Score))
+  type SetScores = ( number: byte; scores: list(Score) )
+  type GameScores = list(list(Score))
   
   type OpenGame = (
     id       : GameId
@@ -65,11 +65,12 @@ module Game =
 
   def openGame = { rules, teams, startedAt, gameId ->
     match teams
-    | (t1, t2) if t1 = t2 -> Errors.teamsMustBeUnique \#err
-    | _ -> #some( 
-            id = gameId
-            startedAt = startedAt
-            teams = teams
-            rules = rules
-            score = [[]] )
+      | (t1, t2) & { t1 == t2 } -> Errors.teamsMustBeUnique \#err
+      | _ -> #some(
+        id = gameId
+        startedAt = startedAt
+        teams = teams
+        rules = rules
+        score = [[]]
+      )
   }

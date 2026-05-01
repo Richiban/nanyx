@@ -2,9 +2,9 @@
 --  Constraints allow you to specify a type whose values must pass a given predicate.
 --  The compiler will then check that all values of that type satisfy the predicate.
 
-type Email = s :: string where isValidEmail(s)
-    def isValidEmail(s :: string) = s.contains("@") && s.contains(".")
+type Email = s: string where isValidEmail(s)
+def isValidEmail: string -> bool = { s -> s.contains("@") && s.contains(".") }
 
-type Nat = n :: int where n >= 0
+type Nat = n: int where n >= 0
 
-type OrderedPair(n :: number) = (x :: n, y :: n) where x < y
+type OrderedPair(n: number) = (x: n, y: n) where x < y

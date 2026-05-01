@@ -6,19 +6,22 @@
 
 
 
-def playNumber: [Partial(int)] int, int -> ()
-  = { divisor, i ->
-    if i % divisor == 0 ->
-      return word
-  }
+def playNumber: int, string, int -> string = { divisor, word, i ->
+  if i % divisor == 0 then
+    word
+  else
+    ""
+}
     
-def numberGame: (Map(int, string)) = { rules ->
-  rules
-    \flatMap(playNumber)
-    \String.join
-    \match
-      | "" -> i.toString()
-      | s -> s 
+def numberGame: Map(int, string) -> (int -> string) = { rules ->
+  { i ->
+    rules
+      \flatMap { divisor, word -> playNumber(divisor, word, i) }
+      \String.join("")
+      \match
+        | "" -> i.toString()
+        | s -> s
+  }
 }
 
 def fizzbuzz = numberGame(dict {

@@ -4,39 +4,39 @@ type Config = (
   input  : string = ""
 )  
 
-type Arguments = list(String)
+type Arguments = list(string)
 
 type CliConfigM = StateT(Config, ReaderT(Arguments, Err(String)))
 
-def indexOf: [Eq(α) + Seq(s)] s(α), α, (start: Nat = 0) -> Nat?
+def indexOf: [Eq(a) & Seq(s)] s(a), a, (start: Nat = 0) -> Nat?
   = { xs, s, start ->
     match xs
-    | [] -> None
-    | [{ == s }, ..] -> #some(start)
-    | [_, ..tail] -> indexOf(tail, s, start = start + 1)
+    | [] -> #none
+    | [{ == s }, ...] -> #some(start)
+    | [_, ...tail] -> indexOf(tail, s, start = start + 1)
   }
 
-def requiredArgument: String -> ReaderT(Arguments, Except(String), String) 
+def requiredArgument: string -> ReaderT(Arguments, Except(string), string) 
   = reader { name ->
-    def args = do read
+    def args = read()
     
     def value = 
       match indexOf?(args, name)
       | #some(i) if i + 1 < args.length -> args(i + 1)
       | _ -> ""
       
-    if value == "" -> throw "Command line argument {name} is missing"
+    if value == "" then throw "Command line argument {name} is missing"
     
     return value
   }
 
-def optionalSwitch: String -> ReaderT(Arguments, Err(String), bool) 
+def optionalSwitch: string -> ReaderT(Arguments, Err(string), bool) 
   = reader { name ->
-    def args = read ()
+    def args = read()
     
     return match indexOf(args, name)
-    | Some _ -> true
-    | None -> false 
+    | #some(_) -> true
+    | #none -> false 
   }
 
 def parseArguments: CliConfigM(bool) = {
@@ -54,7 +54,7 @@ def parseArguments: CliConfigM(bool) = {
   return true
 }
 
-def main: <@Console> List(string) -> () = { args ->
+def main: [@Console] list(string) -> () = { args ->
   def config: Config = ( input = "default" )
 
   match parseArguments \run(config) \run(args)

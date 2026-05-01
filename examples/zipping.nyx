@@ -1,8 +1,8 @@
-def things = list(
-    "Alex"
-    "Sam"
-    "Jo"
-)
+def things = [
+  "Alex"
+  "Sam"
+  "Jo"
+]
 
 
 --  This is the "foreach" syntax in Nyx

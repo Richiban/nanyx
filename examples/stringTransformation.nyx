@@ -1,5 +1,4 @@
-spec string -> list(string)
-def splitWords: string -> List(string) = { input ->
+def splitWords: string -> list(string) = { input ->
   input
   \split(RegEx("(?=[A-Z])|_|-|\s")) 
 }
@@ -15,7 +14,7 @@ export type Casing =
   | #midSentence
 
 
-export def rejoin: List(string), Casing -> string = { words, casing ->
+export def rejoin: list(string), Casing -> string = { words, casing ->
   match casing
     | #kebab ->
       words \map { .toLowerCase() } \String.join('-')
@@ -29,37 +28,37 @@ export def rejoin: List(string), Casing -> string = { words, casing ->
       mut first = true
       def newWords = MList[]
 
-      for words 
-      | word if first ->
-        set newWords += word.toLowerCase()
-        set first = false
-      | word ->
-        set newWords += word.replace(RegEx("(^\w|\s\w)(\S*)", #global), { _, m1, m2: m1.toUpperCase() + m2.toLowerCase() })
+      for words | word ->
+        if first then
+          set newWords += word.toLowerCase()
+          set first = false
+        else
+          set newWords += word.replace(RegEx("(^\w|\s\w)(\S*)", #global), { _, m1, m2 -> m1.toUpperCase() + m2.toLowerCase() })
 
       newWords.join("")
-    | case #title:
+    | #title ->
       words 
         \map { 
-          replace( RegEx("(^\w|\s\w)(\S*)", #global), { _, m1, m2 -> m1.toUpperCase() + m2.toLowerCase() } ) 
+          replace(RegEx("(^\w|\s\w)(\S*)", #global), { _, m1, m2 -> m1.toUpperCase() + m2.toLowerCase() })
         } 
         \String.join(" ")
-    | #sentence:
+    | #sentence ->
       mut first = true
       def newWords = MList[]
 
-      for words 
-        | word if first ->
-            set newWords += word.replace(
-              RegEx("(^\w|\s\w)(\S*)", #global), 
-              { _, m1, m2: m1.toUpperCase() + m2.toLowerCase() }
-            )
-            set first = false
-        | word ->
+      for words | word ->
+        if first then
+          set newWords += word.replace(
+            RegEx("(^\w|\s\w)(\S*)", #global),
+            { _, m1, m2 -> m1.toUpperCase() + m2.toLowerCase() }
+          )
+          set first = false
+        else
           newWords += word.toLowerCase()
 
       newWords \String.join(' ')
-    case #midSentence ->
-      words \map { toLowerCase() } \String.join(' ')
+    | #midSentence ->
+      words \map { .toLowerCase() } \String.join(' ')
 }
 
 

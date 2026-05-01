@@ -12,21 +12,21 @@ def DuplicateKey = ()
 
 type SqlPrimitive = #sqlInt | #sqlString
 
-spec [Connection, Raise(Nothing)] (string, seq(SqlPrimitive)) -> Async(int)
-def executeUpdate(query, args) -> async {
+def executeUpdate: [Connection & Raise(Nothing)] (string, seq(SqlPrimitive)) -> Async(int)
+  = async { query, args ->
   def ps = use prepareStatement(query)
   
   for 0.., args | pos, arg ->
     ps \setArgument(pos, arg)
     
   ps.executeUpdate()
-}
+  }
 
 
 def executeUpdateCatchDuplicateKey
-  : [Connection + Raise(DuplicateKey)] string, seq(SqlPrimitive) -> Async(int)
+  : [Connection & Raise(DuplicateKey)] string, seq(SqlPrimitive) -> Async(int)
   = async { query, args ->
-    match executeUpdate(query, *args)
+    match executeUpdate(query, args)
       | Err(#SQLException, e) if isDuplicateKey(e) ->
         raise(DuplicateKey)
       | Err(#SQLException, e) -> 
@@ -42,7 +42,7 @@ def setArgument
     }
 
 def withConnection
-  : [Raise(e)] DataSource, ([Raise(e) + Connection] () -> α) -> α
+  : [Raise(e)] DataSource, ([Raise(e) & Connection] () -> a) -> a
   = { dataSource, f ->
     use getConnection()
       

@@ -28,13 +28,13 @@ type def Highstorm(opts: HighstormOptions) ->
           body = toJson(event)
         ))
 
-        if !res.ok ->
+        if !res.ok then
           return Err("Unable to ingest event: {await res.text()}")
         
         return await res.json()
       } except #err(err) ->
         console.error(err)
 
-        if opts?.throwOnError == true -> Err(err)
-        else -> (id = null)   
+          if opts?.throwOnError == true then Err(err)
+          else (id = null)   
   ) 
