@@ -1,44 +1,45 @@
 module RecordIndexerGenerator
 
 import (
-  nyx/collections/immutable
-  nyx/linq
-  nyx/text
-  nyx/threading
-  nyx/codeAnalysis
-  nyx/codeAnalysis/cSharp
-  nyx/codeAnalysis/cSharp/syntax
-  nyx/codeAnalysis/text
+  nanyx/collections
+  nanyx/text
+  nanyx/threading
+  nanyx.codeAnalysis/nanyx
+  nanyx.codeAnalysis/nanyx.syntax
+  nanyx.codeAnalysis/text
 )
 
 
-spec (GeneratorSyntaxContext, CancellationToken) -> PartialRecordSyntax
-def transform(context, token) ->
-  def node =  context.node: RecordDeclarationSyntax
-  def symbol = context.semanticModel.getDeclaredSymbol(node)!
+def transform: [Async] GeneratorSyntaxContext -> PartialRecordSyntax 
+  = { ctx, token ->
+    def node =  ctx.node: RecordDeclarationSyntax
+    def symbol = ctx.semanticModel.getDeclaredSymbol(node)!
 
-  def properties = query {
-    def member = from symbol.getMembers()
-    where member is (declaredAccessibility = #public, kind = #property) 
-    def property = member: IPropertySymbol
-    where property.isIndexer is false
-    yield Property(property.name, property.type.toString(), property.getMethod is not null, property.setMethod?.isInitOnly is false)
-  } \toArray()
+    def properties = query {
+      def member = from symbol.getMembers()
+      where member is (declaredAccessibility = #public, kind = #property) 
+      def property = member: IPropertySymbol
+      where property.isIndexer is false
+      yield Property(property.name, property.type.toString(), property.getMethod is not null, property.setMethod?.isInitOnly is false)
+    } \toArray()
 
-  PartialRecordSyntax(
-      node.identifier.toString()
-      "{node.keyword} {node.classOrStructKeyword} {node.identifier}"
-      symbol.containingNamespace?.toString()
-      properties
-  )
+    PartialRecordSyntax(
+        node.identifier.toString()
+        "{node.keyword} {node.classOrStructKeyword} {node.identifier}"
+        symbol.containingNamespace?.toString()
+        properties
+    )
+  }
 
-def execute(context: SourceProductionContext, record: PartialRecordSyntax) ->
+def execute: [SourceProductionContext] PartialRecordSyntax -> () = { ctx, record ->
   def source = generateSource(record)
-  context.addSource($"{record.Identifier}.Indexer.g.cs", SourceText.from(source, #utf8))
+  SourceProductionContext.addSource(
+    "{record.Identifier}.Indexer.g.cs", 
+    SourceText.from(source, #utf8)
+  )
+}
 
-
-spec (PartialRecordSyntax) -> string
-def generateSource(record) ->
+def generateSource: (PartialRecordSyntax) -> string = { record ->
   def switchExpr = query {
       def property = from record.properties
       where property.isGettable
@@ -98,7 +99,7 @@ def generateSource(record) ->
       )
 
   return @namespace
-    
+}
 
 type PartialRecordSyntax = (
   identifier:   string 

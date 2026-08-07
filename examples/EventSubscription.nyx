@@ -10,31 +10,36 @@ type HighstormOptions = (
   token   : string
 )
 
-type def Highstorm(opts: HighstormOptions) ->
+type Highstorm = (
+  baseUrl: string
+  ingest : string, HighstormEvent, (throwOnError?: bool) -> Async(id: string?) 
+)
+
+def Highstorm.new(opts: HighstormOptions) = {
   def token = opts.token
   def baseUrl = opts.baseUrl ?? "https://highstorm.app"
 
   (
     baseUrl = baseUrl
 
-    ingest: string, HighstormEvent, (throwOnError?: bool) -> Async(id: string?) 
-      = async { channel, event, opts? ->
-        def res = await fetch("{this.baseUrl}/api/v1/events/{channel}", (
-          method = "POST"
-          headers = [
-            "Content-Type" => "application/json"
-            "Authorization" => "Bearer $(this.token)"
-          ],
-          body = toJson(event)
-        ))
+    ingest = async { channel, event, opts? ->
+      def res = await fetch("{this.baseUrl}/api/v1/events/{channel}", (
+        method = "POST"
+        headers = [
+          "Content-Type" => "application/json"
+          "Authorization" => "Bearer $(this.token)"
+        ]
+        body = toJson(event)
+      ))
 
-        if !res.ok then
-          return Err("Unable to ingest event: {await res.text()}")
-        
-        return await res.json()
-      } except #err(err) ->
-        console.error(err)
+      if !res.ok then
+        return Err("Unable to ingest event: {await res.text()}")
+      
+      return await res.json()
+    } except #err(err) ->
+      console.error(err)
 
-          if opts?.throwOnError == true then Err(err)
-          else (id = null)   
+      if opts?.throwOnError == true then Err(err)
+      else (id = null)
   ) 
+}

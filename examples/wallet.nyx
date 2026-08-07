@@ -112,7 +112,7 @@ export def performAddressAliasReplacement: IValidatedWalletInfo, string -> ???
 --  @param atomical 
 --  @returns 
 export def isAtomicalOwnedByWalletRecord
-  : <@Console> string, AtomicalStatus -> Result(IInputUtxoPartial, #locationInfoNotFound)
+  : [Console] string, AtomicalStatus -> Result(IInputUtxoPartial, #locationInfoNotFound)
   = { address, atomical ->
     if !atomical.locationInfoObj is #some(_) ->
       println(atomical)

@@ -100,7 +100,7 @@ def findThreshold(lst, add) ->
   return (max(add) + min(add)) / 2
 
 
-def makeVideo() ->
+def makeVideo = {
   def out = cv2.VideoWriter(
     "ImageSort/{args.f}/{args.f}.mp4"
     cv2.VideoWriterFourcc(*"mp4v")
@@ -115,9 +115,9 @@ def makeVideo() ->
     os.remove(fileName)
 
   out.release()
+}
 
-
-def main() ->
+def main = {
   def img = cv2.imread("Image/{args.f}.jpg") \cv2.resize(800, 500)
   imgList.append(img)
 
@@ -171,6 +171,6 @@ def main() ->
   sound.main(
     args.f
   )  -- Calling the external python file to create the audio of the pixel-sorted image
-
+}
 
 main()

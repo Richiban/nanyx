@@ -1,4 +1,4 @@
-import nyx/text/regex
+import nanyx/text.regex
 
 def emailPattern = """^(\w+)@(\w+(.\w+)+)$""" --Regex
 def phonePattern = """^(\d{3}-\d{3}-\d{4})$""" --Regex
@@ -20,7 +20,7 @@ pattern string -> #Phone(string) | _ = { s ->
     _
 }
 
-def saveContactInformation: <@Console> string -> () = {
+def saveContactInformation: [Console] string -> () = {
   | #Email(localPart, domainName) ->
       println("Hi {localPart}, we have saved your email address.")
   | #Phone(phoneNumber) ->

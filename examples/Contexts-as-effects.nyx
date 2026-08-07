@@ -49,8 +49,8 @@ def freqs: string -> list(float64) = { s ->
 -- to the _chi-square_ statistic.
 def chisqr: list(float64), list(float64) -> float64 = { xs, ys ->
   (xs, ys)
-  \map { x, y -> ((x - y) ^ 2.0) / y }
-  \fold(0.0) { + }
+    \map { x, y -> ((x - y) ^ 2.0) / y }
+    \fold(0.0) { + }
 }
 
 -- Crack a Caesar encoded string
@@ -68,8 +68,8 @@ def uncaesar: string -> string = { s ->
 
 def testUncaesar = {
   "nrnd lv d ixq odqjxdjh"
-  \uncaesar
-  \println
+    \uncaesar
+    \println
 }
 
 ------------------------------------

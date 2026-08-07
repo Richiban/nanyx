@@ -41,12 +41,12 @@ context Move = (
   ctl move: (Player, sticks: int) -> int
 )
 
-def <Move> aliceTurn = {
+def aliceTurn: [Move] = {
   | { <= 0 } -> #bob
   | _        -> bobTurn(n - move(#alice, n))
 }
 
-def <Move> bobTurn = {
+def bobTurn: [Move] = {
   | { <= 0 } -> #alice 
   | _        -> aliceTurn(n - move(#bob, n))
 }
@@ -88,7 +88,7 @@ fun validMoves = { n ->
   [1, 2, 3] \filter { <= n }
 }
 
-def gametree: Move = (
+def gametree: [Move] = (
   return = { x -> Winner(x) }
   ctl move = { p, n ->
     def moves    = validMoves(n)
@@ -133,13 +133,13 @@ context Cheat = (
   cheat: Player -> a
 )
 
-def <Throws> cheatReport: Cheat = (
+def cheatReport: [Throws] = (
   cheat = { p ->
     throw(p.show ++ " cheated!")
   }
 )
 
-impl check: Move = (
+def check: [Move] = (
   ctl move = { p, n ->
     def m = move(p, n)
 
@@ -164,7 +164,7 @@ export def exampleUse = {
 -- Cheating strategy
 ----------------------------------------------------------
 
-impl pc: Move = (
+def pc: Move = (
   move = {
     | #alice, n -> max(1, n % 4)
     | #bob,   n -> n
@@ -194,12 +194,12 @@ context Choose = (
   choose: () -> bool
 )
 
-def bobChooses: <Choose> = { m ->
+def bobChooses: [Choose] = { m ->
   if choose() -> pc(m) 
   else -> perfect(m)
 }
 
-def allResults: Choose = (
+def allResults: [Choose] = (
   ctl return = { x -> [x] }
   ctl choose = { resume(true) ++ resume(false)}
 )
@@ -211,11 +211,11 @@ export def exampleChoose = {
   [game(7)]   -- [bob,alice]
 }
 
-impl coin: <Random> Choose = (
+def coin: [Random] Choose = (
   choose = { Random.coinToss() }
 )
 
-export def exampleCoin: <Random> = {
+export def exampleCoin: [Random] = {
   use coin, bobChooses
   game(7)
 }
@@ -229,7 +229,7 @@ context State(s) = (
   put: s -> ()
 )
 
-impl state: State(s) = { init, action ->
+def state: State(s) = { init, action ->
   mut s = init
 
   use: State(int) = (
@@ -246,7 +246,7 @@ type GameState = List(player, int)
 
 def s0 = [(#alice, 0), (#bob, 0)]
 
-impl scoreUpdater = (
+def scoreUpdater = (
   ctl return = { p -> 
     put(updateScore(p, get()))
     p
@@ -260,11 +260,11 @@ def updateScore: Player, GameState -> GameState
     }
   }
 
-impl printer: <@Console> State = (
+def printer: [Console] State = (
   ctl return = { x -> printBoard(get()); x }
 )
 
-def printBoard: <@Console> GameState -> () 
+def printBoard: [Console] GameState -> () 
   = { gs ->
     def scores = gs \map { p, s -> "{p} -> {s}" }
     scores \String.join("\n") \println

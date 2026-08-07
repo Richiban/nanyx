@@ -65,7 +65,7 @@ match result
 Manage side effects explicitly through contexts, providing algebraic effect handlers without the complexity:
 ```nanyx
 context Console = (println: string -> ())
-def greet: <Console> string -> () = { name ->
+def greet: [Console] string -> () = { name ->
   println("Hello, {name}!")
 }
 ```
@@ -356,7 +356,7 @@ context type Console = (
 )
 
 -- Use context in function signature
-def greet: <Console> string -> () = { name ->
+def greet: [Console] string -> () = { name ->
   println("Hello, {name}!")
   println("How are you?")
   def response = readLine()
@@ -379,7 +379,7 @@ context type State(a) = (
   set: a -> ()
 )
 
-def counter: <State(int)> () -> int = {
+def counter: [State(int)] () -> int = {
   def current = get()
   set(current + 1)
   current
@@ -390,7 +390,7 @@ context type Raise = (
   ctx raise: string -> a
 )
 
-def safeDivide: <Raise> (int, int) -> int = { x, y ->
+def safeDivide: [Raise] (int, int) -> int = { x, y ->
   if y == 0 -> raise("Division by zero")
   else -> x / y
 }
@@ -637,7 +637,7 @@ context type State(a) = (
   set: a -> ()
 )
 
-def sumdown: <State(int)> int -> int = { sum = 0 ->
+def sumdown: [State(int)] int -> int = { sum = 0 ->
   def i = get()
   if i <= 0 -> sum
   else ->
