@@ -4,11 +4,9 @@ description: "Literal tags and tag unions"
 order: 3
 ---
 
-Tags are a foundational feature in Nanyx, somewhat similar to symbols/atoms in Ruby and Erlang or string literal types in TypeScript and Scala.
+Tags are a foundational feature in Nanyx, somewhat similar to symbols/atoms in Ruby and Erlang or string literal types in TypeScript and Scala. They are the building blocks of _tag unions_, where a tag represents a single named case and tags can be combined into types that represent a choice between cases, with each case optionally carrying its own data. This gives Nanyx a lightweight and structural way to model enums, alternatives, and discriminated unions without introducing a separate kind of type declaration.
 
-A tag is both a value and its own type. The tag name identifies the exact value, which makes tags useful for precise modeling and pattern matching.
-
-Tags use camel-cased names in the same way as other value identifiers, such as `#ok`, `#error`, `#notFound`.
+A tag is both a value and its own type. The tag name identifies the exact value, which makes tags useful for precise modelling and pattern matching. Tags use camel-cased names in the same way as other value identifiers, such as `#ok`, `#error`, `#notFound`.
 
 Tags that start with a capital letter are reserved for use as custom patterns. For the full model and examples, see [Custom patterns](../advanced/custom-patterns).
 
@@ -28,7 +26,7 @@ def y: #mySecondTag = #mySecondTag
 
 # Tag unions
 
-Tag types are most useful when combined into unions. A tag union is a type that can be one of several tagged cases:
+Tag types are most useful when combined into unions. A tag union is a type that can be one of several tagged cases, and can be used anywhere a type is expected. For example, a function that can return either an `#ok` or an `#error` tag can be typed as follows:
 
 ```nanyx
 def f: string -> #ok | #error = { s ->
@@ -56,7 +54,7 @@ type Color =
   | #custom(string)
 ```
 
-In type syntax, a tag with payload is written `#tagName(payloadType)`. The payload can be any type, including a record or another tag union:
+In type syntax, a tag with payload is written `#tagName(PayloadType)`. The payload can be any type, including a record or another tag union:
 
 ```nanyx
 type Shape =
