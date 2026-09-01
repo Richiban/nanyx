@@ -6,16 +6,11 @@ order: 3
 
 Tags are a foundational feature in Nanyx, somewhat similar to symbols/atoms in Ruby and Erlang or string literal types in TypeScript and Scala.
 
-A tag is both a value and a type. The tag name identifies the exact value, which makes tags useful for precise modeling and pattern matching.
+A tag is both a value and its own type. The tag name identifies the exact value, which makes tags useful for precise modeling and pattern matching.
 
-# Tag naming rules
+Tags use camel-cased names in the same way as other value identifiers, such as `#ok`, `#error`, `#notFound`.
 
-Tag naming has both conventions and requirements:
-
-- **Recommended for ordinary tags:** use lower-case tag names such as `#ok`, `#error`, `#readwrite`.
-- **Required for custom-pattern result tags:** tags must start with an uppercase letter after `#` (for example `#Hsl`, `#ParseInt`).
-
-For the full custom-pattern model and examples, see [Custom patterns](../advanced/custom-patterns).
+Tags that start with a capital letter are reserved for use as custom patterns. For the full model and examples, see [Custom patterns](../advanced/custom-patterns).
 
 # Tags as values and types
 
@@ -33,17 +28,25 @@ def y: #mySecondTag = #mySecondTag
 
 # Tag unions
 
-Single tags are most useful when combined into unions. A tag union is a type that can be one of several tagged cases:
+Tag types are most useful when combined into unions. A tag union is a type that can be one of several tagged cases:
+
+```nanyx
+def f: string -> #ok | #error = { s ->
+  ...
+}
+```
 
 ```nanyx
 type Color = #red | #green | #blue
+
+def myFavoriteColor: Color = #green
 ```
 
 Using plain tags gives you an enum-like shape (while remaining structural).
 
 # Payloads
 
-Tags can also carry payload data, which makes them equivalent to discriminated unions:
+Tags can also carry payloads, allowing them to function as discriminated unions or sum types:
 
 ```nanyx
 type Color =
@@ -53,12 +56,18 @@ type Color =
   | #custom(string)
 ```
 
-In type syntax, a tag with payload is written `#tagName(payload)`. The payload can be any type, including a record or another tag union:
+In type syntax, a tag with payload is written `#tagName(payloadType)`. The payload can be any type, including a record or another tag union:
 
 ```nanyx
 type Shape =
   | #circle(float)
   | #rectangle(width: float, height: float)
+```
+
+```nanyx
+type AuthResult =
+  | #authenticated(username: string)
+  | #rejected(#invalidCredentials | #expiredToken)
 ```
 
 # Tags for function flags

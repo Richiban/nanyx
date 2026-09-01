@@ -143,7 +143,7 @@ def check: [Move] = (
   ctl move = { p, n ->
     def m = move(p, n)
 
-    if validMoves(n) \find { == m } \bool ->
+    if validMoves(n) \find { == m } \toBool ->
       resume(m)
     else -> 
       cheat(p)
@@ -232,7 +232,7 @@ context State(s) = (
 def state: State(s) = { init, action ->
   mut s = init
 
-  use: State(int) = (
+  use State(int)(
     get = { s }
     put = { x -> set s = x }
   )
@@ -280,7 +280,7 @@ export def examplePrint1 = {
   game(7)
 }
 
-def replay: <e> int, (<e> () -> a) -> a
+def replay: [e] int, ([e] () -> a) -> a
   = { n, action ->
     use (
       ctl return = { x -> 
