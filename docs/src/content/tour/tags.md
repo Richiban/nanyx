@@ -8,7 +8,7 @@ Tags are a foundational feature in Nanyx, somewhat similar to symbols/atoms in R
 
 A tag is both a value and its own type. The tag name identifies the exact value, which makes tags useful for precise modelling and pattern matching. Tags use camel-cased names in the same way as other value identifiers, such as `#ok`, `#error`, `#notFound`.
 
-Tags that start with a capital letter are reserved for use as custom patterns. For the full model and examples, see [Custom patterns](../advanced/custom-patterns).
+> Tags that start with a capital letter are reserved for use as custom patterns. For the full model and examples, see [Custom patterns](../advanced/custom-patterns).
 
 # Tags as values and types
 
