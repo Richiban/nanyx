@@ -1,5 +1,5 @@
 {
-  "name": "nyx",
+  "name": "nanyx",
   "displayName": "Nanyx",
   "description": "Nanyx language support: syntax highlighting and diagnostics",
   "publisher": "nanyx",
@@ -17,16 +17,16 @@
   ],
   "main": "./dist/extension.js",
   "activationEvents": [
-    "onLanguage:nyx",
-    "onCommand:nyx.typecheckFile"
+    "onLanguage:nanyx",
+    "onCommand:nanyx.typecheckFile"
   ],
   "contributes": {
     "languages": [
       {
-        "id": "nyx",
+        "id": "nanyx",
         "aliases": [
           "Nanyx",
-          "nyx"
+          "nanyx"
         ],
         "extensions": [
           ".nyx"
@@ -36,31 +36,31 @@
     ],
     "grammars": [
       {
-        "language": "nyx",
+        "language": "nanyx",
         "scopeName": "source.nanyx",
         "path": "./syntaxes/nanyx.tmLanguage.json"
       }
     ],
     "commands": [
       {
-        "command": "nyx.typecheckFile",
+        "command": "nanyx.typecheckFile",
         "title": "Nanyx: Typecheck Current File"
       }
     ],
     "configuration": {
       "title": "Nanyx",
       "properties": {
-        "nyx.typecheckOnSave": {
+        "nanyx.typecheckOnSave": {
           "type": "boolean",
           "default": true,
-          "description": "Run Nanyx compiler on save to surface diagnostics."
+          "description": "Run the Nanyx compiler on save to surface diagnostics."
         },
-        "Nanyx.CompilerProject": {
+        "nanyx.compilerProject": {
           "type": "string",
           "default": "compiler/Nanyx.Compiler.Cli/Nanyx.Compiler.Cli.fsproj",
           "description": "Relative path to Nanyx.Compiler.Cli.fsproj in the workspace."
         },
-        "Nanyx.CompilerDotnetPath": {
+        "nanyx.compilerDotnetPath": {
           "type": "string",
           "default": "dotnet",
           "description": "Path to the dotnet executable."

@@ -2,7 +2,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind } from "vscode-languageclient/node";
 
-const COMMAND_TYPECHECK = "nyx.typecheckFile";
+const COMMAND_TYPECHECK = "nanyx.typecheckFile";
 
 let client: LanguageClient | undefined;
 
@@ -19,13 +19,13 @@ export async function activate(context: vscode.ExtensionContext) {
   };
 
   const clientOptions: LanguageClientOptions = {
-    documentSelector: [{ scheme: "file", language: "nyx" }],
+    documentSelector: [{ scheme: "file", language: "nanyx" }],
     synchronize: {
-      configurationSection: "nyx"
+      configurationSection: "nanyx"
     }
   };
 
-  client = new LanguageClient("nyx", "Nanyx Language Server", serverOptions, clientOptions);
+  client = new LanguageClient("nanyx", "Nanyx Language Server", serverOptions, clientOptions);
   context.subscriptions.push(client);
   await client.start();
 
@@ -36,7 +36,7 @@ export async function activate(context: vscode.ExtensionContext) {
       return;
     }
 
-    await client?.sendNotification("nyx/typecheck", { uri: editor.document.uri.toString() });
+    await client?.sendNotification("nanyx/typecheck", { uri: editor.document.uri.toString() });
   });
 
   context.subscriptions.push(typecheckCommand);
