@@ -1,0 +1,66 @@
+---
+import { ChevronDown } from "lucide-react";
+import { getNav } from "@/lib/nav";
+import { sectionIcon } from "@/lib/icons";
+import { cn } from "@/lib/utils";
+
+const nav = await getNav();
+const currentPath = Astro.url.pathname.replace(/\.html$/, "");
+---
+
+<div class="docs-sidebar-overlay" id="docs-sidebar-overlay" data-open="false"></div>
+
+<aside class="docs-sidebar" id="docs-sidebar" data-open="false">
+  <nav class="p-4 space-y-1" aria-label="Documentation">
+    {
+      nav.map((section) => {
+        const Icon = sectionIcon(section.icon);
+        const isActive = currentPath.startsWith(section.basePath);
+        return (
+          <details open={isActive}>
+            <summary class="flex items-center gap-2 w-full px-3 py-2 text-sm font-semibold rounded-md hover:bg-accent transition-colors">
+              <Icon className="h-4 w-4 text-primary" />
+              <span class="flex-1 text-left" style="font-family: 'Space Grotesk', system-ui, sans-serif">
+                {section.title}
+              </span>
+              <ChevronDown className="sidebar-chevron h-3.5 w-3.5 text-muted-foreground transition-transform" />
+            </summary>
+            <div class="ml-4 pl-3 border-l border-border space-y-0.5 mt-1 mb-2">
+              {section.pages.map((page) => (
+                <a
+                  href={page.path}
+                  aria-current={currentPath === page.path ? "page" : undefined}
+                  class={cn(
+                    "block px-3 py-1.5 text-sm rounded-md transition-colors",
+                    currentPath === page.path
+                      ? "bg-accent text-accent-foreground font-medium"
+                      : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                  )}
+                >
+                  {page.title}
+                </a>
+              ))}
+            </div>
+          </details>
+        );
+      })
+    }
+  </nav>
+</aside>
+
+<script>
+  const sidebar = document.getElementById("docs-sidebar");
+  const overlay = document.getElementById("docs-sidebar-overlay");
+  const toggle = document.getElementById("sidebar-toggle");
+
+  function setOpen(open: boolean) {
+    sidebar?.setAttribute("data-open", String(open));
+    overlay?.setAttribute("data-open", String(open));
+    toggle?.setAttribute("aria-expanded", String(open));
+  }
+
+  toggle?.addEventListener("click", () => {
+    setOpen(sidebar?.getAttribute("data-open") !== "true");
+  });
+  overlay?.addEventListener("click", () => setOpen(false));
+</script>

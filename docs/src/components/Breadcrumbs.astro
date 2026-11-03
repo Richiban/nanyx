@@ -1,0 +1,27 @@
+---
+import { ChevronRight } from "lucide-react";
+
+interface Props {
+  items: { label: string; href?: string }[];
+}
+
+const { items } = Astro.props;
+---
+
+<nav class="flex items-center gap-1.5 text-sm text-muted-foreground mb-6" aria-label="Breadcrumb">
+  <a href="/" class="hover:text-foreground transition-colors">Docs</a>
+  {
+    items.map((item) => (
+      <span class="flex items-center gap-1.5">
+        <ChevronRight className="h-3.5 w-3.5" />
+        {item.href ? (
+          <a href={item.href} class="hover:text-foreground transition-colors">
+            {item.label}
+          </a>
+        ) : (
+          <span class="text-foreground font-medium">{item.label}</span>
+        )}
+      </span>
+    ))
+  }
+</nav>

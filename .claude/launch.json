@@ -1,0 +1,1 @@
+{"version":"0.0.1","configurations":[{"name":"docs-dev","runtimeExecutable":"npm","runtimeArgs":["--prefix","docs","run","dev","--","--port","4321"],"port":4321}]}
