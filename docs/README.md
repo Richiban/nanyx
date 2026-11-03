@@ -21,7 +21,8 @@ npm run check    # type-check .astro and .ts files
 - `site/sections.mjs` — the ordered list of sections, their directories and
   sidebar icons. Add a section here and create the matching content directory.
 - `site/shiki-themes.mjs` — the light and dark code themes. The Nanyx grammar
-  comes from `../extension/src/syntaxes/nanyx.tmLanguage.json`.
+  comes from `../extension/syntaxes/nanyx.tmLanguage.json`, the same file the
+  VS Code extension ships.
 - `site/rehype-plugins.mjs` — heading level shift and heading anchor links.
 - `src/pages/docs/[...slug].astro` — the doc page template.
 - `src/components/` — layout pieces. `SearchDialog.tsx` is the only React
