@@ -8,7 +8,12 @@
     "url": "https://github.com/Richiban/nanyx"
   },
   "license": "MIT",
-  "version": "0.1.0",
+  "version": "0.1.1",
+  "icon": "img/nanyx.png",
+  "galleryBanner": {
+    "color": "#5b5bf2",
+    "theme": "dark"
+  },
   "engines": {
     "vscode": "^1.76.0"
   },
