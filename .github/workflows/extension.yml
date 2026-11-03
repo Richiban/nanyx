@@ -69,9 +69,9 @@ jobs:
     needs: build
     if: startsWith(github.ref, 'refs/tags/extension-v')
     runs-on: ubuntu-latest
-    environment: marketplace
     permissions:
       contents: write
+      id-token: write   # lets the job request the GitHub OIDC token that Marketplace trusted publishing exchanges
     steps:
       - uses: actions/setup-node@v4
         with:
@@ -82,10 +82,12 @@ jobs:
           name: nanyx-vsix
           path: extension
 
+      # Trusted publishing: no secret is stored. The `nanyx` Marketplace publisher
+      # has a policy naming this repository and this workflow file (and no
+      # environment, so none is set here), and vsce exchanges the job's OIDC
+      # token for a short-lived Marketplace credential.
       - name: Publish to the Visual Studio Marketplace
-        run: npx --yes @vscode/vsce@3 publish --packagePath nanyx-${{ needs.build.outputs.version }}.vsix
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx --yes @vscode/vsce@3 publish --oidc --packagePath nanyx-${{ needs.build.outputs.version }}.vsix
 
       - name: Publish to Open VSX
         if: env.OVSX_PAT != ''

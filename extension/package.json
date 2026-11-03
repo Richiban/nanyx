@@ -2,7 +2,7 @@
   "name": "nyx",
   "displayName": "Nanyx",
   "description": "Nanyx language support: syntax highlighting and diagnostics",
-  "publisher": "Richibansoft",
+  "publisher": "nanyx",
   "repository": {
     "type": "git",
     "url": "https://github.com/Richiban/nanyx"
