@@ -1,0 +1,42 @@
+---
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import type { NavPage, NavSection } from "@/lib/nav";
+
+interface Props {
+  prev: { page: NavPage; section: NavSection } | null;
+  next: { page: NavPage; section: NavSection } | null;
+}
+
+const { prev, next } = Astro.props;
+const linkClass =
+  "flex-1 group flex items-center gap-3 p-4 rounded-lg border border-border hover:border-primary/30 hover:bg-accent/50 transition-colors";
+---
+
+<div class="flex items-stretch gap-4 mt-12 pt-8 border-t border-border">
+  {
+    prev ? (
+      <a href={prev.page.path} class={linkClass} rel="prev">
+        <ChevronLeft className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
+        <div class="text-right flex-1">
+          <div class="text-xs text-muted-foreground">{prev.section.title}</div>
+          <div class="text-sm font-medium group-hover:text-primary transition-colors">{prev.page.title}</div>
+        </div>
+      </a>
+    ) : (
+      <div class="flex-1" />
+    )
+  }
+  {
+    next ? (
+      <a href={next.page.path} class={linkClass} rel="next">
+        <div>
+          <div class="text-xs text-muted-foreground">{next.section.title}</div>
+          <div class="text-sm font-medium group-hover:text-primary transition-colors">{next.page.title}</div>
+        </div>
+        <ChevronRight className="h-4 w-4 ml-auto text-muted-foreground group-hover:text-primary transition-colors" />
+      </a>
+    ) : (
+      <div class="flex-1" />
+    )
+  }
+</div>

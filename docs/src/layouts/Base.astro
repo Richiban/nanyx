@@ -1,0 +1,54 @@
+---
+import "@/styles/global.css";
+
+interface Props {
+  title: string;
+  description?: string;
+}
+
+const {
+  title,
+  description = "Nanyx is a type-safe, expressive language for building reliable software.",
+} = Astro.props;
+
+const pathname = Astro.url.pathname.replace(/\.html$/, "").replace(/\/index$/, "/");
+const canonical = Astro.site ? new URL(pathname, Astro.site).href : pathname;
+const ogImage = Astro.site ? new URL("/nanyx.svg", Astro.site).href : "/nanyx.svg";
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    <link rel="icon" type="image/svg+xml" href="/nanyx.svg" />
+    <link rel="sitemap" href="/sitemap-index.xml" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Nanyx" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={ogImage} />
+    <meta name="twitter:card" content="summary" />
+
+    <script is:inline>
+      (function () {
+        var media = window.matchMedia("(prefers-color-scheme: dark)");
+        function apply(dark) {
+          document.documentElement.classList.toggle("dark", dark);
+        }
+        apply(media.matches);
+        media.addEventListener("change", function (event) {
+          apply(event.matches);
+        });
+      })();
+    </script>
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>

@@ -1,0 +1,59 @@
+---
+import { render } from "astro:content";
+import DocsLayout from "@/layouts/DocsLayout.astro";
+import Breadcrumbs from "@/components/Breadcrumbs.astro";
+import PrevNext from "@/components/PrevNext.astro";
+import Toc from "@/components/Toc.astro";
+import { getAdjacentPages, getAllPages, type NavPage, type NavSection } from "@/lib/nav";
+import { slugify } from "@/lib/slugify";
+
+export async function getStaticPaths() {
+  const all = await getAllPages();
+  return all.map(({ page, section }) => ({
+    params: { slug: page.entry.id },
+    props: { page, section },
+  }));
+}
+
+interface Props {
+  page: NavPage;
+  section: NavSection;
+}
+
+const { page, section } = Astro.props;
+const { Content, headings } = await render(page.entry);
+const adjacent = await getAdjacentPages(page.path);
+
+const titleId = slugify(page.title);
+const tocHeadings = [
+  { id: titleId, text: page.title, level: 1 },
+  ...headings.map((heading) => ({ id: heading.slug, text: heading.text, level: heading.depth })),
+];
+---
+
+<DocsLayout title={`${page.title} · Nanyx docs`} description={page.description}>
+  <article class="docs-article">
+    <div class="docs-content-col">
+      <Breadcrumbs
+        items={[
+          { label: section.title, href: section.pages[0].path },
+          { label: page.title },
+        ]}
+      />
+      <header class="docs-page-header">
+        <h1 id={titleId} class="docs-page-title">{page.title}</h1>
+        {page.description && <p class="doc-description text-muted-foreground text-base">{page.description}</p>}
+      </header>
+
+      <Toc headings={tocHeadings} variant="mobile" />
+
+      <div class="prose">
+        <Content />
+      </div>
+
+      <PrevNext prev={adjacent.prev} next={adjacent.next} />
+    </div>
+
+    <Toc headings={tocHeadings} variant="desktop" />
+  </article>
+</DocsLayout>

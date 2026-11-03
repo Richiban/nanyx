@@ -1,0 +1,149 @@
+---
+import { ListTree } from "lucide-react";
+
+export interface TocHeading {
+  id: string;
+  text: string;
+  level: number;
+}
+
+interface Props {
+  headings: TocHeading[];
+  /** "mobile" renders the collapsible button shown above the content on small
+   *  screens; "desktop" renders the sticky sidebar list. */
+  variant: "mobile" | "desktop";
+}
+
+const { headings, variant } = Astro.props;
+
+const items = headings.map((heading, index) => {
+  const level = index === 0 ? 1 : Math.min(6, heading.level);
+  return { ...heading, level, indent: Math.max(0, level - 1) * 12 };
+});
+---
+
+{
+  items.length > 0 && variant === "mobile" && (
+    <div class="mb-6 lg:hidden">
+      <button
+        type="button"
+        id="toc-toggle"
+        class="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium hover:bg-accent transition-colors"
+        aria-expanded="false"
+        aria-controls="toc-mobile-panel"
+      >
+        <ListTree className="h-4 w-4" />
+        Table of contents
+      </button>
+      <div class="mt-3 hidden" id="toc-mobile-panel">
+        <nav aria-label="Table of contents" class="toc rounded-lg p-3">
+          <h2 class="text-sm font-semibold mb-2">Contents</h2>
+          <ul class="toc-items max-h-64 overflow-y-auto">
+            {items.map((item) => (
+              <li>
+                <a
+                  href={`#${item.id}`}
+                  class:list={["toc-link", { "toc-h1": item.level === 1 }]}
+                  data-toc-id={item.id}
+                  style={`padding-left: calc(1ch + ${item.indent}px)`}
+                >
+                  {item.text}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      </div>
+    </div>
+  )
+}
+
+{
+  items.length > 0 && variant === "desktop" && (
+    <aside class="docs-toc-aside">
+      <div class="docs-toc-sticky">
+        <nav aria-label="Table of contents" class="toc rounded-lg p-4">
+          <h2 class="text-sm font-semibold mb-2">Contents</h2>
+          <ul class="toc-items max-h-[calc(100vh-9rem)] overflow-y-auto">
+            {items.map((item) => (
+              <li>
+                <a
+                  href={`#${item.id}`}
+                  class:list={["toc-link", { "toc-h1": item.level === 1 }]}
+                  data-toc-id={item.id}
+                  style={`padding-left: calc(1ch + ${item.indent}px)`}
+                >
+                  {item.text}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      </div>
+    </aside>
+  )
+}
+
+<script>
+  // Mobile toggle
+  const toggle = document.getElementById("toc-toggle");
+  const panel = document.getElementById("toc-mobile-panel");
+  toggle?.addEventListener("click", () => {
+    const open = panel?.classList.toggle("hidden") === false;
+    toggle.setAttribute("aria-expanded", String(open));
+  });
+  panel?.addEventListener("click", (event) => {
+    if ((event.target as HTMLElement).closest("a")) {
+      panel.classList.add("hidden");
+      toggle?.setAttribute("aria-expanded", "false");
+    }
+  });
+
+  // Scroll-spy: a heading's section is "active" while any part of it is in view.
+  const links = Array.from(document.querySelectorAll<HTMLAnchorElement>("[data-toc-id]"));
+  const ids = Array.from(new Set(links.map((link) => link.dataset.tocId!)));
+
+  if (ids.length > 0) {
+    const viewportTop = 112;
+    let ticking = false;
+
+    const update = () => {
+      ticking = false;
+      const viewportBottom = window.innerHeight;
+      const active = new Set<string>();
+
+      for (let i = 0; i < ids.length; i++) {
+        const el = document.getElementById(ids[i]);
+        if (!el) continue;
+
+        const sectionTop = el.getBoundingClientRect().top;
+        let sectionBottom: number;
+        if (i + 1 < ids.length) {
+          const nextEl = document.getElementById(ids[i + 1]);
+          sectionBottom = nextEl ? nextEl.getBoundingClientRect().top : viewportBottom;
+        } else {
+          sectionBottom = document.documentElement.getBoundingClientRect().bottom;
+        }
+
+        if (sectionBottom > viewportTop && sectionTop < viewportBottom) {
+          active.add(ids[i]);
+        }
+      }
+
+      for (const link of links) {
+        link.classList.toggle("toc-active", active.has(link.dataset.tocId!));
+      }
+    };
+
+    const onScroll = () => {
+      if (!ticking) {
+        ticking = true;
+        requestAnimationFrame(update);
+      }
+    };
+
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll, { passive: true });
+    requestAnimationFrame(update);
+  }
+</script>
