@@ -79,7 +79,7 @@ def good = {
 
 This is how Nanyx performs escape analysis. Instead of a separate escape-analysis pass, the compiler tracks context requirements in types. If a value's type still needs `$Memory`, it can only be used where `$Memory` is available, so it cannot leak into pure code.
 
-For the detailed proposal, see [Specifications: Context-qualified types](../specifications/context-qualified-types).
+For the detailed proposal, see [Work in progress: Context-qualified types](../work-in-progress/context-qualified-types).
 
 For the general model behind this, see [Contexts: Contexts Are Part of the Type](./contexts#contexts-are-part-of-the-type).
 

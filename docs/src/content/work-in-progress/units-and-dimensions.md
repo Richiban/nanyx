@@ -1,7 +1,7 @@
 ---
 title: "Units and dimensions"
 description: "Compile-time units for numbers"
-order: 7
+order: 2
 ---
 
 > **Status: proposal.** Units of measure are not yet implemented. This page records the intended design and the questions that remain open; see [Open questions](#open-questions) at the end.

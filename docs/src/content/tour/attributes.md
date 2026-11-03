@@ -75,7 +75,7 @@ Marks a unit declaration as a base unit of its dimension. Base units name the di
 @baseUnit unit(s) Seconds: Time
 ```
 
-See [Units and dimensions](../advanced/units-and-dimensions), which is currently a design proposal.
+See [Units and dimensions](../work-in-progress/units-and-dimensions), which is currently a design proposal.
 
 # Notes
 
