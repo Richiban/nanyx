@@ -56,6 +56,8 @@ You can suppress a specific rule by setting its severity to `"none"`:
 shadowedNames = "none"
 ```
 
+Because severity is configured per project, a team that wants strictness can promote an analyzer rule to `"error"`, which then blocks a release build exactly as a compiler error would. This is how "warnings as errors" works in Nanyx: it is a project choice, not a compiler setting.
+
 # Writing custom analyzers
 
 Because analyzers are just modules that conform to the analyzer interface, you can write your own. A custom analyzer receives the typed syntax tree and returns a list of diagnostics:
