@@ -17,7 +17,7 @@ export const sections = [
   { title: "Standard tools", dir: "standard-tools", icon: "Wrench" },
   { title: "Meta", dir: "foundations", icon: "Fingerprint" },
   { title: "Cookbook", dir: "cookbook", icon: "BookOpen" },
-  { title: "Specifications", dir: "specifications", icon: "ScrollText" },
+  { title: "Work in progress", dir: "work-in-progress", icon: "Construction" },
 ];
 
 const contentRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../src/content");

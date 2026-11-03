@@ -1,11 +1,11 @@
 import {
   BookOpen,
+  Construction,
   Fingerprint,
   Languages,
   Library,
   Map,
   Rocket,
-  ScrollText,
   Sparkles,
   View,
   Wrench,
@@ -14,12 +14,12 @@ import {
 
 const iconMap: Record<string, LucideIcon> = {
   BookOpen,
+  Construction,
   Fingerprint,
   Languages,
   Library,
   Map,
   Rocket,
-  ScrollText,
   Sparkles,
   View,
   Wrench,
