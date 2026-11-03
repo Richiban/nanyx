@@ -78,6 +78,17 @@ email \split(on = "@")              -- ["ada", "example.com"]
 
 Note that these all produce plain `string`s (or `int`s, `bool`s and so on), not `$Email`s. Taking a substring of an email address does not give you another email address, and the type system agrees.
 
+The same applies to record shapes. A nominal record is still a record, so its fields can be read with ordinary dot access from any module, even though only the home module can construct one:
+
+```nanyx
+def user: $User = ...
+
+user.name          -- "Ada"
+user.email.length  -- 15
+```
+
+This is often the sweet spot for domain types: construction is controlled, but reading is free, and callers need no accessor functions just to look at the data.
+
 If you wish a nominal type to be completely opaque and not assignable to its underlying shape, you can use a protected type instead.
 
 # Protected (opaque) types
