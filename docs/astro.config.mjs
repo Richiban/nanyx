@@ -1,0 +1,45 @@
+// @ts-check
+import { defineConfig } from "astro/config";
+import react from "@astrojs/react";
+import sitemap from "@astrojs/sitemap";
+import { rehypeHeadingIds, unified } from "@astrojs/markdown-remark";
+import nyxGrammar from "../extension/src/syntaxes/nanyx.tmLanguage.json";
+import { inkNight, paperWhite } from "./site/shiki-themes.mjs";
+import { rehypeHeadingAnchors, rehypeShiftHeadings } from "./site/rehype-plugins.mjs";
+import { sectionRedirects } from "./site/sections.mjs";
+
+export default defineConfig({
+  site: "https://nanyx.dev",
+  trailingSlash: "never",
+  build: {
+    format: "file",
+  },
+  redirects: sectionRedirects(),
+  integrations: [react(), sitemap()],
+  markdown: {
+    processor: unified({
+      rehypePlugins: [rehypeShiftHeadings, rehypeHeadingIds, rehypeHeadingAnchors],
+    }),
+    shikiConfig: {
+      themes: {
+        light: /** @type {any} */ (paperWhite),
+        dark: /** @type {any} */ (inkNight),
+      },
+      langs: [
+        /** @type {any} */ ({
+          ...nyxGrammar,
+          name: "nanyx",
+          scopeName: nyxGrammar.scopeName ?? "source.nanyx",
+          aliases: ["nyx"],
+        }),
+      ],
+    },
+  },
+  vite: {
+    server: {
+      fs: {
+        allow: [".."],
+      },
+    },
+  },
+});

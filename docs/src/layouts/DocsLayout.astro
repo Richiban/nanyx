@@ -1,0 +1,68 @@
+---
+import Base from "./Base.astro";
+import Header from "@/components/Header.astro";
+import Sidebar from "@/components/Sidebar.astro";
+import SearchDialog from "@/components/SearchDialog";
+import { getAllPages } from "@/lib/nav";
+
+interface Props {
+  title: string;
+  description?: string;
+}
+
+const { title, description } = Astro.props;
+
+const searchItems = (await getAllPages()).map(({ page, section }) => ({
+  path: page.path,
+  title: page.title,
+  description: page.description,
+  section: section.title,
+}));
+---
+
+<Base title={title} description={description}>
+  <div class="docs-layout-root">
+    <Header />
+    <div class="docs-layout-body">
+      <Sidebar />
+      <main class="docs-layout-main">
+        <slot />
+      </main>
+    </div>
+    <SearchDialog client:idle items={searchItems} />
+  </div>
+</Base>
+
+<script>
+  // Copy buttons on code blocks.
+  const copyIcon =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
+  const checkIcon =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+
+  for (const pre of document.querySelectorAll<HTMLPreElement>(".prose pre")) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "code-block";
+    pre.parentNode?.insertBefore(wrapper, pre);
+    wrapper.appendChild(pre);
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "copy-button";
+    button.setAttribute("aria-label", "Copy code");
+    button.innerHTML = copyIcon;
+    button.addEventListener("click", async () => {
+      await navigator.clipboard.writeText(pre.innerText.replace(/\n$/, ""));
+      button.innerHTML = checkIcon;
+      setTimeout(() => (button.innerHTML = copyIcon), 2000);
+    });
+    wrapper.appendChild(button);
+  }
+
+  // Heading anchors copy their link to the clipboard as well as navigating.
+  for (const anchor of document.querySelectorAll<HTMLAnchorElement>("[data-heading-anchor]")) {
+    anchor.addEventListener("click", () => {
+      navigator.clipboard.writeText(anchor.href).catch(() => {});
+    });
+  }
+</script>
