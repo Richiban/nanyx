@@ -1,6 +1,8 @@
-node_modules/
 .vscode/
 src/
 server/
 *.ts
-*.map
+**/*.map
+tsconfig.json
+package-lock.json
+*.vsix
