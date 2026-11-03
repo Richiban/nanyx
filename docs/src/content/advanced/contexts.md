@@ -62,7 +62,7 @@ def greet: [Console] = {
 
 This is also how scoped mutation is enforced: values that still require `memory` cannot escape into code that does not provide that context. See [Memory: Values cannot escape memory scope](../advanced/memory#values-cannot-escape-memory-scope).
 
-For a formal proposal of type-level context requirements, see [Specifications: Context-qualified types](../specifications/context-qualified-types).
+For a formal proposal of type-level context requirements, see [Work in progress: Context-qualified types](../work-in-progress/context-qualified-types).
 
 # Combining contexts
 
