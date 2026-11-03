@@ -20,13 +20,13 @@ import {
 } from "vscode-languageserver/node";
 import { TextDocument } from "vscode-languageserver-textdocument";
 
-interface NyxSettings {
+interface NanyxSettings {
   typecheckOnSave: boolean;
   compilerProject: string;
   compilerDotnetPath: string;
 }
 
-const defaultSettings: NyxSettings = {
+const defaultSettings: NanyxSettings = {
   typecheckOnSave: true,
   compilerProject: "compiler/Nanyx.Compiler.Cli/Nanyx.Compiler.Cli.fsproj",
   compilerDotnetPath: "dotnet"
@@ -67,7 +67,7 @@ connection.onDidChangeConfiguration(() => {
   // no-op; settings fetched on demand
 });
 
-connection.onNotification("nyx/typecheck", async (params: { uri: string }) => {
+connection.onNotification("nanyx/typecheck", async (params: { uri: string }) => {
   const document = documents.get(params.uri);
   if (document) {
     await runDiagnostics(document, true);
@@ -107,12 +107,12 @@ async function runDiagnostics(document: TextDocument, requireSaved: boolean) {
   connection.sendDiagnostics({ uri: document.uri, diagnostics: [] });
 }
 
-async function getSettings(_uri: string): Promise<NyxSettings> {
+async function getSettings(_uri: string): Promise<NanyxSettings> {
   if (!hasConfigurationCapability) {
     return defaultSettings;
   }
 
-  const settings = await connection.workspace.getConfiguration({ section: "nyx" });
+  const settings = await connection.workspace.getConfiguration({ section: "nanyx" });
   return {
     typecheckOnSave: settings.typecheckOnSave ?? defaultSettings.typecheckOnSave,
     compilerProject: settings.compilerProject ?? defaultSettings.compilerProject,
@@ -133,7 +133,7 @@ function resolveWorkspaceRoot(filePath: string): string | null {
 
 function resolveProjectPath(workspaceRoot: string, projectSetting: string): string {
   if (!projectSetting) {
-    return path.join(workspaceRoot, "parser", "NyxCompiler.Cli", "NyxCompiler.Cli.fsproj");
+    return path.join(workspaceRoot, defaultSettings.compilerProject);
   }
 
   if (path.isAbsolute(projectSetting)) {

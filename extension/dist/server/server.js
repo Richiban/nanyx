@@ -40,7 +40,7 @@ const node_1 = require("vscode-languageserver/node");
 const vscode_languageserver_textdocument_1 = require("vscode-languageserver-textdocument");
 const defaultSettings = {
     typecheckOnSave: true,
-    compilerProject: "parser/NyxCompiler.Cli/NyxCompiler.Cli.fsproj",
+    compilerProject: "compiler/Nanyx.Compiler.Cli/Nanyx.Compiler.Cli.fsproj",
     compilerDotnetPath: "dotnet"
 };
 const connection = (0, node_1.createConnection)(node_1.ProposedFeatures.all);
@@ -68,7 +68,7 @@ connection.onInitialized(() => {
 connection.onDidChangeConfiguration(() => {
     // no-op; settings fetched on demand
 });
-connection.onNotification("nyx/typecheck", async (params) => {
+connection.onNotification("nanyx/typecheck", async (params) => {
     const document = documents.get(params.uri);
     if (document) {
         await runDiagnostics(document, true);
@@ -105,7 +105,7 @@ async function getSettings(_uri) {
     if (!hasConfigurationCapability) {
         return defaultSettings;
     }
-    const settings = await connection.workspace.getConfiguration({ section: "nyx" });
+    const settings = await connection.workspace.getConfiguration({ section: "nanyx" });
     return {
         typecheckOnSave: settings.typecheckOnSave ?? defaultSettings.typecheckOnSave,
         compilerProject: settings.compilerProject ?? defaultSettings.compilerProject,
@@ -124,7 +124,7 @@ function resolveWorkspaceRoot(filePath) {
 }
 function resolveProjectPath(workspaceRoot, projectSetting) {
     if (!projectSetting) {
-        return path.join(workspaceRoot, "parser", "NyxCompiler.Cli", "NyxCompiler.Cli.fsproj");
+        return path.join(workspaceRoot, defaultSettings.compilerProject);
     }
     if (path.isAbsolute(projectSetting)) {
         return projectSetting;

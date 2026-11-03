@@ -38,7 +38,7 @@ exports.deactivate = deactivate;
 const path = __importStar(require("path"));
 const vscode = __importStar(require("vscode"));
 const node_1 = require("vscode-languageclient/node");
-const COMMAND_TYPECHECK = "nyx.typecheckFile";
+const COMMAND_TYPECHECK = "nanyx.typecheckFile";
 let client;
 async function activate(context) {
     const serverModule = context.asAbsolutePath(path.join("dist", "server", "server.js"));
@@ -51,12 +51,12 @@ async function activate(context) {
         }
     };
     const clientOptions = {
-        documentSelector: [{ scheme: "file", language: "nyx" }],
+        documentSelector: [{ scheme: "file", language: "nanyx" }],
         synchronize: {
-            configurationSection: "nyx"
+            configurationSection: "nanyx"
         }
     };
-    client = new node_1.LanguageClient("nyx", "Nyx Language Server", serverOptions, clientOptions);
+    client = new node_1.LanguageClient("nanyx", "Nanyx Language Server", serverOptions, clientOptions);
     context.subscriptions.push(client);
     await client.start();
     const typecheckCommand = vscode.commands.registerCommand(COMMAND_TYPECHECK, async () => {
@@ -65,7 +65,7 @@ async function activate(context) {
             vscode.window.showInformationMessage("No active editor to typecheck.");
             return;
         }
-        await client?.sendNotification("nyx/typecheck", { uri: editor.document.uri.toString() });
+        await client?.sendNotification("nanyx/typecheck", { uri: editor.document.uri.toString() });
     });
     context.subscriptions.push(typecheckCommand);
 }
