@@ -6,7 +6,7 @@ order: 2
 
 The `io` module provides functions for reading from and writing to standard I/O.
 
-All functions in this module require a `Console` context.
+All functions in this module require a `Console` context. The program's `@entry` function runs in `Console`, so they are available in `main` without any setup; any other function that calls them must declare `[Console]` in its type.
 
 # println
 
@@ -74,7 +74,7 @@ Prints a debug representation of any value and returns it. Useful for inspecting
 
 ```nanyx
 [1, 2, 3]
-  \list.map { * 2 }
+  \map { * 2 }
   \dbg
 -- Prints: [2, 4, 6]
 ```

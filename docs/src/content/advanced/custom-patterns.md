@@ -51,7 +51,7 @@ pattern int -> #Even | #Odd = { n ->
 
 Custom patterns can be partial (meaning they might not match all possible inputs). For a pattern to be partial, one of its return values must be a wildcard (`_`).
 
-As a convenience, Nanyx allows a partial pattern with exactly one choice and no output valuess to return a `bool` instead of an explicit tag:
+As a convenience, Nanyx allows a partial pattern with exactly one choice and no output values to return a `bool` instead of an explicit tag:
 
 ```nanyx
 pattern int -> #Zero | _  = { n -> n == 0 }
@@ -85,22 +85,23 @@ match getUserInput()
 Patterns can also take arguments, which are values that are passed in when the pattern is used. This allows for more flexible and reusable patterns and are useful for complex conditions like regex matching:
 
 ```nanyx
-pattern Regex -> string -> #MatchesRegex | _  = { s, r ->
+pattern Regex -> string -> #MatchesRegex | _  = { r, s ->
   s \Regex.matches(r)
 }
 
 match userInput
-  | #MatchesRegex("[^@]+@\w+\.\w+") -> "valid email"
+  | #MatchesRegex('[^@]+@\w+\.\w+') -> "valid email"
   | _ -> "invalid format"
 ```
 
-A pattern with arguments has the form `<args> -> <input> -> <output>`, where the first part is the argument type, the second part is the input type that the pattern matches against, and the third part is the output tag union indicating match success or failure.
+A pattern with arguments has the form `<args> -> <input> -> <output>`, where the first part is the argument type, the second part is the input type that the pattern matches against, and the third part is the output tag union indicating match success or failure. The pattern's function receives the arguments first and the input second, in the same order as the signature.
+
+At the use site, a pattern declared with arguments always takes two parenthesised groups: the arguments first, then the payload to destructure. When the pattern's result tag carries no payload, the second group is omitted, as in `#MatchesRegex(...)` above. The compiler knows which patterns take arguments from their declarations, so there is no ambiguity with an ordinary tag such as `#circle(r)`, whose single group is always a payload.
 
 ```nanyx
--- A pattern that checks whether a string contains a given character and splits on it
-pattern char -> string -> #SplitOnChar(string, string) | _ = { c, s ->
-  def parts = s.split(c)
-  if parts.length == 2 then #SplitOnChar(parts[0], parts[1]) else _
+-- A pattern that checks whether a string contains a given separator and splits on it
+pattern string -> string -> #SplitOnChar(string, string) | _ = { c, s ->
+  if [a, b] = s \split(on = c) then #SplitOnChar(a, b) else _
 }
 
 match "hello,world"

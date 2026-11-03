@@ -13,18 +13,18 @@ In any programming language, if the user wishes to call a series of functions on
 ```nanyx
 def getStreamFromInput: Request -> Stream(Byte) = ...
 def getBytesFromStream: Stream(Byte) -> string = ...
-def serialisePerson: string -> Person = ...
+def deserialisePerson: string -> Person = ...
 
-def personObj = getStreamFromInput(getBytesFromStream(serialisePerson(request)))
+def personObj = deserialisePerson(getBytesFromStream(getStreamFromInput(request)))
 ```
 
-Piping makes sequences of function calls easy to readpby allowing the functions to be written in the order they are executed—and is the preferred style for expressions containing nested function calls:
+Piping makes sequences of function calls easy to read by allowing the functions to be written in the order they are executed—and is the preferred style for expressions containing nested function calls:
 
 ```nanyx
 def personObj = request
   \getStreamFromInput
   \getBytesFromStream
-  \serialisePerson
+  \deserialisePerson
 ```
 
 # Piping with extra arguments
@@ -62,14 +62,14 @@ def result = fold([1, 2, 3], 0, { + })
 
 # Qualified piping
 
-If the function is [attached](../advanced/attached-definitions) to the type on the left-hand side of the `\`, the function does not need to be qualified with the module or type name:
+If the function is [attached](../advanced/attached-definitions) to the type on the left-hand side of the `\`, the function does not need to be qualified with the type name. `x \f` resolves `f` by the type of `x` in exactly the same way that `x.f` does (see [Dot access](../advanced/attached-definitions#dot-access)); the two differ only in that `\` is preferred for chains and whenever extra arguments are passed.
 
 ```nanyx
--- In regular function synax we must qualify the function with the module name
-def parts = String.split("hello world", " ")
+-- In regular function syntax we must qualify the function with the type name
+def parts = String.split("hello world", on = " ")
 
--- With piping, we can omit the module name because we know the type of the first argument before we need to identify the function
-def parts = "hello world"\split(" ")
+-- With piping, we can omit the type name because we know the type of the first argument before we need to identify the function
+def parts = "hello world" \split(on = " ")
 ```
 
 Note that the function can still be qualified in a pipe expression if desired; it might also be required if the type of the first argument has not yet been determined by the time the function is identified:

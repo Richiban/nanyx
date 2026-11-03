@@ -73,7 +73,7 @@ type AuthResult =
 Tag unions are great for readable flags and mode parameters. They make legal options explicit in the function type:
 
 ```nanyx
-def openFile: string, (#read | #readwrite) -> File
+def openFile: (string, (#read | #readwrite)) -> File
   = { fileName, mode ->
     ...
   }
@@ -115,7 +115,7 @@ That said, converting a tag to text gives the expected name:
 ```nanyx
 def t = #readwrite
 
-t.toString()   -- "#readwrite"
+t.toString   -- "#readwrite"
 ```
 
 This is useful for logging and debugging, but it does not change the underlying runtime type of the value.

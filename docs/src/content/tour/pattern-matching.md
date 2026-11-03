@@ -30,7 +30,7 @@ match value
   | _ -> "something else"
 ```
 
-The compiler will emit an error if it detects that a pattern is unreachable due to a previous pattern matching all possible cases.
+A match that does not cover every possible value is a compiler error. An arm that can never be reached, because an earlier arm already matches everything it would, is not an error (the program is still correct), so it is reported by the [analyzer](../advanced/analyzers) as a warning instead.
 
 # Introducing values
 
@@ -65,7 +65,7 @@ In this example, the pattern `[head, ...tail]` matches a non-empty list, binding
 def (x, y) = (10, 20)
 ```
 
-Destructuring is available in pattern matching, allowing for simulatneous testing of data and extracting values at the same time:
+Destructuring is available in pattern matching, allowing for simultaneous testing of data and extracting values at the same time:
 
 ```nanyx
 match p
@@ -84,11 +84,11 @@ Records can also be destructured in patterns, allowing you to match on specific 
 
 ```nanyx
 match r
-  | (name = "Alice", ...) -> "Alice is {age} years old"
-  | (name = name, age = age) -> "Alice is {age} years old"
+  | (name = "Alice", ...) -> "Found Alice"
+  | (name, age) -> "{name} is {age} years old"
 ```
 
-Here, the pattern `(name = "Alice", ...)` matches any record where the `name` field is "Alice", while ignoring all other fields. The second pattern matches any record with `name` and `age` fields, binding them to variables.
+Here, the pattern `(name = "Alice", ...)` matches any record where the `name` field is "Alice", while ignoring all other fields. The second pattern matches any record with `name` and `age` fields, binding them to variables. Writing a named field as just `name` is shorthand for `name = name`, binding the field to a local of the same name.
 
 As with tuples, records patterns must be of the correct shape to match the type being matched, and all fields must be accounted for either by matching them directly or using the spread operator to ignore them.
 
@@ -131,10 +131,10 @@ def processRequests: list(Request) -> string = { requests ->
       "No requests"
     | [(id = 1, status = #some(value), tags = ["urgent", ...rest]), ...more] ->
       "Urgent request 1 with value {value}"
-    | [(id, status = #error(msg), tags = []), (status = #some(val), ...), ...tail] ->
+    | [(id = id, status = #error(msg), tags = []), (status = #some(val), ...), ...tail] ->
       "Error in request {id}: {msg}, followed by success"
-    | [(status = #some(n), ...), ...rest] & requests & (length = { > 5 }) ->
-      "Multiple requests with first one ok, total: {requests->length}"
+    | [(status = #some(n), ...), ...rest] & requests & { .length > 5 } ->
+      "Multiple requests with first one ok, total: {requests.length}"
     | _ -> 
       "Other pattern"
 }
@@ -159,7 +159,7 @@ def describeNumber: int -> string = { n ->
 Since a function whose entire body is a pattern match is so common, you can merge the function definition and match patterns together:
 
 ```nanyx
-rec sumList: list(int) -> int = {
+def sumList: list(int) -> int = {
   | [] -> 0
   | [head, ...tail] -> head + sumList(tail)
 }
@@ -168,7 +168,7 @@ rec sumList: list(int) -> int = {
 This is purely syntactic sugar, but it can also aid in readability by joining together the code paths of a function with the function's parameters, for example:
 
 ```nanyx
-def map: list(a) -> (a -> b) -> list(b) = {
+def map: (list(a), (a -> b)) -> list(b) = {
   | []             , _ -> []
   | [head, ...tail], f -> [f(head), ...map(tail, f)]
 }
@@ -186,6 +186,15 @@ match day
   | _ -> "Weekday"
 ```
 
+An or-pattern may span several lines. Every arm must end in `->`, so a `|` that is not preceded by `->` continues the current pattern rather than starting a new arm:
+
+```nanyx
+match day
+  | "Saturday"
+  | "Sunday" -> "Weekend!"
+  | _ -> "Weekday"
+```
+
 # "And" patterns
 
 "And" patterns allow for the combination of multiple patterns that must all match simultaneously. This is done with the `&` operator:
@@ -199,17 +208,19 @@ match getValue()
 
 > **Note:** The Nanyx compiler ensures your patterns are exhaustive — every possible value must be handled. This prevents runtime crashes from unhandled cases.
 
-# If-matching
+# Destructuring bindings
 
-Patterns can be used outside of `match` expressions as well. Simple variable assignments can make use of patterns to destructure values:
+Patterns can be used outside of `match` expressions as well. A `def` binding can use a pattern to destructure the value on the right-hand side:
 
 ```nanyx
 def (x, y) = getCoordinates()
 
-def Hsl(h, s, l) = getColor()
+def #Hsl(h, s, l) = getColor()
 ```
 
-Bear in mind that patterns used in this way must be _total_, meaning they must match all possible values of the type being destructured. For example, if `getCoordinates()` returns a tuple of two integers, then the pattern `(x, y)` is total and will always match. However, if `Hsl` is a _partial_ pattern over the return type of `getColor()` then the pattern `Hsl(h, s, l)` is not total and will cause a compile-time error.
+Bear in mind that patterns used in this way must be _total_, meaning they must match all possible values of the type being destructured. For example, if `getCoordinates()` returns a tuple of two integers, then the pattern `(x, y)` is total and will always match. However, if `#Hsl` is a _partial_ [custom pattern](../advanced/custom-patterns) over the return type of `getColor()` then the pattern `#Hsl(h, s, l)` is not total and will cause a compile-time error.
+
+# If-matching
 
 If the pattern is not total and you only care about a single case, you can use `if` with a pattern instead of a full `match` expression:
 

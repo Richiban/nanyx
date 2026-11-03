@@ -16,6 +16,8 @@ context Console = (
 )
 ```
 
+Contexts are structural by default: any record whose members match the declared shape can be loaded as an instance. Prefixing the name with `$` (for example `$Memory`) makes the context nominal, so that only its home module can create instances; see [Nominal and protected types](./nominal-and-protected-types).
+
 # Requiring a context
 
 A function can specify required contexts in its type signature. Here, `sayHello` can call `println` because it runs in `Console`:
@@ -77,7 +79,7 @@ def readAndPrintFile
 
 # Console by default
 
-The program entrypoint runs in `Console`, which is why `println` is available in `main` without extra setup.
+The entry function (the one marked `@entry`, see [Attributes](../tour/attributes)) runs in `Console`, which is why `println` is available in `main` without extra setup.
 
 # Contexts as typeclasses
 
@@ -86,7 +88,7 @@ Contexts can also express typeclass-style constraints. Define a context with the
 ```nanyx
 context Sum(a) = (
   `0`: a
-  `+`: a, a -> a
+  `+`: (a, a) -> a
 )
 
 export def sum: [Sum(a)] list(a) -> a
@@ -105,7 +107,7 @@ Use `Eq(a)` when a function needs equality checks but should stay generic over t
 
 ```nanyx
 context Eq(a) = (
-  `==`: a, a -> bool
+  `==`: (a, a) -> bool
 )
 
 def contains: [Eq(a)] (list(a), a) -> bool = { xs, target ->
@@ -135,7 +137,7 @@ def valueOrDefault: [Default(a)] #some(a) | #none -> a = {
 ```nanyx
 context Sum(a) = (
   `0`: a
-  `+`: a, a -> a
+  `+`: (a, a) -> a
 )
 
 def sum: [Sum(a)] list(a) -> a
@@ -153,7 +155,7 @@ For example, given a `Sum` context:
 ```nanyx
 context Sum(a) = (
   `0`: a
-  `+`: a, a -> a
+  `+`: (a, a) -> a
 )
 ```
 
@@ -172,13 +174,15 @@ def Point.`+` = { a, b ->
 You can call `sum` on a `list(Point)` without explicitly loading a `Sum(Point)` context -- the compiler sees that `Point.``0``` and `Point.``+``` satisfy the context and synthesizes it:
 
 ```nanyx
-def points = [Point(1, 2), Point(3, 4), Point(5, 6)]
+def points = [Point(x = 1, y = 2), Point(x = 3, y = 4), Point(x = 5, y = 6)]
 
 def total = sum(points)
 -- total = Point(x = 9, y = 12)
 ```
 
 This is analogous to how Haskell derives typeclass instances or how Rust resolves trait implementations. The key difference is that in Nanyx the "instance" is just a collection of attached definitions -- there is no separate declaration required.
+
+This is also how arithmetic on the built-in types works. The operators on `int`, `float` and friends are ordinary attached definitions (see [Operators](../tour/operators)), so a concrete expression like `1 + 2` involves no context at all, and generic contexts such as `Sum(a)` or `Num(a)` are synthesized from those same definitions whenever a generic function is called at a concrete type.
 
 ## When synthesis applies
 

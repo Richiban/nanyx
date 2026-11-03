@@ -75,18 +75,24 @@ For operator behavior, see [Operators](../tour/operators). For range syntax, see
 
 # Strings
 
-String literals can use double quotes or single quotes:
-
-```nanyx
-def a = "Hello"
-def b = 'Nanyx'
-```
-
-String interpolation uses `{...}` inside a string literal:
+There are two kinds of string literal. Double-quoted strings support interpolation with `{...}`:
 
 ```nanyx
 def name = "Alex"
 def greeting = "Hello, {name}!"
+```
+
+Single-quoted strings are _raw_: nothing inside them is interpolated or escaped, so braces, backslashes and quotes are taken literally. Use them for JSON, regular expressions, templates, and anything else that contains braces of its own:
+
+```nanyx
+def json = '{"name": "Alice", "age": 30}'
+def emailPattern = '[^@]+@\w+\.\w+'
+```
+
+To write a literal brace inside a double-quoted string, double it:
+
+```nanyx
+def template = "Hello, {name}! Braces look like {{this}}."
 ```
 
 For library string operations (`length`, `split`, `trim`, etc.), see [string stdlib](../stdlib/string).
@@ -104,6 +110,13 @@ Use `<`, `<=`, `>`, `>=` for ordering comparisons:
 
 ```nanyx
 def isAdult = 21 >= 18
+```
+
+Boolean values are combined with the keywords `and`, `or` and `not`:
+
+```nanyx
+def canVote = isAdult and isRegistered
+def needsHelp = not isAdult or isNew
 ```
 
 These operators are part of the language's operator system; see [Operators](../tour/operators) for details.
@@ -173,14 +186,20 @@ def namesAndAges =
 
 # Conditionals
 
-Nanyx uses `if` and supports multi-branch forms:
+`if` is an expression with a `then` branch and an `else` branch:
 
 ```nanyx
-if cond ->
-  someCode()
-else ->
-  someOtherCode()
+def label = if count == 0 then "empty" else "has items"
 
+if cond then
+  someCode()
+else
+  someOtherCode()
+```
+
+When there are more than two cases, use the multi-branch form. This is sugar for a `match` where each arm is a boolean condition, tested in order, with `else` as the final catch-all:
+
+```nanyx
 if | cond1 ->
      someCode()
    | cond2 ->
@@ -188,6 +207,8 @@ if | cond1 ->
    | else ->
      yetMoreCode()
 ```
+
+`if` can also test a pattern; see [Pattern matching](../tour/pattern-matching#if-matching).
 
 # Unimplemented code
 

@@ -107,43 +107,72 @@ def adults = users \filter { .age > 18 }
 
 ## Optional parameters
 
-Prefix a parameter name with `?` to make it optional. The compiler wraps the type in `Option` and inserts `#none` when omitted.
+Suffix a parameter name with `?` to make it optional. If the parameter would otherwise have type `T`, its type becomes `#some(T) | #none`, and `#none` is passed when the caller omits it.
 
 ```nanyx
-def printMessage = { ?message ->
+def printMessage = { message? ->
   message
   \match
-    | #nil -> "You didn't say anything"
-    | #some, msg -> "You said -> {msg}"
+    | #none -> "You didn't say anything"
+    | #some(msg) -> "You said -> {msg}"
   \println
 }
 ```
 
-Default values also make parameters optional while giving you a non-optional value inside the function:
+## Default values
+
+A parameter with a default value is also optional at the call site, but inside the function it has its plain type, with the default used when the caller omits it:
 
 ```nanyx
-def printResults(left = "left", middle, right = "right") ->
-  print "{left}, {middle}, {right}"
+def printResults = { left = "left", middle, right = "right" ->
+  println("{left}, {middle}, {right}")
+}
+
+printResults(middle = "centre")
+-- left, centre, right
 ```
+
+Parameters with defaults are named fields, so callers pass them by name (see [Named parameters](#named-parameters)).
 
 ## Named parameters
 
-If you name parameters in the signature, callers can (in fact, _must_) pass a record with matching fields:
+If you name parameters in the signature, callers _must_ pass those fields by name, and the function body must destructure them by name too. When the local name is the same as the field name, `field = field` can be shortened to just `field`:
 
 ```nanyx
-def replace: (string, replace: string, with: string) -> string = { s, o, r -> ??? }
+def replace: (string, pattern: string, replacement: string) -> string
+  = { s, pattern, replacement -> ??? }
 
-replace("Hello world", replace = "world", with = "Nanyx")
+replace("Hello world", pattern = "world", replacement = "Nanyx")
+```
+
+This is one rule for every call and every record construction: a positional field is passed positionally, a named field is passed by name. See [Positional vs named inference](./type-inference-and-annotations#positional-vs-named-inference) for how this interacts with unannotated functions.
+
+## Annotating lambda parameters
+
+A lambda's parameters and result can be annotated inline when inference needs a nudge or when the types document intent:
+
+```nanyx
+def double = { (x: int): int -> x * 2 }
+```
+
+Named fields can be destructured to a different local name with `field = localName`:
+
+```nanyx
+def magnitude: (x: int, y: int) -> float = { x = innerX, y = innerY ->
+  Math.sqrt(innerX * innerX + innerY * innerY)
+}
 ```
 
 # Callable values
 
-Any value with a type `a -> b` can be called like a function, including dictionaries and strings:
+Any value with a function type can be called like a function. A dictionary is one such value: its type is `k -> #some(v) | #notFound`, and calling it is a lookup.
 
 ```nanyx
-def dict: string -> string = ["Hello" => "Bonjour", "Goodbye" => "Au revoir"]
+def dict: string -> #some(string) | #notFound =
+  ["Hello" => "Bonjour", "Goodbye" => "Au revoir"]
 
-dict("Hello") -- "Bonjour"
+dict("Hello") -- #some("Bonjour")
+dict("Hola")  -- #notFound
 ```
 
 # Higher-order functions
@@ -169,13 +198,13 @@ Since a function that consists only of a pattern match on its arguments is so co
 
 ```nanyx
 -- Simple pattern matching function
-rec sumList: list(int) -> int = {
+def sumList: list(int) -> int = {
   | [] -> 0
   | [head, ...tail] -> head + sumList(tail)
 }
 
 -- Multiple arguments with patterns
-def divide: int, int -> Result(int, #divideByZero) = { 
+def divide: (int, int) -> Result(int, #divideByZero) = { 
   | _, 0 -> #error(#divideByZero)
   | x, y -> #some(x / y)
 }
@@ -191,17 +220,31 @@ def classify: int -> string = {
 
 # Recursive functions
 
-Use the `rec` keyword to define recursive functions:
+Top-level definitions in a module all share one scope (see [Declaration order](./modules#declaration-order)), so a top-level function can call itself without any extra syntax:
 
 ```nanyx
-rec factorial: int -> int = { n ->
+def factorial: int -> int = { n ->
   if n <= 1 then 1
   else n * factorial(n - 1)
 }
 
-rec length: list(a) -> int = {
+def length: list(a) -> int = {
   | [] -> 0
   | [_, ...tail] -> 1 + length(tail)
+}
+```
+
+A definition inside a function body is different: it is only in scope _after_ it has been defined, so its own body cannot see it. Use the `rec` keyword to make a local definition visible to itself:
+
+```nanyx
+def countdown = { n ->
+  rec loop = { i ->
+    if i > 0 then
+      println("{i}")
+      loop(i - 1)
+  }
+
+  loop(n)
 }
 ```
 
@@ -229,7 +272,7 @@ Here `loop` is internal to `sum`, and `acc` stores the running result. Each recu
 Functions can be composed to create new functions:
 
 ```nanyx
-def compose: (b -> c), (a -> b) -> (a -> c) = { f, g ->
+def compose: ((b -> c), (a -> b)) -> (a -> c) = { f, g ->
   { x -> f(g(x)) }
 }
 
@@ -286,7 +329,7 @@ Functions without effects (no contexts) are pure - they always return the same o
 
 ```nanyx
 -- Pure function
-def add: int, int -> int = { x, y -> x + y }
+def add: (int, int) -> int = { x, y -> x + y }
 
 -- Effectful function (requires context)
 def greet: [Console] string -> () = { name ->
@@ -299,7 +342,7 @@ def greet: [Console] string -> () = { name ->
 ## Map Implementation
 
 ```nanyx
-rec map: list(a), (a -> b) -> list(b) = { xs, f ->
+def map: (list(a), (a -> b)) -> list(b) = { xs, f ->
   match xs
     | [] -> []
     | [head, ...tail] -> [f(head), ...map(tail, f)]
@@ -309,20 +352,19 @@ rec map: list(a), (a -> b) -> list(b) = { xs, f ->
 ## Filter implementation
 
 ```nanyx
-rec filter: list(a), (a -> bool) -> list(a) = { xs, predicate ->
+def filter: (list(a), (a -> bool)) -> list(a) = { xs, predicate ->
   match xs
     | [] -> []
     | [head, ...tail] ->
-        if predicate(head)
-          -> [head, ...filter(tail, predicate)]
-          else -> filter(tail, predicate)
+        if predicate(head) then [head, ...filter(tail, predicate)]
+        else filter(tail, predicate)
 }
 ```
 
 ## Fold implementation
 
 ```nanyx
-rec fold: (list(a), b, (b, a) -> b) -> b = { xs, acc, f ->
+def fold: (list(a), b, ((b, a) -> b)) -> b = { xs, acc, f ->
   match xs
     | [] -> acc
     | [head, ...tail] -> fold(tail, f(acc, head), f)
@@ -346,15 +388,15 @@ function or give it a specification, but if we wanted to it would look like
 this:
 
 ```nanyx
-def id: α -> α = { x -> x }
+def id: a -> a = { x -> x }
 ```
 
 The lowercase `a`, when used in a type position, is a type variable (equivalent
 to the concept of 'generics' in other languages). 
 
 ```nanyx
-def head : list(α) -> #some(α) | #emptyList  = { 
-  | []      -> #emptyList
-  | [x, ..] -> #some(x) 
+def head: list(a) -> #some(a) | #emptyList = {
+  | []       -> #emptyList
+  | [x, ...] -> #some(x)
 }
 ```

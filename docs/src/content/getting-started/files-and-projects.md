@@ -19,9 +19,9 @@ import (
 match file.read("input.txt")
   | #some(content) ->
     def words = content
-      \string.split(" ")
-      \list.filter { != "" }
-    println("Word count: {list.length(words)}")
+      \split(on = " ")
+      \filter { != "" }
+    println("Word count: {words.length}")
   | #error(err) ->
     println("Error: {err}")
 ```
@@ -52,36 +52,30 @@ This works well for small scripts, but there is one important rule: a file with 
 
 That means shared files should avoid top-level statements and only define values, functions, types, and modules.
 
-# Project files and module imports
+# Packages and module imports
 
-For larger projects, introduce a project file. In that mode, modules are imported by their declared names instead of by file paths. This keeps imports stable as the project grows and clarifies ownership of modules.
+For larger projects, turn the code into a _package_ by adding a package manifest. In that mode, every source file declares a named module, and modules are imported by their declared names instead of by file paths. This keeps imports stable as the project grows and clarifies ownership of modules.
 
-## Project file format (TOML)
+## Package manifest format (TOML)
 
-Use a `nanyx.toml` file at the project root to declare the entrypoint, source roots, and build options. This is a simple, declarative format that works well for tooling.
+A package is described by a `.nyxpack` file at the package root, written in TOML. It names the package, selects its source files, and lists its dependencies:
 
 ```toml
-[project]
+[package]
 name = "word_counter"
 version = "0.1.0"
-entry = "src/main.nyx"
-source_roots = ["src"]
+sources = ["src/**/*.nyx"]
 
-[module]
-path_style = "module"
-
-[build]
-target = "wasm"
-output = "dist/word_counter.wasm"
-
-[compiler]
-opt_level = "debug"
+[dependencies]
+nanyx.web = "1.4"
 ```
 
-When a project file is present, prefer module imports over file-path imports.
+`nanyx new` creates this file for you. The full manifest format, and how packages are grouped into projects, is covered in [Packages and projects](../tour/packages).
+
+When a package manifest is present, modules are imported by name, and file-path imports are not used.
 
 As a rule of thumb:
 
 - Use single files for quick scripts or experiments.
 - Use file-path imports for small, ad-hoc multi-file code.
-- Use a project file and module imports for longer-lived codebases.
+- Use a package manifest and module imports for longer-lived codebases.

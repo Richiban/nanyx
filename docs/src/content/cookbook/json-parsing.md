@@ -15,21 +15,25 @@ nanyx install nanyx.web
 ```
 
 ```nanyx
+module main
+
 import nanyx.web/json
 
 type User = (name: string, age: int)
 
 def decodeUser: string -> Result(User, DecodeError) = { data ->
   data
-   \ json.decode(json.record(
+    \json.decode(json.record(
       name = json.field("name", json.string)
       age = json.field("age", json.int)
     ))
 }
 
+@entry
 def main = {
-  def data = "{\"name\": \"Alice\", \"age\": 30}"
-  
+  -- A single-quoted string is raw, so the braces are not interpolated
+  def data = '{"name": "Alice", "age": 30}'
+
   match decodeUser(data)
     | #some(user) -> println("Hello, {user.name}!")
     | #error(_) -> println("Invalid JSON")
@@ -45,7 +49,7 @@ def jsonString =
     ("age", json.int(30))
     ("active", json.bool(true))
   ])
-  \ json.toString
+  \json.toString
 
 -- {"name":"Alice","age":30,"active":true}
 ```
@@ -60,7 +64,7 @@ def usersJson =
       ("age", json.int(user.age))
     ])
   }
-  \ json.array
-  \ json.toString
+  \json.array
+  \json.toString
 
 ```

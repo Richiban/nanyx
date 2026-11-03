@@ -13,7 +13,7 @@ What makes Nanyx different is that it also doesn't have a single, universal Opti
 When an operation can fail, Nanyx conventions favor a result-like union with a specific error tag. That is more descriptive than a plain optional value, but it still composes without conversion helpers.
 
 
-The standard library provides a `Result` type, but it follows a convention where any union type with `#some(a)` and other tags can be treated as an [option-like type](../advanced/option-like-types). 
+There is no `Option(a)` alias in the standard library; the standard library provides a `Result(a, e)` alias for `#some(a) | #error(e)`, but everything else follows a convention where any union type containing `#some(a)` can be treated as an [option-like type](../advanced/option-like-types), whatever its other tags are.
 
 ```nanyx
 def List.head = {
@@ -56,7 +56,7 @@ Nanyx still supports option-like values via the `#some` convention and functions
 
 ```nanyx
 def Option.map
-  : (#some(a) | r), (a -> b) -> (#some(b) | r)
+  : ((#some(a) | r), (a -> b)) -> (#some(b) | r)
   = { | #some(a), f -> #some(f(a))
       | other, _ -> other }
 ```

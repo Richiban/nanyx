@@ -6,7 +6,7 @@ order: 12
 
 Modules in Nanyx help organize code into logical units. They provide namespaces for definitions and are the primary unit of encapsulation, controlling visibility.
 
-The common case is that there is a 1:1 relationship between files and modules, but Nanyx also supports declaring multiple modules in a single file or splitting a module across multiple files. The module system is flexible to accommodate different organizational styles.
+The common case is that there is a 1:1 relationship between files and modules, but Nanyx also supports nesting modules inside a file or splitting a module across multiple files. The module system is flexible to accommodate different organizational styles.
 
 Every module is inherently one of two kinds, decided entirely by its declaration: a **named module**, declared with `module name`, or a **script (anonymous) module**, with no module name at all. This is a property of the declaration itself, not of how the module happens to be imported elsewhere.
 
@@ -15,9 +15,12 @@ Every module is inherently one of two kinds, decided entirely by its declaration
 Every Nanyx file optionally starts with a module declaration.
 
 ```nanyx
-@entry module main
+module main
 
-println("Hello from MyApp!")
+@entry
+def main = {
+  println("Hello from MyApp!")
+}
 ```
 
 A named module like `main` above is imported by its module name; it cannot also be imported by file path (see [Importing modules by file path](#importing-modules-by-file-path)).
@@ -26,15 +29,6 @@ If the module declaration is omitted, the module is a script: it has no name, an
 
 ```nanyx
 -- No module name means this is a script module: it can only be imported by file path, and only with an alias
-
-println("Hello from MyApp!")
-```
-
-It is possible to write a module declaration without giving it a name; this keeps the module anonymous (still only importable by file path) but is used in order to attach attributes or documentation to the module:
-
-```nanyx
--- Here we use the module declaration syntax to attach the @entry attribute, even though we don't give the module a name
-@entry module
 
 println("Hello from MyApp!")
 ```
@@ -76,6 +70,8 @@ d.process(...) -- uses the alias `d` for dataProcessing
 
 A plain import like `userManagement` above lifts every exported member of that module directly into scope, unqualified. This is deliberate, and pairs with private-by-default module members ([Exports](#exports)): a module only exports what it explicitly marks with `export`, so the exporting module — not the importer — controls what enters its public API. Because of that, it's safe for a plain import to be open by default; qualification via an alias, and selective imports, remain available whenever you want to be more explicit.
 
+Note that most standard library functions are [attached definitions](../advanced/attached-definitions) such as `List.map` or `String.split`, which are resolved by the type of their receiver (`xs \map f`, `xs.map(f)`) rather than imported as bare names. This is why importing several standard library modules at once rarely produces ambiguous names.
+
 ## Importing modules by file path
 
 Script modules have no module name, so they can only be imported by file path. When importing a file path, you must use an alias to give the module a name in your current scope.
@@ -93,7 +89,7 @@ A named module cannot be imported this way, even if you know its file path:
 -- userManagement.nyx
 module userManagement
 
-export def createUser(...) = ...
+export def createUser = { ... }
 ```
 
 ```nanyx
@@ -200,7 +196,7 @@ def transform: Data -> Data = { data ->
 }
 ```
 
-Modules themselves do not need to be exported; they are available for import by other modules as long as they contain at least one exported definition.
+Modules themselves do not need to be exported; they are available for import by other modules within the same package as long as they contain at least one exported definition. Visibility to other packages is controlled separately, by the `public-modules` list in the package manifest (see [Public modules](./packages#public-modules)).
 
 ## Re-exporting
 
@@ -240,7 +236,7 @@ def a = b + 1
 def b = a + 1
 ```
 
-Being visible everywhere in the module (as `b` is to `a` above) doesn't excuse a genuine initialization cycle — this is a distinct check on top of ordinary name lookup. Recursive *functions* still use the `rec` keyword, as described in [Recursive functions](./functions#recursive-functions); that mechanism is unaffected by this rule.
+Being visible everywhere in the module (as `b` is to `a` above) doesn't excuse a genuine initialization cycle — this is a distinct check on top of ordinary name lookup. A recursive *function* is not a cycle of this kind: its body is not evaluated until it is called, so a top-level function may refer to itself freely. Only recursive definitions local to a function body need the `rec` keyword, as described in [Recursive functions](./functions#recursive-functions).
 
 # Nested modules
 
@@ -268,14 +264,14 @@ If the file has no file-level module declaration, the nested module names are no
 -- looseCode.nanyx
 
 -- The full name of this module is simply `functions`
-module helpers =
-  export def f(x) -> x * 2
-  export def g(x) -> x ** 2
+module functions =
+  export def f = { x -> x * 2 }
+  export def g = { x -> x ** 2 }
 
 -- And the full name of this module is `utils`
 module utils =
-  def helper1() = ...
-  def helper2() = ...
+  def helper1 = { ... }
+  def helper2 = { ... }
 ```
 
 Create hierarchies with dot notation:
@@ -327,7 +323,9 @@ def greeting = println("Hi")    -- Error: `println` requires [Console], which a 
 
 Because ordinary effectful initialization isn't permitted, named modules have no observable source-order initialization semantics: there's no effectful step whose order could ever be seen, which is what makes the order-independence described in [Declaration order](#declaration-order) sound rather than just convenient.
 
-Context-free is not the same as total: a top-level definition can still diverge, panic, or fail at runtime, and this rule doesn't by itself account for intrinsics or any future FFI boundary. The `@entry` module is a deliberate, special-cased exception to all of this — it is the program's execution entry, so its top-level statements run like a script, in source order (see [Attributes](./attributes)).
+Context-free is not the same as total: a top-level definition can still diverge, panic, or fail at runtime, and this rule doesn't by itself account for intrinsics or any future FFI boundary.
+
+Effects enter a program through its entry *function*, the one marked `@entry` (see [Attributes](./attributes)). The runtime provides the `[Console]` context when it calls that function, and every other effectful function is reached from there. There is no exception for the module that contains it: it is an ordinary named module and follows the rules above.
 
 # Script execution order
 
@@ -346,25 +344,34 @@ Not every source file is order-independent — only the declarations inside a na
 
 Avoid circular module dependencies. If module A imports B, then B cannot import A. (This is about dependencies between modules; for cycles between declarations inside a single module, see [Declaration order](#declaration-order).)
 
-Instead, extract shared code to a third module:
-
 ```nanyx
--- Bad: circular dependency
+-- a.nyx (bad: circular dependency)
 module a
-import b  -- A imports B
-
-module b  
-import a  -- B imports A (circular!)
+import b  -- a imports b
 ```
 
 ```nanyx
--- Good: extract shared code
+-- b.nyx
+module b
+import a  -- b imports a (circular!)
+```
+
+Instead, extract the shared code to a third module:
+
+```nanyx
+-- shared.nyx
 module shared
 -- Common definitions
+```
 
+```nanyx
+-- a.nyx
 module a
 import shared
+```
 
+```nanyx
+-- b.nyx
 module b
 import shared
 ```
@@ -420,7 +427,7 @@ def validateEmail: Email -> Result(Email, ValidationError) = { email ->
 
 def generateId: [Random] () -> UserId = {
   -- Implementation detail, not exported
-  UserId(randomInt())
+  randomInt()
 }
 ```
 

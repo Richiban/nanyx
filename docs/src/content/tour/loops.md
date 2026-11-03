@@ -37,7 +37,7 @@ Zip a collection with a range to keep a counter:
 def data = ["one", "two", "three"]
 
 for data, 0.. | item, i ->
-  print "Item number {i} is {item}"
+  print("Item number {i} is {item}")
 ```
 
 # Dictionaries
@@ -45,9 +45,9 @@ for data, 0.. | item, i ->
 When iterating a map or dictionary, the loop variable is a record of the key and value:
 
 ```nanyx
-def dict = ["one" => "uno"; "two" => "dos"]
+def dict = ["one" => "uno", "two" => "dos"]
 
-for dict | key, value -> print "{key} => {value}"
+for dict | key, value -> print("{key} => {value}")
 ```
 
 # Ignoring loop variables
@@ -56,5 +56,21 @@ Use `_` to ignore unused variables:
 
 ```nanyx
 for dict | _, value ->
-  print "Only care about {value}"
+  print("Only care about {value}")
 ```
+
+# While loops
+
+`for` iterates over a collection that already exists. When the number of iterations depends on state that changes as the loop runs, use `while`, which repeats its body for as long as the condition is `true`:
+
+```nanyx
+memory {
+  def remaining = mut 3
+
+  while remaining > 0 ->
+    println("{remaining}...")
+    remaining := remaining - 1
+}
+```
+
+Because the condition has to change for the loop to end, `while` is almost always used together with [the `$Memory` context](../advanced/memory). It is the one low-level loop in the language, and exists so that locally mutable algorithms can be written inside an otherwise immutable interface.

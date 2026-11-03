@@ -6,6 +6,8 @@ order: 5
 
 Mutation in Nanyx is available but bounded. Mutable values require the `$Memory` context, and `memory { ... }` is the helper that creates and scopes that context. This allows internal mutation while keeping external interfaces pure.
 
+`$Memory` is a [nominal context](./nominal-and-protected-types) owned by the standard library, so `memory { ... }` is the only way to obtain an instance of it; user code cannot construct one with `use`.
+
 # Local mutation
 
 ```nanyx
@@ -20,6 +22,8 @@ def sort: [Ord(a)] list(a) -> list(a) = { l ->
 
 # Mutability requires context
 
+`mut e` creates a mutable cell holding the value of `e`, and `:=` replaces its contents. Reading a cell is implicit: using the cell's name where a plain value is expected reads the current contents.
+
 ```nanyx
 def main = {
   def x = mut 0 -- Error: requires $Memory context
@@ -28,18 +32,24 @@ def main = {
 def main = {
   memory {
     def x = mut 0 -- OK
-    x := 1
+    x := x + 1
+    println("{x}") -- prints 1
   }
 }
 ```
 
+The type of a cell records that it requires `$Memory`, which is what prevents it from leaking out of the scope (see below). `:=` is the only assignment operator in the language.
+
 # Mutable collections
+
+Mutable collections such as `MList` are ordinary values with attached operators that update in place. `+=` here is an attached definition on `MList`, not a second kind of assignment.
 
 ```nanyx
 memory {
   def items: MList(int) = []
   items += 1
-  items := items ++ [2, 3]
+  items += 2
+  MList.toList(items) -- [1, 2]
 }
 ```
 

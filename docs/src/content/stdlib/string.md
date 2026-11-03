@@ -6,16 +6,18 @@ order: 4
 
 The `string` module provides functions for working with UTF-8 strings.
 
+These functions are [attached definitions](../advanced/attached-definitions) on `String`, so when the receiver is known to be a string they can be used without qualification: `s \split(on = ",")`, `s.length`, `s.startsWith("nan")`.
+
 # length
 
 ```nanyx
-string.length: string -> int
+String.length: string -> int
 ```
 
 Returns the number of grapheme clusters in the string.
 
 ```nanyx
-string.length("hello")
+String.length("hello")
 -- 5
 ```
 
@@ -24,11 +26,11 @@ string.length("hello")
 # uppercase
 
 ```nanyx
-string.uppercase: string -> string
+String.uppercase: string -> string
 ```
 
 ```nanyx
-string.uppercase("hello")
+String.uppercase("hello")
 -- "HELLO"
 ```
 
@@ -37,11 +39,11 @@ string.uppercase("hello")
 # lowercase
 
 ```nanyx
-string.lowercase: string -> string
+String.lowercase: string -> string
 ```
 
 ```nanyx
-string.lowercase("HELLO")
+String.lowercase("HELLO")
 -- "hello"
 ```
 
@@ -50,11 +52,11 @@ string.lowercase("HELLO")
 # split
 
 ```nanyx
-string.split: (string, on: string) -> list(string)
+String.split: (string, on: string) -> list(string)
 ```
 
 ```nanyx
-string.split("a,b,c", on = ",")
+String.split("a,b,c", on = ",")
 -- ["a", "b", "c"]
 ```
 
@@ -63,11 +65,11 @@ string.split("a,b,c", on = ",")
 # contains
 
 ```nanyx
-string.contains: (string, string) -> bool
+String.contains: (string, string) -> bool
 ```
 
 ```nanyx
-string.contains("hello world", "world")
+String.contains("hello world", "world")
 -- true
 ```
 
@@ -76,11 +78,11 @@ string.contains("hello world", "world")
 # startsWith
 
 ```nanyx
-string.startsWith: (string, string) -> bool
+String.startsWith: (string, string) -> bool
 ```
 
 ```nanyx
-string.startsWith("nanyx", "nan")
+String.startsWith("nanyx", "nan")
 -- true
 ```
 
@@ -89,11 +91,11 @@ string.startsWith("nanyx", "nan")
 # endsWith
 
 ```nanyx
-string.endsWith: (string, string) -> bool
+String.endsWith: (string, string) -> bool
 ```
 
 ```nanyx
-string.endsWith("nanyx", "nyx")
+String.endsWith("nanyx", "nyx")
 -- true
 ```
 
@@ -102,11 +104,11 @@ string.endsWith("nanyx", "nyx")
 # indexOf
 
 ```nanyx
-string.indexOf: (string, string) -> #some(int) | #notFound
+String.indexOf: (string, string) -> #some(int) | #notFound
 ```
 
 ```nanyx
-string.indexOf("hello", "ll")
+String.indexOf("hello", "ll")
 -- #some(2)
 ```
 
@@ -115,11 +117,11 @@ string.indexOf("hello", "ll")
 # replace
 
 ```nanyx
-string.replace: (string, pattern: string, with: string) -> string
+String.replace: (string, pattern: string, replacement: string) -> string
 ```
 
 ```nanyx
-string.replace("hello world", pattern = "world", with = "Nanyx")
+String.replace("hello world", pattern = "world", replacement = "Nanyx")
 -- "hello Nanyx"
 ```
 
@@ -128,11 +130,11 @@ string.replace("hello world", pattern = "world", with = "Nanyx")
 # substring
 
 ```nanyx
-string.substring: (string, start: int, length: int) -> string
+String.substring: (string, start: int, length: int) -> string
 ```
 
 ```nanyx
-string.substring("nanyx", start = 1, length = 3)
+String.substring("nanyx", start = 1, length = 3)
 -- "any"
 ```
 
@@ -141,13 +143,13 @@ string.substring("nanyx", start = 1, length = 3)
 # trim
 
 ```nanyx
-string.trim: string -> string
+String.trim: string -> string
 ```
 
 Removes leading and trailing whitespace.
 
 ```nanyx
-string.trim("  hello  ")
+String.trim("  hello  ")
 -- "hello"
 ```
 
@@ -156,11 +158,11 @@ string.trim("  hello  ")
 # concat
 
 ```nanyx
-string.concat: list(string) -> string
+String.concat: list(string) -> string
 ```
 
 ```nanyx
-string.concat(["Hello", ", ", "World"])
+String.concat(["Hello", ", ", "World"])
 -- "Hello, World"
 ```
 
@@ -169,10 +171,10 @@ string.concat(["Hello", ", ", "World"])
 # join
 
 ```nanyx
-string.join: (list(string), sep: string) -> string
+String.join: (list(string), sep: string) -> string
 ```
 
 ```nanyx
-string.join(["a", "b", "c"], sep = "-")
+String.join(["a", "b", "c"], sep = "-")
 -- "a-b-c"
 ```

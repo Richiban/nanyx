@@ -64,7 +64,7 @@ We also recommend adding a `nanyx format --check` step to your CI pipeline to en
 
 ```nanyx
 -- before
-def add={a,b=>a+b}
+def add={a,b->a+b}
 
 -- after
 def add = { a, b -> a + b }
@@ -85,7 +85,7 @@ def Option.map
 
 # Configuration
 
-The formatter has a small set of configuration options that can be set in a project's `nanyx.toml` file at the project root. These options are intentionally limited to keep style consistent across contributors and projects.
+The formatter has a small set of configuration options that can be set in a `[formatter]` table of the package's `.nyxpack` manifest. These options are intentionally limited to keep style consistent across contributors and projects.
 
 ```toml
 [formatter]

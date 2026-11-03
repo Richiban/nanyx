@@ -11,11 +11,11 @@ Nanyx features a strong static type system with Hindley-Milner type inference. T
 Nanyx can infer most types automatically:
 
 ```nanyx
--- Type is inferred as: (number, number) -> number
+-- Type is inferred as: (int, int) -> int
 def add = { x, y -> x + y }
 
--- Type is inferred as: string -> int
-def length = { s -> s.length }
+-- Type is inferred as: string -> int, from the call to String.length
+def length = { s -> String.length(s) }
 ```
 
 # Type annotations
@@ -40,6 +40,8 @@ def price: float = 19.99
 def name: string = "Alice"
 def active: bool = true
 ```
+
+There is no separate `number` type. Numeric operations are generic over a `Num(a)` [context](../advanced/contexts), and `int` and `float` are the built-in types that satisfy it.
 
 # Record types
 
@@ -89,7 +91,7 @@ Tag unions (also called sum types or discriminated unions) represent values that
 
 ```nanyx
 -- Simple tag union
-type Result(a) = #some(a) | #error(string)
+type Result(a, e) = #some(a) | #error(e)
 
 -- Multiple variants
 type Shape =
@@ -122,17 +124,17 @@ def findUser: UserId -> #some(User) | #notFound = { id ->
 Types can be parameterized with type variables:
 
 ```nanyx
--- Generic function (type parameter α is inferred)
+-- Generic function (the type variable `a` is introduced automatically)
 def identity: a -> a = { x -> x }
 
 -- Generic list operations
-def map: list(a), (a -> b) -> list(b) = { xs, f ->
+def map: (list(a), (a -> b)) -> list(b) = { xs, f ->
   match xs
     | [] -> []
     | [head, ...tail] -> [f(head), ...map(tail, f)]
 }
 
-def zip: list(a), list(b) -> list((a, b)) = { xs, ys ->
+def zip: (list(a), list(b)) -> list((a, b)) = { xs, ys ->
   match (xs, ys)
     | ([], _) -> []
     | (_, []) -> []
@@ -171,5 +173,29 @@ type Validator(a) = a -> bool
 type Transformer(a, b) = a -> b
 
 -- Higher-order function type
-type Mapper(a, b) = (a -> b), list(a) -> list(b)
+type Mapper(a, b) = (list(a), (a -> b)) -> list(b)
 ```
+
+## Function type precedence
+
+In a type, `,` binds tighter than `->`. That means these two annotations are the same type:
+
+```nanyx
+def add: (int, int) -> int = { x, y -> x + y }
+def add: int, int -> int = { x, y -> x + y }
+```
+
+Both describe a function whose single argument is a two-field record of ints. The parenthesised form is the one the formatter emits, and the one used throughout these docs. Parentheses are only _required_ when a function type appears as a field of the argument record, as in `(list(a), (a -> b)) -> list(b)`, so that the inner `->` is not read as the outer one.
+
+# typeof
+
+`typeof x` is a type expression that means "whatever the type of the value `x` is", in the same way as TypeScript's `typeof`. It can be used anywhere a type is expected:
+
+```nanyx
+def defaults = (host = "localhost", port = 8080)
+
+-- Same shape as `defaults`, without restating the record type
+def override: typeof defaults = (host = "example.com", port = 443)
+```
+
+This is useful for referring to the type of a value whose type was inferred rather than declared, such as a builder record passed to `use`.

@@ -79,7 +79,7 @@ def greet: [Console] string -> () = { name ->
 
 The same mechanism (`[Context(...)]`) handles:
 
-- effect requirements (`Console`, `FileSystem`, `Memory`)
+- effect requirements (`Console`, `FileSystem`, `$Memory`)
 - generic capabilities (`Sum(a)`, `Iter(a)`, etc.)
 
 # Contexts vs interfaces: when to choose what
