@@ -1,10 +1,29 @@
+module constraints
 
---  Constraints allow you to specify a type whose values must pass a given predicate.
---  The compiler will then check that all values of that type satisfy the predicate.
+-- Nanyx has no refinement types. A value that must satisfy an invariant is
+-- modelled as a protected nominal type: the representation is hidden outside
+-- this module, so the only way to obtain a value is through a constructor
+-- that checks the invariant.
 
-type Email = s: string where isValidEmail(s)
-def isValidEmail: string -> bool = { s -> s.contains("@") && s.contains(".") }
+export type $Email = private string
 
-type Nat = n: int where n >= 0
+export def $Email.parse: string -> #some($Email) | #invalidEmail = { s ->
+  if s \contains("@") and s \contains(".") then #some($Email(s))
+  else #invalidEmail
+}
 
-type OrderedPair(n: number) = (x: n, y: n) where x < y
+export type $Nat = private int
+
+export def $Nat.of: int -> #some($Nat) | #negative = { n ->
+  if n >= 0 then #some($Nat(n)) else #negative
+}
+
+export type $OrderedPair = private (x: int, y: int)
+
+export def $OrderedPair.of: (int, int) -> #some($OrderedPair) | #notOrdered = { x, y ->
+  if x < y then #some($OrderedPair(x = x, y = y)) else #notOrdered
+}
+
+-- Readers can inspect values but never construct an invalid one
+export def $Email.value: $Email -> string = { $Email(s) -> s }
+export def $Nat.value: $Nat -> int = { $Nat(n) -> n }

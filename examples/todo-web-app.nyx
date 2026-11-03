@@ -1,72 +1,94 @@
-module WebApp
+module todo.server
 
 import (
-  shared
-  system/io
-  liteDb
-  liteDb/nyx
-  liteDb/nyx/extensions
+  todo.shared
+  nanyx/time
 )
 
-def createUsing: LiteDatabase -> ITodoProtocol = { db ->
+-- A server for the todo protocol. The store is a context, so the same
+-- implementation runs over a database in production and over an in-memory
+-- map in tests.
 
-  def todos = db.getCollection("todos"): list(Todo)
+context TodoStore = (
+  findAll: () -> list(Todo)
+  find: TodoId -> #some(Todo) | #notFound
+  insert: Todo -> #some(Todo) | #error(#insertNotSuccessful)
+  update: Todo -> #some(Todo) | #error(#updateNotSuccessful)
+  delete: TodoId -> #some(()) | #error(#deleteNotSuccessful)
+)
 
+-- The store assigns the id
+def newTodo: [Clock] string -> Todo = { description ->
+  Todo(id = 0, description = description, completed = false, dateAdded = Clock.now)
+}
+
+def exists: (#some(Todo) | #notFound) -> #some(Todo) | #error(#todoDoesNotExist) = {
+  | #some(todo) -> #some(todo)
+  | #notFound -> #error(#todoDoesNotExist)
+}
+
+export def createProtocol: [TodoStore & Clock] () -> TodoProtocol = {
   TodoProtocol(
-    allTodos = {
-      todos.findAll()
-          \List.ofSeq
-          \toAsync
+    allTodos = { async { findAll() } }
+
+    addTodo = { description -> async { insert(newTodo(description)) } }
+
+    toggleCompleted = { id -> async {
+      proc {
+        def existing = try exists(find(id))
+        return try update(existing with completed = not existing.completed)
       }
+      \match
+        | #some(todo) -> #updated(todo)
+        | #error(e) -> #updateError(e)
+    }}
 
-    addTodo = { text ->
-      todos.insert(defaultTodo() with description = text)
-        \todos.tryFindById
-        \toAsync
-    }
-
-    toggleCompleted = { id ->
-      def todoId = BsonValue(id)
-
-      match todos.tryFindById(todoId)
-      | #notFound -> updateError(#todoDoesNotExist)
-      | #some(existingTodo) ->
-        def updatedTodo = (existingTodo with completed = !existingTodo.completed)
-        if todos.update(todoId, updatedTodo) -> Updated 
-        else -> UpdateError(#updateNotSuccesful)
-      \toAsync
-
-      def deleteTodo(id) -> 
-        def todoId = BsonValue(id)
-
-        match todos.tryFindById(todoId) 
-        | #notFound -> DeleteError(#todoDoesNotExist)
-        | #some(_) ->
-          match todos.delete(todoId) 
-          | true -> #deleted
-          | false -> DeleteError(#deleteNotSuccesful)
-        \toAsync
-    }
+    deleteTodo = { id -> async {
+      proc {
+        try exists(find(id))
+        try delete(id)
+        return ()
+      }
+      \match
+        | #some(()) -> #deleted
+        | #error(e) -> #deleteError(e)
+    }}
   )
 }
 
+-- An in-memory store that lives for the duration of `action`. The mutable
+-- cells never leave the `memory` scope; only plain values come out.
+export def withInMemoryStore: [Clock] ([TodoStore] () -> a) -> a = { action ->
+  memory {
+    def todos: map(TodoId, Todo) = mut []
+    def nextId = mut 1
 
-def createUsingInMemoryStorage: () -> ITodoProtocol = {
-  --  In-memory collection
-  def memoryStream = MemoryStream()
-  def bsonMapper = NyxBsonMapper()
-  def inMemoryDatabase = LiteDatabase(memoryStream, bsonMapper)
-  createUsing(inMemoryDatabase)
+    use TodoStore(
+      findAll = { todos \Map.values }
+
+      find = { id -> todos(id) }
+
+      insert = { todo ->
+        def saved = todo with id = nextId
+        todos := todos \Map.insert(saved.id, saved)
+        nextId := nextId + 1
+        #some(saved)
+      }
+
+      update = { todo ->
+        todos := todos \Map.insert(todo.id, todo)
+        #some(todo)
+      }
+
+      delete = { id ->
+        todos := todos \Map.remove(id)
+        #some(())
+      }
+    ) in action()
+  }
 }
 
-def seedIntitialData: ITodoProtocol -> () = { todos -> 
-  [
-    "Learn F#"
-    "Learn Fable"
-    "Build Awesome Apps!"
-  ]
-  \map (Description >> todos.addTodo)
-  \Async.parallel
-  \Async.runSynchronously
-  \ignore
+export def seedInitialData: [TodoStore & Clock] () -> () = {
+  for ["Learn Nanyx", "Write a web app", "Ship it"] | description ->
+    insert(newTodo(description))
 }

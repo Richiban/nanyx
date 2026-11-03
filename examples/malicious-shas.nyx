@@ -1,253 +1,88 @@
+module virusTotalChecker
+
 import (
- Flurl
- Flurl.Http
- System
- System.Globalization
- System.Linq
- CsvHelper
+  nanyx/io
+  nanyx/encoding
+  nanyx.web/http
+  nanyx.web/json
 )
 
-println("Welcome to the VirusTotal SHA checker!")
+-- Look up a list of package hashes against the VirusTotal API and write the
+-- malicious ones to a CSV file.
+
+def apiKey = "aisrtearst"
 
 def shas = [
-  "KXZRDb+xqPFWSygCD1lVA5lFfuUBTJ+P8V2Akz6f+50= "
-  "dKyyT0hWDWXKicr8OajeZ2olfeVTo+IvJOIuNpirYqg= "
-  "zgUyYC8TP9i5NJWD5tGFwJfVdjordW5lWLvX7SICdWI= "
-  "R9GtGzxw9zQ2bxZ51BIXk4EHnQXZoyMwOe9Uo+CJKw8= "
-  "dmxPnjzTulEP9g/h0oWDefcUGdQG6tlkOp2XFT0oug4= "
-  "c0VWBFHoddevVkOxwGakMYn8RXq8RkkFyZLSojl/VWI= "
-  "luSkLkv84bHbABDw+YtCGfEQf23CE1D5ZetqlfS+t7A= "
-  "MaqxqTCF4gPkqaHQ3n9myDuN9C14+n29DbtQ516X4RA= "
-  "UHaUmQYXGiTw5diGUmQ39M0NeT1OhQhu1UWq38OCiOU= "
-  "PllmlObHShmRSQ9L3l4kBPwbbVevhJm3/GettE4XOU4= "
-  "e3dQLSNeE7EyMPlQam90l+OdFlFm3oVRI8P0faHweSQ= "
-  "3ryRE6tg0aU4kfbpEhEZ2++QWAyYLBm4uatpKYE3/yQ= "
-  "oEx25zZ6nJJRsY/sZAAlj3FxW2u/YGL326IYzay6MR4= "
-  "W+OIrxkqKTebvSn8LosmEfO5rnOVYV0ClAseXy1/0x4= "
-  "s5iAUNSkbZbK8Uw9BegvEHgFXg13preaF81nETe9Yxk= "
-  "xUEDUMAZYlT9WjJlG/nwvUkNsWuRRmrNJvIitT/CpJk= "
-  "Lng8s3g6dUrEErT4hQxkerKqDPZ/JWIvHK5nOjBJaP4= "
-  "mn68D4THd//35Z60bb2Wj1EMIhzr05ygKQwcnY1D3tM= "
-  "zNdPaVeCQC0U7u+8W77V+C0u3cTljYEgysEjRRtDfHk= "
-  "BsquQfDsEQD1zRfYxMROR1SP3jDrZEcLyGBrKB64BG0= "
-  "AYhC4DU2kugyDKnfjHWF/WjYwXkDLmXCcBqs/V82HfM= "
-  "mqV+EUNkF32C6j5tXJ3xy2AudAZa6qcQzXLqxf7Fyhg= "
-  "NBRGTziyQdnaL2Qd6zosEzh5MtMwiJBMY5sOgsjV7tE= "
-  "KHMzO0CEE/BXjAMY1Qko9BFlsHUSPWc6SnRWftYOl3s= "
-  "jbRO+V12WfZw/VnNuCwawY/68cTZTsIaBNZv/VL7mnA= "
-  "U1DVWMAKk5u1blPQywxt5zBB7X4PiwxuJc+I8/sjWas= "
-  "OEBRuhOKPOlNO07CvyFMnM7iMd49kwEce3xguVhz9AY= "
-  "6j2jOZKjLadldETlmQ64yfx9TElEKSRnpCX7wAz2N1I= "
-  "Nqq/KvdZ/glyuyMloFP1/bfisudc8sZYvA/jqQAYLzQ= "
-  "SncggBCzhP4p8shVeUYEszsuzadVZMl9tsFX0egmSmw= "
-  "dONtHbnIQDSlIvv0MDM7l6IbfU6+apEYzPHsOPU1WEE= "
-  "1o/TkPYNZMPUdKQQf8vX9Ijqu05y0wBi8qWWuzKlU90= "
-  "xf36RXesCICUYsIiCuXeBPYzg7NAu+0GaE+k+oqdLxQ= "
-  "9atIc4vPUk9fARWIKyzd8V3S+jMR1eLN7fHRifyBklg= "
-  "s7ThM2tVnNRtAg/QO/o7geDAfhoNU2sQrBtL45u66Uc= "
-  "1YCs43patg9evP60nI0bcnY2P0FcyIwzH6bNvKxH9lk= "
-  "RHlWC9u5Cg3uM+3SSRRWRHQeExetHUv+vHjil5BnVzM= "
-  "b1G7JEj4i76Hmc7KfA5yi1zUB4AYk7zN/RpxOJKY3gk= "
-  "kU5IZdBciIsdMzI7Xn4bjUFtpykd6lPNRfyE+whyThk= "
-  "2LQloCrm/sSbWCnKUHKy94/BQPB+aRtYTNhXt3VM2DI= "
-  "Ai9uTLeYZeZfcIEswVTWeku+wnFjBIEq4Wi2q9EkSWk= "
-  "dKN7+NHMnGEOBIFAbF6YeVfyZbfgyMpYesnKI6eYUDU= "
-  "u8vFwQBg4FqnzIEVR5OU3A7ZYDBIopqy1b98wuts0wI= "
-  "w0bkhuY8BN+wYpZfV0MpI9efdrenXJS0Q0rkgiKVSDg= "
-  "dapMt1aYGlhGqAs5wDpBbQ6Z3CxaReSaunOxrFG9PAo= "
-  "rZF95GUN8XVCFEQ1pPNwepfMHjotRFfOlKSCZ8NJnBg= "
-  "aiDf4FFtrkAi1p+W8OKKZcXQ9OHuj4lqctRWeX0D6NA= "
-  "YH5ZTdXKKs5CGaGzGNwZlgpqEYUMiJ/VZf/bv8ugJOs= "
-  "19oIZEvvF6MTSq6dxqsEC7h5dTf0WISKFT51OXVNH4w= "
-  "FISit6+FJDJSSJFYKObc8w/712ynhBNmxiUwaEyca60= "
-  "ra3wpuj9FXCsblzQFiYGPn9nrdmDEgZd1S1Lo0vsF6s= "
-  "DS/9mdsgdhU+6pkaf5YX+4qjnVErmifcKeIVE2EP0Y4= "
-  "xaTdfEbJ9dKRUAVNoJRADyegSNryq12DFL32DUn3QnY= "
-  "4oSbttsEqGmEaUkg6kuQ0iMrysL9hB2U0nbVOz1miFA= "
-  "cL7OnWgDRD320hoebpHszRVBecTaEI5bvmIxLYKFjPM= "
-  "EBHhKmuyunE+gHWpEuEMCq+iswLjCL04MMOeaB5KDm0= "
-  "Qofv6vzevM+0NX2E8kRmQjtukBOJWtNoQexvUihZaJs= "
-  "pQTwCeVP6o+wj5+KNWuGWg4STHUz0v2+oLvvA/FxPWA= "
-  "uQgzsxsdR5qj/sEkQ6ifYL6CBOSyxkhEvylPQ2GOOSE= "
-  "D623JLmoAnuJU6IaaAYq7WcreS1kHASGoKSmWkJflzQ= "
-  "NcNZT7dSEoRxpU0Kf7962nL+T2LlP5z01c+ZGdkjhWg= "
-  "O94CEBIRTw1nqNfRw74LWU08FT+3jMUbnQfHmt+OzmQ= "
-  "85BLPuM8H1pPo/BrNyKU4nlPBMNDnJTDdVkCehE1teU= "
-  "BNcfZVyGNgTronopGN1EKVBogD2bdmCAnanpzomghnE= "
-  "rP1ZDPwckHpR4OkZIAnO5LQYQzMGtMk3ZqaXX3t5BB4= "
-  "pNDpvgkWu95iVL4ENc4uNf+a1Cwc+OySZ8s+iDspuho= "
-  "bBXqa8b2WeWlQmE4NOidSZtNL838Xmm4w7eWZEA48dI= "
-  "QSDalwuLEqazkZHALWsD0/PZ0hok6IY70XCAknYVY94= "
-  "aFj/JkyTFr2XiYTGcHGwZ0iTbd4ojvb1/Te8k8KfyT4= "
-  "XhmV26n2N2eBa9kuk7AJFEsXRLthVG9gTM61cCXVImY= "
-  "Y87RW4HQ34dO693T5c0mieyE55zUidGEVz3Eg+XAFkE= "
-  "bG0/9vyQ/g6OvWaHnWqj7+qtHYWfWB5vGh6C2yM8rSU= "
-  "d4egvX4OjL5WKXXRhq6GKXXwSme0iCTQ7hbkilQBlq8= "
-  "C7EqLBrPPEibqVj9WUsRA3Y1zrb8hFxHC7SFJXTusCk= "
-  "rYBbHMewk2KkAHF6V0lD1mYAs3cXJWOoyGfmkM6v29I= "
-  "UAPZrRN+UGGOPDGLJ/PglD8U8lTcqfYLwRnYjUDYfBo= "
-  "JPCnFK8M7c4Ug25+1RHEweqGPAleOfNzAvbbDXgXFso= "
-  "NPNdut9AG/hjLVC7e+G4tfQ7kXMzXOZ7NFZYVNqzcNU= "
-  "NBnkghIQuTGQI6x5FJrpR3+LCDraGbmOkx1VOjbes+A= "
-  "9w3hoWwsexPdEOdF3Wi4wzKhQmxTWBBj1jdtITgYF6U= "
-  "/zLguA7VX7v/aDjNQjqYPkdC4UT6toPuONpCzQbDnfo= "
-  "BGNBPl1PRAQom+GyYJIKygX/D9+Bb8RQyb9GxuEkDFs= "
-  "RhKGymbnjweuqkLEgS5Ir2YPmaJ2fgWtzAeMdulmcak= "
-  "3IfFlNxjtU6SNiWLkEIdIwE/4nzZa25fpOtOcipObW4= "
-  "HzIvo7zqm07S7e4LGApysI3denQWmwQKjHK40h20QaY= "
-  "ihZqckeJWc3+6L/50YZRNhGur02BwXLBiNqBqCROJrU= "
-  "cpFgOO1LlHp+r4PHx/570IE22wJKY+Yy50CVD9/F5rw= "
-  "zwzQNbUU2cFQ+8hdgDvNpDMBzGC3Buk9DuyuxxfUgyQ= "
-  "jXQNFI1PzgfeyaYg7QZxEf56PC99UjiXccq7yQu8zZ0= "
-  "+AfE7gCYPjzt16rw9uF/55LNyDnwJO2v+ScDvxR4Wts= "
-  "QAWQ8otCm5WC/6x1wsJOT8L6XSGNHb33bj0RJfK6p+w= "
-  "RmZkhnJVlniGLiPAs7wBpfWnaDN6dvD700ye/exsbZA= "
-  "+h3Wv70ga0AGK9MF9we+zvbm5kqAEhIL68mzmPr1GQI= "
-  "EA2Edcj7FFjS/DC5Wjzub0fRk8qqdLF861d8fUtZdyk= "
-  "SiWBGNYmvOW65rQczdHGiGHI6KbcpCJYgaK0Mr5dZZo= "
-  "GGihyDEkQIRy1SxUvQs6XM7/8GLw/GFbBxGwhfWBs1I= "
-  "ny7ApCwCpa7RW8YrrifXwUb0vAOdjY/fAD209v/7hgk= "
-  "VyimiOpkmjSMpFH39qPqylH+782e1tjd2b1QfyW21Kg= "
-  "nBLdBZLpN7LkVxX1kHruLMDvZeiSJs6fkN+KeCR30+g= "
-  "Ed0G2/jvX7Wwb/cmiSsBh2tdRT2ZJgesUPc93aaoCfs= "
-  "W3GACjK3Kl37bsg1l6n14ugGMxnDJ1SgEmqAdiioPKI= "
-  "DE/G0qXqvnFGQtGk7OxdxDK7VuEapfYGP/JpZYoyF2w= "
-  "sOk0elS85wzsdAoc+lC3mXA5LZnwd3GoYLAOOQK19/4= "
-  "1sK3I9ReLe4usnSNdZGdrAZGMXGt24JY3Fi6q6cMx7M= "
-  "FeyAJUWrLt/TgIkEqVZmwn5VchATO1odpnUhrNSmrzw= "
-  "5iqLiPnqLjOPphH5Xnvg+xvruBwyb217iOWosUqd8O0= "
-  "7ccrkKOJ5FIOP4BKVouFs1h9pPq4X7bTgDQMpOrUOfM= "
-  "316w5WyPuRiSMt5uq7QMLInqeHfHP0p3jHkMYo3JzC4= "
-  "4FdEDuEaGGax6mtM/otlt1PucJiFKeIuGeHzjaa8rrY= "
-  "5Oiq+mpoHEr9YIEjQpRcPhxrTwMrtOQMCc4oSeJb6Mk= "
-  "5xeRbNnpNwH/v0+G+7hXzWjERuPVy1Ge0EcJDyo6AIs= "
-  "5vVplCUuo8hgLbgbibI1OQIuGXSVme+dJlUBy6DqYSw= "
-  "tA2JU87NIbW/kll0WBD7CzN9VPi8+PanRVsEFPhw1Sc= "
-  "KIJQZaHnOXyN8wRE3NidJBH6WZLHRUHaXelFn7arHj0= "
-  "G8f7tHS2htxdBv6UNwA35wzJoxROU0zxVKQ0poLSeOw= "
-  "VOS/SL7QCJLEziNGbqJoGQgPVBlu/MysHzRsQccz46Y= "
-  "8FU3Ud6WJjilXApT3hSVcdDYDdEXg7GhgV+7xJCjdO4= "
-  "XCbyS+LDBet3oUi379pLuAbapVQ6kdkazfXIRH0r9Nk= "
-  "8+dsc1z6dsdo1Y4fKCp2x1H8vLb/vZuO1XPFXaO5BEw= "
-  "vasxdB7N4Atb70CJg31zJ0CXCQekjY7gioI0vJ+BUno= "
-  "pKxwq5r3U5k0Ie8E99lpKE8vbp8KZmwMpmIz1HuVOI8= "
-  "mTBOAfPXNUHHb4N5uWlhJw7uzRLi752WWE3Vqa64HdU= "
-  "GfNaZ5wRdvrL7wx8NVt0Z+9zOGQ06xuqp9pHoMyvqes= "
-  "HcbHNf2Ir6zHs8ky2AKT1WR7+6MjABAMSDWp25F7eDQ= "
-  "Tfgp/nmSEYvhHa0Kh1j0+YJixv+tAX2Fb1TQXVxtvRs= "
-  "Vz6T0UB9TCqffV754dlXutMePTgucycaX16oLudq0CY= "
-  "4ULurMCgVrt+dwOKQMkYoWuv5cud0sSKMwDwhExBevI= "
-  "7P1VqxPJ46J8GzZtHRE5jnDi2wZ5kWmwv+HXa6+2zvs= "
-  "IOEgZE1a/7qTCRSQ3FDsaAUZY2JahDZucUU5qUNG2e4= "
-  "vzUeGRrofq7XNrwhlEEzmTXjhwprtLGk3zhihar3SZY= "
-  "m+poU45NhkLs7EQ0jToKzxRUYLw/xCJBy01qViKrq0U= "
-  "afF88QpuafTbSxmuc4WzDfa4V0sGRemsogDRviMp9xY= "
-  "+Wbquxr8hPTUKmFWyjhNRnpJBETELcam9ezpXyyqbIM= "
-  "9cc1UjTYXLHKO0M1DWFAKLfXwivm5TatJ7vOuYlCgr4= "
-  "zXBvQnAlJrhSi4Ws5Q+ad4kF+HBu1EMvt8ABb2OFCnc= "
-  "r2MIQ1Te7M0uuA9H2zMU9b9P2TXXq32MKp7tIH/GjR8= "
-  "n1+yjH/gn2ydHSSoRat80n0FnVaVJerftPz7kaKMm9I= "
-  "54Za6NiV8np70J9A+hob36wDaGU3VW3aMhyuJ1yJ+FI= "
-  "BEST1twMqBcs2MVqmgKKJh48/0Ca9a+fr0YywdUi1q4= "
-  "lRmOpm26a+0r0BH7/qyu55tKB4PNuE97ofL9ozHUJ7A= "
-  "Ny4CvBl6jpCqhoeYbTW4Ce69lxgiQoatpOVlZI7UHv0= "
-  "KlKsDcniG+q146s0io+EG5ObkXbFpzPZSnCuXgiBdog= "
-  "7kahz+PXLf9ew7tbucmCyP6AZMZR7pw12sO5HMD5Fs4= "
-  "mDFpoYhNbZvgzQ5K8vcwJfvpK0sCU5QtqyBB1ugphJM= "
-  "4jX8JgTRcoFrSPc2PRhUmnHh4eEhRxatZZGWvf1EJ0M= "
-  "JunWL2/BW4rNSDk6ds96y+E7E3mtBLDG1RgR7cQvrUs= "
-  "D3Cz2LMRHgjuIHuCsFk8Faib9oMFc+4DdgFbN4fB1LE= "
-  "RokJeuZSHLXHFlIVZyx3a6/hH/GkPL97ju+wY6qbT/4= "
-  "FFEhvCulaAuZVX6MM5kcerXpE0ddGmEQfq0doKCEs8g= "
-  "DMbW4WRrg+711W8zgwLp/m03ofmJd3GZfuIEcsZzSo4= "
-  "D/TfW25TLEcCUPvKO4x2RlgK4BdscG4wmiQc+qTaHe8= "
-  "IeoBxJTNNolLry1pKm9H2fj6yaQ8keOcE4+dYEoLfMs= "
-  "bLi2LOT7ldXMoToVZ6z10nJL+Mky1Q7OaqbugxhAy0A= "
-  "igSeRQ9xDPJ+6hdF5O9kJQMr5YzVH1av4hHxYd4qvD4= "
-  "Jd96uQPqiXwfapwU88vmiQf4NpAaLt+f5pqktBaIxNo= "
-  "zduZaaiNtI2sUc+qfbfembdvaqSC40Mzb4wesfrb2i0= "
-  "I26wHYyu40WKK5dNeMh6WzjO9nOU3F42PpIE/SxB8P4= "
-  "4huB/MxlglPeuoguXOdVDfBDvaQcMSLvrgyEcQvePAY= "
-  "Kt4wqk0f++2Q70vIcFS0FowcuUqaFATak0nlINAbOoE= "
-  "1LuYRsHEXae/KCyF6qipTpIxUPRpcpzuGUbRivqiZjk= "
-  "jWRGxp0bIvY54eQYYAqCvdnRkTDDq4c7mXxJs0mFonU= "
-  "HXcwRifeYCkiWy/3THaNwj5SLWl4rfL90DFf0eKsqtk= "
-  "Z1DbgN9ozsQZ0I7F+OEJCQDCsm+BJIa+PIR2BltqJyE= "
-  "6Fp4gyWHRTjb9aMBg3bA/BeSBu7gsk/cfckwpWj78SY= "
-  "yCa4kiPODm0wQJMRyusnxySLbI3XElvbEbPsVHBqtQ4= "
-  "Ejoq0qWF1jQmZ49C9fc2VQMJ8hfyXvLBmsyE6CtGsr8= "
-  "zUyPvpyCvFek87Px0S1ce13oorgYE88eyUrbzV5qgUw= "
-  "r3p3hyFc1GtVOF+ec+rxKVz5CyNvtuI4k56sx3sE7uY= "
-  "Cc3OSU/Q485JBR1bEugFkD67UCU0af2CDxnsCROLZpE= "
-  "6EL/bJaCENStiMBArJlamCOWZIGyDMVjjTXGyOpo8Bk= "
-  "vs/jO9ZRQtWZ8nZe9/JjnveRirIi9UAaesIt4x3z6BE= "
-  "Ilwi2iorz/11G+/Z4nrddPjIuN6l5arJXRskh/rIOfE= "
-  "Z3LEdlaxh6GjXHOcjFmKAgKcyBSYBV5hw01p9y7WTj0= "
-  "JNSDmKkdrhbi+MznaA1xLPIJWjgcRBQRR2bTQGgt9dg= "
-  "fLX7XoNfgeHUGRw+gKGgwl6ZG8zBqLzv9xvX1qo04cA= "
-  "84F4YHGYdCqc+gkDf2L47cHPR1YdD77CmhuO8YJKb6M= "
-  "/o9SU8GBtvilIkK7Uj1Rx32NDfiSRVRR5zKAku5d5mU= "
-  "3wuLPHiZ4Nmf+FxLTH2Jbn+LwxLyUZ5G1pGYGpFDI8A= "
-  "62jcsw8Vv6VuryC2mTFAZlw/nBa/4NdgFIrYSsim0Uk= "
-  "/XqCSng0SOpufZ8l/3od0J087R1ReFpKYrRrvlQloGg= "
-  "oQIu2iWpFGux4AuZpCSRh+9VXBoQd2Bym25bANVXWBs= "
-  "a6HbMghbgCICRIsPW0NdSDQwa77i8ALTwoyWv8mzBy0= "
-  "RNhuzyUQRle0WdebGbjemRpuaBVmHnUzq4qnF5VgQYc= "
-  "A1qiPx0F9r2AIopoVzr84BsglPeLMJURwssfzRCmqnE= "
-  "tl8L8C3+t0KOrGE9q9LAHvCQ+a7Mi6zDs4/PYmeZYdE= "
-  "E3Stfset3mNHi6CrRrop7+aqfuzjFhUmR1e+8xNUTWE= "
+  "KXZRDb+xqPFWSygCD1lVA5lFfuUBTJ+P8V2Akz6f+50="
+  "dKyyT0hWDWXKicr8OajeZ2olfeVTo+IvJOIuNpirYqg="
+  "zgUyYC8TP9i5NJWD5tGFwJfVdjordW5lWLvX7SICdWI="
+  "R9GtGzxw9zQ2bxZ51BIXk4EHnQXZoyMwOe9Uo+CJKw8="
+  "dmxPnjzTulEP9g/h0oWDefcUGdQG6tlkOp2XFT0oug4="
+  "c0VWBFHoddevVkOxwGakMYn8RXq8RkkFyZLSojl/VWI="
 ]
 
-
-def convertSha
-: string -> string
-= { base64Sha ->
-  def bytes = base64Sha \Convert.fromBase64String
-  def hex = bytes \BitConverter.toString
-  hex \replace("-", "") \toLower
-}
-
-type Result = (
+type Verdict = (
   name: string
   sha256base64: string
   sha256hex: string
-  status: string
-  votes: string
+  status: #ok | #malicious
+  maliciousVotes: int
 )
 
-def apiKey = "aisrtearst"
-def results: MList(Result) = []
+type LookupError = #httpError(int) | #badResponse
 
-for shas | sha ->
-  def packageId = convertSha(sha)
+-- VirusTotal identifies files by hex-encoded SHA-256
+def toHex: string -> string = { base64 ->
+  base64 \trim \Base64.decode \Hex.encode \toLower
+}
 
-  async {
-    def res = await "https://www.virustotal.com/api/v3/files/{packageId}"  
-      \withHeader("x-apikey", apiKey)
-      \getJsonAsync()
+type Report = (names: list(string), malicious: int)
 
-    def name =
-      res("data")("attributes")("names")(0) \map(toString)
-      except Err -> "<unknown>"
+def reportDecoder = Json.record(
+  names = Json.path(["data", "attributes", "names"], Json.list(Json.string))
+  malicious = Json.path(["data", "attributes", "last_analysis_stats", "malicious"], Json.int)
+)
 
-    def votes = res("data")("attributes")("last_analysis_stats")
+def checkOk: Response -> #some(Response) | #error(#httpError(int)) = { response ->
+  if response.ok then #some(response) else #error(#httpError(response.status))
+}
 
-    def status = 
-      if votes("malicious") \map(toString) == "0" -> "OK"
-      else "MALICIOUS"
+def lookup: [Http] string -> #some(Verdict) | #error(LookupError) = { sha -> proc {
+  def hex = toHex(sha)
 
-    results 
-      \add(Result(name, sha, packageId, status, votes("malicious").toString()))
+  def response = try Http.get(
+    url = "https://www.virustotal.com/api/v3/files/{hex}"
+    headers = ["x-apikey" => apiKey]
+  ) \Result.then(checkOk)
 
-    println($"Retieved {packageId} ({name}): {status}")
-  } except Err (statusCode = statusCode) ->
-      println("Error ({packageId}): {ex.StatusCode}")
+  def report = try Json.decode(response.body, reportDecoder) \Result.mapError { _ -> #badResponse }
+  def #some(name) = report.names \head except #emptyList -> #some("<unknown>")
 
-def fileName = Moment.now.toString("yyyy-MM-dd_HH-mm-ss") ++ ".csv"
+  return Verdict(
+    name = name
+    sha256base64 = sha
+    sha256hex = hex
+    status = if report.malicious == 0 then #ok else #malicious
+    maliciousVotes = report.malicious
+  )
+}}
 
-manage {
-  def writer = using StreamWriter()
-  def csv = using CsvWriter(writer, #invariantCulture)
+def toCsvLine: Verdict -> string = { v ->
+  [v.name, v.sha256base64, v.sha256hex, "{v.maliciousVotes}"] \String.join(",")
+}
 
-  csv \writeRecords(results \filter { .status == "MALICIOUS" })
+@entry
+def main: [Console & Http & FileSystem & Clock] () -> () = {
+  def verdicts = shas \map(lookup)
+
+  for verdicts | verdict ->
+    match verdict
+      | #some(v) -> println("Retrieved {v.sha256hex} ({v.name}): {v.status}")
+      | #error(#httpError(status)) -> println("HTTP error {status}")
+      | #error(#badResponse) -> println("Unreadable response")
+
+  def malicious = verdicts \Option.values \filter { .status == #malicious }
+  def fileName = Clock.now \format("yyyy-MM-dd_HH-mm-ss") ++ ".csv"
+
+  File.writeLines(fileName, malicious \map(toCsvLine))
 }

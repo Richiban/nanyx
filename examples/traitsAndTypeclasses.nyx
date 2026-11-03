@@ -1,107 +1,75 @@
---  Some types are meant to be implemented directly
---  This is an ".. is a .." relationship
-type Iterator(a) = (moveNext: () -> a | #done)
+module traitsAndTypeclasses
 
+---
+Some abstractions are implemented directly by a type. This is an "is a"
+relationship, and in Nanyx it is a structural record type, possibly
+intersected with others.
+---
+
+type Iterator(a) = (moveNext: () -> #some(a) | #done)
 type Seq(a) = (getIterator: () -> Iterator(a))
+type Collection(a) = Seq(a) & (size: () -> int)
+type Set(a) = Collection(a) & (contains: a -> bool)
+type SortedSet(a) = Set(a) & (min: a, max: a)
 
-type Collection(a) = 
-  Seq(a) & 
-  (size: () -> int)
-    
-type Set(a) = 
-  Collection(a) & 
-  (contains: a -> bool)
-
-type SortedSet(a) = 
-  Set(a) & 
-  (min: a; max: a)
-
-type NumericRange(a: number) = 
-  SortedSet(a)
-  & (min: a, max: a) where min <= max
-
---  Others are meant to be implemented via a separate instance
---  This is a "there exists a .. for .." relationship
-context Monad(m: type -> type) = (
-  lift: a -> m(a)
-  bind: m(a), (a -> m(b)) -> m(b)
-)
-
-default Monad(Option) = (
-  bind = {
-    | #some(x), f -> f(x)
-    | #nil, _     -> #nil
-  }
-
-  lift = { x -> #some(x) }
-)
-
---  For example, there is a Monoid type, and int can be made into a monoid
---  But, crucially, there are multiple ways to make a monoid out of int
---  such as addition, multiplication, bitwise and, bitwise or, etc.
+---
+Others are implemented by a separate instance: a "there exists a ... for ..."
+relationship. In Nanyx that is a context. Crucially, there can be several
+instances for the same type: int is a monoid under addition, under
+multiplication, under bitwise and, and so on.
+---
 
 context Monoid(a) = (
-  empty:   a
-  combine: a, a -> a
+  empty: a
+  combine: (a, a) -> a
 )
 
-def additiveMonoid: Monoid(int) = (
-  empty = 0
-  combine = { x, y -> x + y }
-)
+def additiveMonoid: Monoid(int) = (empty = 0, combine = { x, y -> x + y })
+def multiplicativeMonoid: Monoid(int) = (empty = 1, combine = { x, y -> x * y })
+def bitwiseAndMonoid: Monoid(int) = (empty = -1, combine = { x, y -> Int.bitAnd(x, y) })
+def bitwiseOrMonoid: Monoid(int) = (empty = 0, combine = { x, y -> Int.bitOr(x, y) })
 
-def multiplicativeMonoid: Monoid(int) = (
-  empty = 1
-  combine = { x, y -> x * y }
-)
+def reduce: [Monoid(a)] list(a) -> a = { xs ->
+  xs \fold(empty) { acc, x -> combine(acc, x) }
+}
 
-def bitwiseAndMonoid: Monoid(int) = (
-  empty = 0
-  combine = { x, y -> x .& y }
-)
+def product: list(int) -> int = { xs -> use multiplicativeMonoid in reduce(xs) }
+def total: list(int) -> int = { xs -> use additiveMonoid in reduce(xs) }
 
-def bitwiseOrMonoid: Monoid(int) = (
-  empty = 0
-  combine = { x, y -> x .| y }
-)
-
-def reduce: [Monoid(a)] Seq(a) -> a
-  = { xs ->
-    xs \fold(empty, combine)
-  }
-
-def sum(xs) = use multiplicativeMonoid in reduce(xs)
+---
+When a type has attached definitions that match a context's members, the
+compiler synthesizes the instance, so no declaration is needed.
+---
 
 type Point = (x: int, y: int)
 
-def points = [
-  Point(1, 2)
-  Point(3, 4)
-  Point(5, 6)
-]
-
-def Point.`+` = { a, b -> Point(x = a.x + b.x, y = a.y + b.y) }
-
 def Point.`0` = Point(x = 0, y = 0)
+def Point.`+` = { a, b -> Point(x = a.x + b.x, y = a.y + b.y) }
 
 context Sum(a) = (
   `0`: a
-  `+`: a, a -> a
+  `+`: (a, a) -> a
 )
 
---  We could explicitly define the Sum typeclass instance for Point, but
---  we don't need to; one can be synthesized from the `+` and `0` methods that
---  are defined on Point.
---  These methods are in the global context, so narrower contexts can be automatically
---  synthesized from them.
-default Sum(Point) = (
-  `0` = Point(x = 0, y = 0)
-  `+` = { a, b -> Point(x = a.x + b.x, y = a.y + b.y) }
-)
+def sum: [Sum(a)] list(a) -> a = { items -> items \fold(`0`) { + } }
 
-def sum: [Sum(Point)] list(Point) -> Point
-  = { items ->
-    items \fold(0) { + }
-  }
+def points = [Point(x = 1, y = 2), Point(x = 3, y = 4), Point(x = 5, y = 6)]
 
-def r = points \sum
+-- Sum(Point) is synthesized from Point.`0` and Point.`+`
+def pointTotal = sum(points)   -- Point(x = 9, y = 12)
+
+-- An explicitly loaded instance takes priority over synthesis
+def reverseTotal = {
+  use Sum(Point)(
+    `0` = Point(x = 0, y = 0)
+    `+` = { a, b -> Point(x = a.x - b.x, y = a.y - b.y) }
+  ) in sum(points)
+}
+
+@entry
+def main = {
+  println("{product([1, 2, 3, 4])}")   -- 24
+  println("{total([1, 2, 3, 4])}")     -- 10
+  println("{pointTotal}")
+  println("{reverseTotal}")
+}

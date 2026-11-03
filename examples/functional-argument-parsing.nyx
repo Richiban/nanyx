@@ -1,66 +1,52 @@
+module argumentParsing
+
 type Config = (
-  help   : bool   = false
-  verbose: bool   = false
-  input  : string = ""
-)  
+  help: bool
+  verbose: bool
+  input: string
+)
 
 type Arguments = list(string)
 
-type CliConfigM = StateT(Config, ReaderT(Arguments, Err(String)))
+type ParseError =
+  | #helpRequested
+  | #missingArgument(string)
 
-def indexOf: [Eq(a) & Seq(s)] s(a), a, (start: Nat = 0) -> Nat?
-  = { xs, s, start ->
-    match xs
-    | [] -> #none
-    | [{ == s }, ...] -> #some(start)
-    | [_, ...tail] -> indexOf(tail, s, start = start + 1)
+-- The value following a flag, found by walking the argument list two at a time
+def requiredArgument: (Arguments, string) -> #some(string) | #error(#missingArgument(string))
+  = { args, name ->
+    rec loop = {
+      | [] | [_] -> #error(#missingArgument(name))
+      | [flag, value, ...rest] ->
+        if flag == name then #some(value) else loop([value, ...rest])
+    }
+    loop(args)
   }
 
-def requiredArgument: string -> ReaderT(Arguments, Except(string), string) 
-  = reader { name ->
-    def args = read()
-    
-    def value = 
-      match indexOf?(args, name)
-      | #some(i) if i + 1 < args.length -> args(i + 1)
-      | _ -> ""
-      
-    if value == "" then throw "Command line argument {name} is missing"
-    
-    return value
-  }
+def optionalSwitch: (Arguments, string) -> bool = { args, name -> args \contains(name) }
 
-def optionalSwitch: string -> ReaderT(Arguments, Err(string), bool) 
-  = reader { name ->
-    def args = read()
-    
-    return match indexOf(args, name)
-    | #some(_) -> true
-    | #none -> false 
-  }
-
-def parseArguments: CliConfigM(bool) = {
-  mut config = read ()
-
-  if bind optionalSwitch "--help" ->
-    throw "Usage: example [--help] [--verbose] [--input <input file>]"
-    
-  set config = { config ->
-    verbose = bind optionalSwitch "--verbose"
-    input = bind requiredArgument "--input"
-  }
-
-  set config
-  return true
+def checkHelp: Arguments -> #some(()) | #error(#helpRequested) = { args ->
+  if optionalSwitch(args, "--help") then #error(#helpRequested) else #some(())
 }
 
-def main: [@Console] list(string) -> () = { args ->
-  def config: Config = ( input = "default" )
+-- `proc` short-circuits on the first `#error`, so the happy path reads top to bottom
+def parseArguments: Arguments -> #some(Config) | #error(ParseError) = { args -> proc {
+  try checkHelp(args)
+  def input = try requiredArgument(args, "--input")
 
-  match parseArguments \run(config) \run(args)
-  | #some (_, c) ->
-    println("Processing input '{c.input}' verbose={c.verbose}")
-  | #err(e) -> println("Error: {e}")
+  return Config(
+    help = false
+    verbose = optionalSwitch(args, "--verbose")
+    input = input
+  )
+}}
+
+@entry
+def main = {
+  def args = ["--input", "foo.txt", "--verbose"]
+
+  match parseArguments(args)
+    | #some(config) -> println("Processing input '{config.input}' verbose={config.verbose}")
+    | #error(#helpRequested) -> println("Usage: example [--help] [--verbose] [--input <input file>]")
+    | #error(#missingArgument(name)) -> println("Error: command line argument {name} is missing")
 }
-
-#eval main ["--input", "foo.txt", "--verbose"]

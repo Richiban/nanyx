@@ -1,32 +1,57 @@
-type Item = (
-  price: int
-  count: int
+module vendingMachine
+
+type Item = (price: int, count: int)
+
+type Machine = (
+  inventory: map(string, Item)
+  coinsDeposited: int
 )
 
-def VendingMachine() ->
-  def inventory = dict {
+export type VendError =
+  | #invalidSelection
+  | #outOfStock
+  | #insufficientFunds(int)   -- how many more coins are needed
+
+export def newMachine = Machine(
+  inventory = [
     "Candy Bar" => Item(price = 12, count = 7)
-    "Chips"     => Item(price = 10, count = 4)
-    "Pretzels"  => Item(price = 7, count = 11)
+    "Chips" => Item(price = 10, count = 4)
+    "Pretzels" => Item(price = 7, count = 11)
+  ]
+  coinsDeposited = 0
+)
+
+export def Machine.deposit: (Machine, int) -> Machine = { machine, coins ->
+  machine with coinsDeposited = machine.coinsDeposited + coins
+}
+
+-- Vending is a function from the machine before to the machine after
+export def Machine.vend: (Machine, string) -> #some(Machine) | #error(VendError) = { machine, name ->
+  match machine.inventory(name)
+    | #notFound -> #error(#invalidSelection)
+    | #some(count = 0, ...) -> #error(#outOfStock)
+    | #some(item) ->
+      if item.price > machine.coinsDeposited then
+        #error(#insufficientFunds(item.price - machine.coinsDeposited))
+      else
+        #some(machine with (
+          coinsDeposited = machine.coinsDeposited - item.price
+          inventory = machine.inventory \Map.insert(name, item with count = item.count - 1)
+        ))
+}
+
+@entry
+def main = {
+  def result = proc {
+    def machine = newMachine \deposit(20)
+    def afterChips = try machine \vend("Chips")
+    def afterCandy = try afterChips \vend("Candy Bar")
+    return afterCandy
   }
 
-  mut coinsDeposited = 0
-
-  def vend: [Throws & Console] string -> () 
-    = throws { name ->
-      def item = 
-        inventory \tryGet(name) except 
-          | #notFound -> 
-            return #invalidSelection
-          | #some(count = 0) ->
-            return #outOfStock
-          | #some(price) & { price > coinsDeposited } -> 
-            return #insufficientFunds(item.price - coinsDeposited)
-
-      set coinsDeposited -= item.price
-
-      def newItem = item with (count = item.count - 1)
-      set inventory(name) = newItem
-
-      println("Dispensing {name}")
-    }
+  match result
+    | #some(machine) -> println("Dispensed; {machine.coinsDeposited} coins left")
+    | #error(#invalidSelection) -> println("No such item")
+    | #error(#outOfStock) -> println("Out of stock")
+    | #error(#insufficientFunds(needed)) -> println("Insert {needed} more coins")
+}

@@ -3,7 +3,7 @@ import { defineConfig } from "astro/config";
 import react from "@astrojs/react";
 import sitemap from "@astrojs/sitemap";
 import { rehypeHeadingIds, unified } from "@astrojs/markdown-remark";
-import nyxGrammar from "../extension/src/syntaxes/nanyx.tmLanguage.json";
+import nyxGrammar from "../extension/syntaxes/nanyx.tmLanguage.json";
 import { inkNight, paperWhite } from "./site/shiki-themes.mjs";
 import { rehypeHeadingAnchors, rehypeShiftHeadings } from "./site/rehype-plugins.mjs";
 import { sectionRedirects } from "./site/sections.mjs";

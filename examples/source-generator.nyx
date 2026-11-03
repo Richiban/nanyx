@@ -1,128 +1,77 @@
-module RecordIndexerGenerator
+module recordIndexerGenerator
 
-import (
-  nanyx/collections
-  nanyx/text
-  nanyx/threading
-  nanyx.codeAnalysis/nanyx
-  nanyx.codeAnalysis/nanyx.syntax
-  nanyx.codeAnalysis/text
-)
-
-
-def transform: [Async] GeneratorSyntaxContext -> PartialRecordSyntax 
-  = { ctx, token ->
-    def node =  ctx.node: RecordDeclarationSyntax
-    def symbol = ctx.semanticModel.getDeclaredSymbol(node)!
-
-    def properties = query {
-      def member = from symbol.getMembers()
-      where member is (declaredAccessibility = #public, kind = #property) 
-      def property = member: IPropertySymbol
-      where property.isIndexer is false
-      yield Property(property.name, property.type.toString(), property.getMethod is not null, property.setMethod?.isInitOnly is false)
-    } \toArray()
-
-    PartialRecordSyntax(
-        node.identifier.toString()
-        "{node.keyword} {node.classOrStructKeyword} {node.identifier}"
-        symbol.containingNamespace?.toString()
-        properties
-    )
-  }
-
-def execute: [SourceProductionContext] PartialRecordSyntax -> () = { ctx, record ->
-  def source = generateSource(record)
-  SourceProductionContext.addSource(
-    "{record.Identifier}.Indexer.g.cs", 
-    SourceText.from(source, #utf8)
-  )
-}
-
-def generateSource: (PartialRecordSyntax) -> string = { record ->
-  def switchExpr = query {
-      def property = from record.properties
-      where property.isGettable
-      def name = property.name
-      yield $"""
-                      "{name}" => {name},
-          """
-  } \String.join("\r\n")
-
-  def switchStmt = query {
-    def property = from record.Properties
-    where property.IsSettable
-    def name = property.Name
-    select $"""
-                    case "{name}":
-                        {name} = ({property.Type}) value
-                        break
-    """
-  } \String.join("\r\n")
-
-  def indexer = $$"""
-          public object this[string name]
-          {
-              get => name switch {
-      {{switchExpr}}
-                  _ => throw new IndexOutOfRangeException(name)
-              }
-              set
-              {
-                  switch (name)
-                  {
-      {{switchStmt}}
-                      default:
-                          throw new IndexOutOfRangeException(name)
-                  }
-              }
-          }
-      """
-
-  -- Create the class
-  def @class = $$"""
-      partial {{record.Declaration}}
-      {
-      {{indexer}}
-      }
-      """
-
-  def usings = "using System\n"
-
-  def @namespace = usings + (record.Namespace is not null
-          ? $"""
-          namespace {record.Namespace}
-
-          {@class}
-          """
-          : @class
-      )
-
-  return @namespace
-}
-
-type PartialRecordSyntax = (
-  identifier:   string 
-  declaration:  string 
-  namespace:    string? 
-  properties:   ImmutableArray<Property> 
-)
+-- Generate C# source for a string indexer over the properties of a record.
+-- Raw single-quoted strings keep C# braces literal, and a doubled brace in a
+-- double-quoted string is a literal brace next to interpolation.
 
 type Property = (
-  name:       string 
-  type:       string 
-  isGettable: bool 
-  isSettable: bool 
+  name: string
+  type: string
+  isGettable: bool
+  isSettable: bool
 )
 
-@Generator
-def IndexerGenerator() : IIncrementalGenerator -> (
-    def initialize(context: IncrementalGeneratorInitializationContext)
-    {
-        def provider = context.SyntaxProvider.CreateSyntaxProvider(
-            { syntax, _ -> syntax is RecordDeclarationSyntax record and record.Modifiers.Any(SyntaxKind.PartialKeyword)}
-            Transform
-        )
-        context.RegisterSourceOutput(provider, Execute)
-    }
+type PartialRecord = (
+  identifier: string
+  declaration: string
+  namespace?: string
+  properties: list(Property)
 )
+
+def getterCases: list(Property) -> string = { properties ->
+  properties
+    \filter { .isGettable }
+    \map { p -> '"' ++ p.name ++ '" => ' ++ p.name ++ "," }
+    \String.join("\n            ")
+}
+
+def setterCases: list(Property) -> string = { properties ->
+  properties
+    \filter { .isSettable }
+    \map { p -> 'case "' ++ p.name ++ '": ' ++ p.name ++ " = ({p.type}) value; break;" }
+    \String.join("\n                ")
+}
+
+def indexer: PartialRecord -> string = { record ->
+  [
+    "public object this[string name]"
+    '{'
+    "    get => name switch"
+    '    {'
+    "        {getterCases(record.properties)}"
+    "        _ => throw new IndexOutOfRangeException(name)"
+    '    };'
+    "    set"
+    '    {'
+    "        switch (name)"
+    '        {'
+    "            {setterCases(record.properties)}"
+    "            default: throw new IndexOutOfRangeException(name);"
+    '        }'
+    '    }'
+    '}'
+  ] \String.join("\n")
+}
+
+export def generateSource: PartialRecord -> string = { record ->
+  def body = "partial {record.declaration}\n{{\n{indexer(record)}\n}}"
+
+  match record.namespace
+    | #some(ns) -> "using System;\n\nnamespace {ns}\n{{\n{body}\n}}"
+    | #none -> "using System;\n\n{body}"
+}
+
+@entry
+def main = {
+  def person = PartialRecord(
+    identifier = "Person"
+    declaration = "record Person"
+    namespace = #some("Demo")
+    properties = [
+      Property(name = "Name", type = "string", isGettable = true, isSettable = true)
+      Property(name = "Age", type = "int", isGettable = true, isSettable = false)
+    ]
+  )
+
+  println(generateSource(person))
+}

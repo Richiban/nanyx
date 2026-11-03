@@ -1,35 +1,54 @@
+module csv
+
 import (
-  Csv
-  IO.File
+  nanyx/io
+  nanyx/math
 )
 
+type Stock = (ticker: string, name: string, price: float, change: float, pct: float)
 
-def cmp = { a, b -> (a > b) - (a < b) }
+-- A table literal is a list of records with the same shape
+def stocks: list(Stock) =
+  [| ticker | name                  | price  | change | pct     |
+   | "GOOG" | "Google, Inc."        | 505.24 | 0.47   | 0.09    |
+   | "YHOO" | "Yahoo! Inc."         | 27.38  | 0.33   | 1.22    |
+   | "CNET" | "CNET Networks, Inc." | 8.62   | -0.13  | -1.4901 |]
 
---  Write stocks data as comma-separated values
-resource {
-  def stocksFileW = using file.open("stocks.csv", "w", newline = "")
-  def writer = csv.writer(stocksFileW)
+def quote: string -> string = { s -> '"' ++ s ++ '"' }
 
-  writer.writerows([
-    ('GOOG', 'Google, Inc.', 505.24, 0.47, 0.09)
-    ('YHOO', 'Yahoo! Inc.', 27.38, 0.33, 1.22)
-    ('CNET', 'CNET Networks, Inc.', 8.62, -0.13, -1.4901)
-  ])
+def toCsvLine: Stock -> string = { s ->
+  [s.ticker, quote(s.name), "{s.price}", "{s.change}", "{s.pct}"] \String.join(",")
 }
 
---  Read stocks data, print status messages
-resource {
-  def stocksFile = using file.open("stocks.csv", "r")
-  def stocks = csv.reader(stocksFile)
+def fromCsvLine: string -> #some(Stock) | #error(#malformed | #notANumber) = { line ->
+  match line \split(",")
+    | [ticker, name, price, change, pct] -> proc {
+        return Stock(
+          ticker = ticker
+          name = name \trim('"')
+          price = try Float.parse(price)
+          change = try Float.parse(change)
+          pct = try Float.parse(pct)
+        )
+      }
+    | _ -> #error(#malformed)
+}
 
-  def statusLabels = [
-    -1 => "down"
-    0  => "unchanged"
-    1  => "up"
-  ]
+def statusLabels = [-1 => "down", 0 => "unchanged", 1 => "up"]
 
-  for stocks | (ticker, name, price, change, pct) ->
-    def status = statusLabels[cmp(float(change), 0.0)]
-    println("{name} is {status} {float(pct)}")
+@entry
+def main: [Console & FileSystem] () -> () = {
+  def path = "stocks.csv"
+
+  -- Write the stocks as comma-separated values
+  File.writeLines(path, stocks \map(toCsvLine))
+
+  -- Read them back and print a status line for each
+  for File.readLines(path) | line ->
+    match fromCsvLine(line)
+      | #some(stock) ->
+        def #some(status) = statusLabels(Math.sign(stock.change)) except #notFound -> #some("unknown")
+        println("{stock.name} is {status} {stock.pct}")
+      | #error(_) ->
+        println("Skipping malformed line: {line}")
 }
