@@ -56,7 +56,7 @@ jobs:
           fi
 
       - name: Package
-        run: npx --yes @vscode/vsce@3 package --out "nanyx-${{ steps.version.outputs.version }}.vsix"
+        run: npx --yes @vscode/vsce@4 package --out "nanyx-${{ steps.version.outputs.version }}.vsix"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -87,7 +87,7 @@ jobs:
       # environment, so none is set here), and vsce exchanges the job's OIDC
       # token for a short-lived Marketplace credential.
       - name: Publish to the Visual Studio Marketplace
-        run: npx --yes @vscode/vsce@3 publish --oidc --packagePath nanyx-${{ needs.build.outputs.version }}.vsix
+        run: npx --yes @vscode/vsce@4 publish --oidc --packagePath nanyx-${{ needs.build.outputs.version }}.vsix
 
       - name: Publish to Open VSX
         if: env.OVSX_PAT != ''
