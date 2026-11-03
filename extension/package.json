@@ -37,7 +37,7 @@
     "grammars": [
       {
         "language": "nyx",
-        "scopeName": "source.nyx",
+        "scopeName": "source.nanyx",
         "path": "./syntaxes/nanyx.tmLanguage.json"
       }
     ],

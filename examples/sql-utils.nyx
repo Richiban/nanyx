@@ -1,50 +1,53 @@
-module Agilogy.Arrow2.Sql
+module sqlUtils
 
-import (
-  Arrow.Core.Continuations.Raise
-  Nyx.Sql.Connection
-  Nyx.Sql.PreparedStatement
-  Nyx.Sql.SQLException
-  Nyx.Sql.DataSource
+-- Database access through contexts: a function that needs a connection says
+-- so in its type, and the caller supplies one with `use`.
+
+type SqlPrimitive = #sqlInt(int) | #sqlString(string)
+
+type SqlError = #duplicateKey | #sqlError(string)
+
+type PreparedStatement = (
+  setInt: (int, int) -> ()
+  setString: (int, string) -> ()
+  executeUpdate: () -> #some(int) | #error(SqlError)
 )
 
-def DuplicateKey = ()
+context Connection = (
+  prepare: string -> PreparedStatement
+)
 
-type SqlPrimitive = #sqlInt | #sqlString
+context DataSource = (
+  getConnection: () -> Connection
+)
 
-def executeUpdate: [Connection & Raise(Nothing)] (string, seq(SqlPrimitive)) -> Async(int)
-  = async { query, args ->
-  def ps = use prepareStatement(query)
-  
-  for 0.., args | pos, arg ->
-    ps \setArgument(pos, arg)
-    
-  ps.executeUpdate()
+def PreparedStatement.setArgument: (PreparedStatement, int, SqlPrimitive) -> () = {
+  | statement, position, #sqlInt(value) -> statement.setInt(position, value)
+  | statement, position, #sqlString(value) -> statement.setString(position, value)
+}
+
+export def executeUpdate: [Connection] (string, list(SqlPrimitive)) -> #some(int) | #error(SqlError)
+  = { query, args ->
+    def statement = prepare(query)
+    for args, 1.. | arg, position -> statement \setArgument(position, arg)
+    statement.executeUpdate()
   }
 
-
-def executeUpdateCatchDuplicateKey
-  : [Connection & Raise(DuplicateKey)] string, seq(SqlPrimitive) -> Async(int)
-  = async { query, args ->
-    match executeUpdate(query, args)
-      | Err(#SQLException, e) if isDuplicateKey(e) ->
-        raise(DuplicateKey)
-      | Err(#SQLException, e) -> 
-        return e
+-- Callers that treat a duplicate key as "nothing to do" narrow the error with `except`
+export def insertIgnoringDuplicates
+  : [Connection] (string, list(SqlPrimitive)) -> #some(int) | #error(#sqlError(string))
+  = { query, args ->
+    executeUpdate(query, args) except #error(#duplicateKey) -> #some(0)
   }
 
+export def withConnection: [DataSource] ([Connection] () -> a) -> a = { action ->
+  def connection = getConnection()
+  use connection in action()
+}
 
-def setArgument
-  : PreparedStatement, int, SqlPrimitive -> ()
-  = { | smt, pos, #sqlInt -> smt \setInt(pos, arg.value)
-      | smt, pos, #sqlString -> smt \setString(pos, arg.value)
-      | _ -> ()
+export def addUser: [DataSource] (id: int, name: string) -> #some(int) | #error(#sqlError(string))
+  = { id, name ->
+    withConnection {
+      insertIgnoringDuplicates("insert into users (id, name) values (?, ?)", [#sqlInt(id), #sqlString(name)])
     }
-
-def withConnection
-  : [Raise(e)] DataSource, ([Raise(e) & Connection] () -> a) -> a
-  = { dataSource, f ->
-    use getConnection()
-      
-    f(dataSource, dataSource)    
   }

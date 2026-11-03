@@ -1,52 +1,38 @@
-module Shared
+module todo.shared
 
-import nyx
+import nanyx/time
 
-type Counter = int
+-- Types shared by the client and the server of a todo application
 
-module Route =
-  --  Defines how routes are generated on server and mapped from client
-  def builder = { typeName, methodName ->
-    "/api/{typeName}/{methodName}"
-  }
+export type TodoId = int
 
-type TodoId = int
-
-type Todo = (
-  id: TodoId --  auto-incremented
+export type Todo = (
+  id: TodoId
   description: string
   completed: bool
-  dateAdded: Timestamp
+  dateAdded: Instant
 )
 
-def defaultTodo: Todo = (
-  id          = 0 --  Id is auto-incremented because of the CLIMutable attribute
-  description = ""
-  completed   = false
-  dateAdded   = Timestamp.Now
-)
-
-type TodoError = 
+export type TodoError =
   | #todoDoesNotExist
   | #insertNotSuccessful
-  | #updateNotSuccesful
-  | #deleteNotSuccesful
+  | #updateNotSuccessful
+  | #deleteNotSuccessful
 
-type DeleteResult = 
-  | #deleted 
-  | #deleteError(TodoError)
+export type DeleteResult = #deleted | #deleteError(TodoError)
+export type UpdateResult = #updated(Todo) | #updateError(TodoError)
 
-type UpdateResult = 
-  | #updated 
-  | #updateError(TodoError)
+-- The protocol between client and server. Every field is a function from a
+-- request to an asynchronous response, so one record type describes both the
+-- server implementation and the client proxy.
+export type TodoProtocol = (
+  allTodos: () -> Async(list(Todo))
+  addTodo: string -> Async(#some(Todo) | #error(TodoError))
+  toggleCompleted: TodoId -> Async(UpdateResult)
+  deleteTodo: TodoId -> Async(DeleteResult)
+)
 
-type Description = #description(string)
-
--- A type that specifies the communication protocol for client and server
--- Every record field must have the type : 'a -> Async('b) where 'a can also be `unit`
--- Add more such fields, implement them on the server and they be directly available on client
-type TodoProtocol =
-  ( allTodos        : () -> Async(list(Todo))
-    addTodo         : Description -> Async(Todo?)
-    toggleCompleted : TodoId -> Async(UpdateResult)
-    deleteTodo      : TodoId -> Async(DeleteResult) )
+-- How routes are generated on the server and mapped from the client
+export def routeBuilder: (typeName: string, methodName: string) -> string = { typeName, methodName ->
+  "/api/{typeName}/{methodName}"
+}

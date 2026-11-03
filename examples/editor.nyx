@@ -1,307 +1,99 @@
-module lines
+module editor.lines
 
-import (
-  editor
-  Enumerable
-  Utils.Lines as lineUtils
-  SelectionsAndRanges 
-  Io/SubjectIOBase 
-)
+import nanyx/text.regex
 
-export type LinePair =
-  | #firstLine(prev: #nil, current: TextLine)
-  | #lastLine(prev: TextLine, current: #nil)
-  | #line(prev: TextLine, current: TextLine)
+-- Navigating the lines of a text document: finding the nearest line with
+-- content, and the next line where the indentation changes.
+
+type TextLine = (number: int, text: string, firstNonWhitespace: int)
+type TextDocument = (lineCount: int, lineAt: int -> TextLine)
 
 export type Direction = #backwards | #forwards
 export type Change = #greaterThan | #lessThan
 
-def changeToDiff
-  : Change -> (number, number -> number)
-  = { | #greaterThan -> { > }
-      | #lessThan    -> { < } }
+export type RelativeIndentation =
+  | #noIndentation
+  | #lessIndentation
+  | #moreIndentation
+  | #sameIndentation
 
-export def getNearestSignificantLine
-  : TextDocument, Position -> TextLine
-  = { document, position ->
-    def currentLine = document.lineAt(position.line)
+def TextLine.isBlank = { line -> line.text \trim == "" }
 
-    if currentLine.isEmptyOrWhitespace ->
-      def lines = lineUtils.iterLinesOutwards(document, position.line)
+-- A "stop line" is one that is blank or contains only punctuation
+export def TextLine.isStopLine = { line -> not (line.text \Regex.matches('[a-zA-Z0-9]')) }
+export def TextLine.isSignificant = { line -> not line.isStopLine }
 
-      for lines | backwardsLine, forwardsLine ->
-        if backwardsLine is #some(line) and not line.isEmptyOrWhitespace ->
-          return backwardsLine
-
-        if forwardsLine is #some(line) and not line.isEmptyOrWhitespace ->
-          return forwardsLine
-
-    currentLine
-  }
-
-
-export def rangeWithoutIndentation
-  : TextLine -> TextLine
-  = { line ->
-    line.range with (
-      start = line.range.start with (
-        character = line.firstNonWhitespaceCharacterIndex
-      )
-    )
-  }
-
-export def getNextLineOfChangeOfIndentation
-  : [Document] Change, Direction, TextLine -> #some(TextLine) | #nil
-  = { change, direction, currentLine ->
-    def diff = changeToDiff(change)
-
-    def lines = iterLines(
-      startingPosition = currentLine.range.start
-      direction
-      currentInclusive = false
-    )
-
-    lines
-      \filter { l -> not isEmptyOrWhitespace(l) }
-      \filter { l -> diff(l.firstNonWhitespaceCharacterIndex, currentLine.firstNonWhitespaceCharacterIndex) /= 0 }
-      \tryHead
-      except #notFound -> #nil
-  }
-
-export def getRelativeIndentation
-  : TextLine, TextLine -> RelativeIndentation
-  = { startingLine, targetLine -> 
-    if 
-    | targetLine.isEmptyOrWhitespace ->
-      #noIndentation
-    | startingLine.firstNonWhitespaceCharacterIndex > targetLine.firstNonWhitespaceCharacterIndex ->
-      #lessIndentation
-    | startingLine.firstNonWhitespaceCharacterIndex < targetLine.firstNonWhitespaceCharacterIndex ->
-      #moreIndentation
-    | else ->
-      #sameIndentation
-  }
-
-export def iterLinePairs
-  : TextDocument, IterationOptions -> Source(LinePair)
-  = { document, options ->
-    iterLines(document, (options with currentInclusive = true))
-      \pairwise
-      \map {
-        | a, b where options.direction == #forwards -> (prev = a, current = b)
-        | a, b -> (prev = b, current = a)
-      }
-  }
-
- 
-export def getNextSignificantLine
-  : TextDocument, Position, Direction -> #some(TextLine) | #noLine
-  = { document, position, direction ->
-    def lines = document \iterLines(
-      startingPosition = position
-      direction = direction
-      currentInclusive = false
-    )
-
-    lines \tryFind(lineIsSignificant) except #notFound -> #noLine
+def changeToDiff: Change -> ((int, int) -> bool) = {
+  | #greaterThan -> { > }
+  | #lessThan -> { < }
 }
 
---  A "stop line" is one that is either blank or contains only punctuation
-export def lineIsStopLine
-  : TextLine -> bool
-  = { line -> 
-    not (line.text \RegEx.matches("[a\zA\Z0\9]"))
-  }
+def directionToDelta: Direction -> (int -> int) = {
+  | #forwards -> { + 1 }
+  | #backwards -> { - 1 }
+}
 
-export def lineIsSignificant: TextLine -> bool
-  = { line -> !lineIsStopLine(line) }
-
-def moveToChangeOfIndentation
-: [TextEditor] Position, common.Change, common.DirectionOrNearest -> ()
-= { cursorPosition, change, direction ->
-  if cursorPosition and document ->
-    mut line: TextLine? = #nil
-    def currentLine = document.lineAt(cursorPosition.line)
-
-    match direction
-      | #nearest ->
-        set line = getNearestLineOfChangeOfIndentation(
-          document,
-          document.lineAt(cursorPosition.line),
-          change
-        )
-      | #backwards | #forwards ->
-        set line = lineUtils.getNextLineOfChangeOfIndentation(
-          change,
-          direction,
-          document,
-          currentLine
-        )
-
-    if line is #some(line) ->
-      selection = Selection(
-        line.range.start
-        line.range.start
-      )
-  }
-
-def directionToDelta: Direction -> (number -> number)
-  = { | #forwards  -> { + 1 }
-      | #backwards -> { - 1 } }
-
-export def iterLines
-  : [TextDocument] IterationOptions -> Source(TextLine)
-  = { options ->
-    def advance = directionToDelta(options.direction)
-    mut currentLineNumber = wordRangeToPosition(
-      options.startingPosition
-      options.direction
-    ).line
-
-    def withinBounds = {
-      currentLineNumber >= 0 and
-      (!options.bounds || currentLineNumber >= options.bounds.start.line) and
-      (!options.bounds || currentLineNumber <= options.bounds.end.line) and
-      currentLineNumber < lineCount  
-    }
-
+-- Every line from `start` in the given direction, until the document ends
+export def iterLines: (TextDocument, start: int, direction: Direction) -> seq(TextLine)
+  = { document, start, direction ->
+    def advance = directionToDelta(direction)
     seq {
-      while withinBounds() ->
-        def newLine = lineAt(currentLineNumber)
-
-        yield newLine
-
-        currentLineNumber = advance(currentLineNumber)
-    } \skip(if options.currentInclusive -> 0 else -> 1)
+      memory {
+        def current = mut start
+        while current >= 0 and current < document.lineCount ->
+          yield document.lineAt(current)
+          current := advance(current)
+      }
+    }
   }
 
+type Neighbours = (#some(TextLine) | #none, #some(TextLine) | #none)
 
-def getNearestLineOfChangeOfIndentation
-  : <TextDocument> TextLine, common.Change -> TextLine
-  = { currentLine, change ->
+-- Walk outwards from a line, yielding the lines either side of it
+export def iterLinesOutwards: (TextDocument, int) -> seq(Neighbours) = { document, lineNumber ->
+  seq {
+    memory {
+      def back = mut lineNumber - 1
+      def forward = mut lineNumber + 1
+
+      while back >= 0 or forward < document.lineCount ->
+        def backLine = if back >= 0 then #some(document.lineAt(back)) else #none
+        def forwardLine = if forward < document.lineCount then #some(document.lineAt(forward)) else #none
+        yield (backLine, forwardLine)
+        back := back - 1
+        forward := forward + 1
+    }
+  }
+}
+
+export def nearestSignificantLine: (TextDocument, int) -> TextLine = { document, lineNumber ->
+  def current = document.lineAt(lineNumber)
+
+  if current.isSignificant then current
+  else
+    def #some(line) =
+      iterLinesOutwards(document, lineNumber)
+        \flatMap { back, forward -> [back, forward] \Option.values }
+        \find { .isSignificant }
+        except #notFound -> #some(current)
+    line
+}
+
+export def nextLineOfChangeOfIndentation
+  : (TextDocument, TextLine, Change, Direction) -> #some(TextLine) | #none
+  = { document, currentLine, change, direction ->
     def diff = changeToDiff(change)
+    def start = directionToDelta(direction)(currentLine.number)
 
-    for iterLinesOutwards(currentLine.lineNumber) | backwardsLine, forwardsLine ->
-      if forwardsLine and
-        !forwardsLine.isEmptyOrWhitespace and
-        diff(
-          forwardsLine.firstNonWhitespaceCharacterIndex,
-          currentLine.firstNonWhitespaceCharacterIndex
-        ) ->
-        return forwardsLine
-
-      if backwardsLine and
-        !backwardsLine.isEmptyOrWhitespace and
-        diff(
-          backwardsLine.firstNonWhitespaceCharacterIndex,
-          currentLine.firstNonWhitespaceCharacterIndex
-        ) ->
-        return backwardsLine
+    iterLines(document, start = start, direction = direction)
+      \filter { .isSignificant }
+      \find { line -> diff(line.firstNonWhitespace, currentLine.firstNonWhitespace) }
+      except #notFound -> #none
   }
 
-
-export def iterLinesOutwards
-  : TextDocument, number -> Seq(LinePair)
-  = { document, currentLineNumber ->
-    mut forwardsPointer = currentLineNumber + 1
-    mut backwardsPointer = currentLineNumber - 1  
-
-    def forwardsPointerInBounds() ->
-      forwardsPointer <= document.lineCount
-
-    def backwardsPointerInBounds() ->
-      backwardsPointer >= 0
-
-    seq {
-      while forwardsPointerInBounds() and backwardsPointerInBounds() ->
-        def backwardsLine = 
-          if backwardsPointerInBounds() -> document.lineAt(backwardsPointer)
-          else #nil
-
-        def forwardsLine =
-          if forwardsPointerInBounds() -> document.lineAt(forwardsPointer)
-          else #nil
-
-        yield (backwardsLine, forwardsLine)
-
-        set forwardsPointer++
-        set backwardsPointer--
-    }
-  }
-
-  
-export def quickCommandPicker
-  : (list(QuickCommand), (label: string, detail: string)?) -> Async(QuickCommand | string | #nil)
-  = { commands, freeEntryOptions -> async { resolve, reject ->
-      type QuickPickItem = QuickPickItem & (
-        quickKey: common.Char?
-        displayOnly: true?
-      )
-
-      def quickPick = window.createQuickPick(): QuickPickItem
-
-      def freeEntryItems = list {
-        if freeEntryOptions ->
-          yield (
-            label = ""
-            kind = QuickPickItemKind.Separator
-            displayOnly = true
-          )
-          yield (
-            label = freeEntryOptions.label
-            alwaysShow = true
-            detail = freeEntryOptions.detail
-            displayOnly = true
-          )
-      }
-
-      set quickPick.items = commands
-        \map { e ->
-          ( quickKey = e.quickKey
-            label = "[{e.quickKey}]"
-            description = e.label
-            execute = e.execute )
-          }
-        \concat(freeEntryItems)
-
-      quickPick.onDidHide {
-        resolve()
-        quickPick.dispose()
-      }
-
-      quickPick.onDidChangeValue { s ->
-        commands
-        \tryFind { .quickKey == s } 
-        \match
-          | #some, option ->
-            resolve(option)
-            quickPick.dispose()
-            return
-          | #nil where !freeEntryOptions -> 
-            set quickPick.value = ""
-          | #nil ->
-            #nil
-      }
-
-      quickPick.onDidAccept {
-        def selected = quickPick.selectedItems(0)
-
-        if selected.displayOnly ->
-          if quickPick.value ->
-            resolve(quickPick.value)
-          else return
-        
-        commands 
-          \tryFind { .quickKey == selected.quickKey } 
-          \match
-            | Some option ->
-              resolve(option)
-              quickPick.dispose()
-              return
-            | #nil -> 
-              quickPick.dispose()
-      }
-
-      quickPick.show()
-    }
-  }
+export def relativeIndentation: (TextLine, TextLine) -> RelativeIndentation = { from, to ->
+  if | to.isBlank -> #noIndentation
+     | from.firstNonWhitespace > to.firstNonWhitespace -> #lessIndentation
+     | from.firstNonWhitespace < to.firstNonWhitespace -> #moreIndentation
+     | else -> #sameIndentation
+}

@@ -1,9 +1,7 @@
 {
   "$schema": "vscode://schemas/language-configuration",
   "comments": {
-    "lineComment": {
-      "comment": "--"
-    },
+    "lineComment": "--",
     "blockComment": ["---", "---"]
   },
   "brackets": [
@@ -12,22 +10,30 @@
     ["(", ")"]
   ],
   "autoClosingPairs": [
-    ["{", "}"],
-    ["[", "]"],
-    ["(", ")"],
-    ["\"", "\""],
-    ["'", "'"]
+    { "open": "{", "close": "}" },
+    { "open": "[", "close": "]" },
+    { "open": "(", "close": ")" },
+    { "open": "\"", "close": "\"", "notIn": ["string"] },
+    { "open": "'", "close": "'", "notIn": ["string", "comment"] },
+    { "open": "`", "close": "`", "notIn": ["string", "comment"] }
   ],
   "surroundingPairs": [
     ["{", "}"],
     ["[", "]"],
     ["(", ")"],
     ["\"", "\""],
-    ["'", "'"]
+    ["'", "'"],
+    ["`", "`"]
   ],
-  "wordPattern": "(-?\\d*\\.\\d\\w*)|([^\\`\\~\\!\\@\\#\\%\\^\\&\\*\\(\\)\\-\\=\\+\\[\\{\\]\\}\\\\\\|\\;\\:\\'\\\"\\,\\.\\<\\>\\/\\?\\s]+)",
+  "wordPattern": "(-?\\d*\\.\\d\\w*)|([#@$]?[^\\`\\~\\!\\@\\#\\$\\%\\^\\&\\*\\(\\)\\-\\=\\+\\[\\{\\]\\}\\\\\\|\\;\\:\\'\\\"\\,\\.\\<\\>\\/\\?\\s]+)",
   "indentationRules": {
-    "increaseIndentPattern": "(->)|(\\{)",
-    "decreaseIndentPattern": "(\\})"
+    "increaseIndentPattern": "^.*(->|=|\\{|\\(|\\[)\\s*(--.*)?$",
+    "decreaseIndentPattern": "^\\s*[\\}\\)\\]]"
+  },
+  "folding": {
+    "markers": {
+      "start": "^\\s*-{3,}\\s*$",
+      "end": "^\\s*-{3,}\\s*$"
+    }
   }
 }

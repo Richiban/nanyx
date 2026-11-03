@@ -1,717 +1,140 @@
-module whisper/decode
+module whisper.decode
 
-import (
-  numpy as np
-  Torch
-  Torch.Nn.Functional as F
-  Torch (Tensor)
-  Torch.Distringibutions  (Categorical)
-  Torch.Audio (CHUNKLENGTH)
-  Torch.Tokenizer (Tokenizer, getTokenizer)
-  Torch.Utils (compressionRatio)
-  Torch.Model (Whisper)
+import nanyx/math
+
+---
+The decoding loop of a speech-recognition model, reduced to its shape: an
+options record, option validation with a multi-branch `if`, a greedy decoder
+as a pure step function, logit filters as plain functions, and the sampling
+loop as a recursive function over immutable state.
+---
+
+type Tokens = list(int)
+type Logits = list(float)                -- one score per vocabulary token
+type AudioFeatures = list(list(float))
+
+export type DecodingOptions = (
+  task: #transcribe | #translate
+  language?: string                      -- detected when absent
+  temperature: float
+  sampleLen?: int                        -- maximum number of tokens to sample
+  bestOf?: int                           -- independent sample trajectories, if temperature > 0
+  beamSize?: int                         -- beams in beam search, if temperature == 0
+  patience?: float                       -- patience in beam search
+  lengthPenalty?: float                  -- "alpha" in Google NMT; length normalisation when absent
+  suppressBlank: bool
+  withoutTimestamps: bool
 )
 
-
--- Detect the spoken language in the audio, and return them as list of stringings, along with the ids
--- of the most probable language tokens and the probability distringibution over all language tokens.
--- This is performed outside the main decode loop in order to not interfere with kv-caching.
--- 
--- Returns
--- -------
--- languageTokens : Tensor, shape = (nAudio,)
---  ids of the most probable language tokens, which appears after the startoftranscript token.
--- languageProbs : list(Dict(string, float)), length = nAudio
---  list of dictionaries containing the probability distringibution over all languages.
-@torch.noGrad()
-
-spec (#whisper, Tensor, Tokenizer?) -> (languageTokens: Tensor, languageProbs: list(dict)) | Err(string)
-def detectLanguage(model, mel, tokenizer?) ->
-  def tokenizer = tokenizer ?? getTokenizer(model.isMultilingual, numLanguages = model.numLanguages)
-
-  if tokenizer.language is #nil or tokenizer.languageToken not in tokenizer.sotSequence ->
-    return Err("This model doesn't have language tokens so it can't perform lang id")
-
-  def single = mel.ndim == 2 except | 0 -> mel.unsqueeze(0)
-
-  --  skip encoder forward pass if already-encoded audio features were given
-  if mel.shape(-2..) != [model.dims.nAudioCtx, model.dims.nAudioState] ->
-    mel = model.encoder(mel) -- TODO fix this
-
-  --  forward pass using a single token, startoftranscript
-  def nAudio = mel.shape(0)
-  def x = torch.tensor([tokenizer.sot] * nAudio).to(mel.device)  --  (nAudio, 1)
-  def logits = model.logits(x, mel)(.., 0)
-
-  --  collect detected languages; suppress all non-language tokens
-  def mask = torch.ones(logits.shape(-1), dtype = torch.bool)
-  mask(list(tokenizer.allLanguageTokens)) = False
-  logits(.., mask) = np.inf * -1
-  def languageTokens = logits.argmax(dim = -1)
-  def languageTokenProbs = logits.softmax(dim = -1).cpu()
-
-  def languageProbs = [
-    for 0..nAudio | i ->
-      for tokenizer.allLanguageTokens \zip(tokenizer.allLanguageCodes) | j, c ->
-       ( c: languageTokenProbs(i, j).item())
-  ]
-
-  if single -> languageTokens(0), languageProbs(0)
-  else -> languageTokens, languageProbs
-
-
-type DecodingOptions = (
-  --  whether to perform X->X "transcribe" or X->English "translate"
-  task: string = "transcribe"
-
-  --  language that the audio is in; uses detected language if #nil
-  language: string? = #nil
-
-  --  sampling-related options
-  temperature: float = 0.0
-  sampleLen: int? = #nil  --  maximum number of tokens to sample
-  bestOf: int? = #nil  --  number of independent sample trajectories, if t > 0
-  beamSize: int? = #nil  --  number of beams in beam search, if t == 0
-  patience: float? = #nil  --  patience in beam search (arxiv:2204.05424)
-
-  --  "alpha" in Google NMT, or #nil for length norm, when ranking generations
-  --  to select which to return among the beams or best-of-N samples
-  lengthPenalty: float? = #nil
-
-  --  text or tokens to feed as the prompt or the prefix; for more info ->
-  --  https://github.com/openai/whisper/discussions/117#discussioncomment-3727051
-  prompt: Optional(Union(string, list(int))) = #nil  --  for the previous context
-  prefix: Optional(Union(string, list(int))) = #nil  --  to prefix the current context
-
-  --  list of tokens ids (or comma-separated token ids) to suppress
-  --  "-1" will suppress a set of symbols as defined in `tokenizer.nonSpeechTokens()`
-  suppressTokens: Optional(Union(string, Iterable(int))) = "-1"
-  suppressBlank: bool = True  --  this will suppress blank outputs
-
-  --  timestamp sampling options
-  withoutTimestamps: bool = False  --  use <|notimestamps|> to sample text tokens only
-  maxInitialTimestamp: float? = 1.0
-
-  --  implementation details
-  fp16: bool = True  --  use fp16 for most of the calculation
+export def defaultOptions = DecodingOptions(
+  task = #transcribe
+  temperature = 0.0
+  suppressBlank = true
+  withoutTimestamps = false
 )
 
+export type OptionsError =
+  | #beamSizeAndBestOf
+  | #bestOfWithGreedySampling
+  | #patienceWithoutBeamSize
+  | #lengthPenaltyOutOfRange
 
-type DecodingResult = (
-  audioFeatures: Tensor
-  language: string
-  languageProbs: Dict(string, float)? = #nil
-  tokens: list(int) = field(defaultFactory = list)
-  text: string = ""
-  avgLogprob: float = np.nan
-  noSpeechProb: float = np.nan
-  temperature: float = np.nan
-  compressionRatio: float = np.nan
+export def verifyOptions: DecodingOptions -> #some(DecodingOptions) | #error(OptionsError) = { options ->
+  if | options.beamSize != #none and options.bestOf != #none -> #error(#beamSizeAndBestOf)
+     | options.temperature == 0.0 and options.bestOf != #none -> #error(#bestOfWithGreedySampling)
+     | options.patience != #none and options.beamSize == #none -> #error(#patienceWithoutBeamSize)
+     | not (options.lengthPenalty \Option.all { p -> p >= 0.0 and p <= 1.0 }) -> #error(#lengthPenaltyOutOfRange)
+     | else -> #some(options)
+}
+
+-- The tokenizer and the model are dependencies, so they are contexts
+context Tokenizer = (
+  eot: int                               -- end-of-transcript token
+  sotSequence: Tokens                    -- start-of-transcript tokens
+  encode: string -> Tokens
+  decode: Tokens -> string
 )
 
-
-type def Inference() -> (
-  --  Perform a forward pass on the decoder and return per-token logits  
-  def logits(tokens: Tensor, audioFeatures: Tensor) -> Tensor ->    
-    raise #NotImplementedError
-
-  --  Update the key-value cache according to the updated beams
-  def rearrangeKvCache(sourceIndices) -> #nil ->    
-    raise #NotImplementedError
-
-  --  Clean up any resources or hooks after decoding is finished
-  def cleanupCaching(self) -> #nil ->    
-    pass
+context Model = (
+  -- The next-token scores for every sequence in the batch
+  logits: (list(Tokens), AudioFeatures) -> list(Logits)
 )
 
+def argmax: list(float) -> int = { xs ->
+  def #some(index) = xs \indexOf(xs \max) except #notFound -> #some(0)
+  index
+}
 
-type def PyTorchInference(model: #whisper, initialTokenLength: int) -> (
-  def kvCache = []
-  def hooks = []
+def softmax: list(float) -> list(float) = { xs ->
+  def exps = xs \map(Math.exp)
+  def total = exps \sum
+  exps \map { / total }
+}
 
-  def keyModules = [for model.decoder.blocks | block -> block.attn.key]
-  def valueModules = [for model.decoder.blocks | block -> block.attn.value]
-  def kvModules = keyModules + valueModules
+-- Pick an index with probability proportional to its weight
+def sample: [Random] list(float) -> int = { probabilities ->
+  def r = Random.float()
+  rec pick = {
+    | [], i, _ -> i - 1
+    | [p, ...rest], i, acc -> if acc + p >= r then i else pick(rest, i + 1, acc + p)
+  }
+  pick(probabilities, 0, 0.0)
+}
 
-  ( def logits(tokens: Tensor, audioFeatures: Tensor) -> Tensor ->
-      if not kvCache ->
-        kvCache, hooks = model.installKvCacheHooks()
+-- A decoder chooses the next token for a sequence from its logits
+type Decoder = (next: (Tokens, Logits) -> int)
 
-      if tokens.shape(-1) > initialTokenLength ->
-        --  only need to use the last token except in the first forward pass
-        tokens = tokens(.., -1:)
+-- Greedy decoding takes the most likely token, or samples when there is a temperature
+def greedyDecoder: [Random] float -> Decoder = { temperature ->
+  Decoder(next = { _, logits ->
+    if temperature == 0.0 then argmax(logits)
+    else sample(logits \map { l -> l / temperature } \softmax)
+  })
+}
 
-      return model.decoder(tokens, audioFeatures, kvCache = kvCache)
+-- A logit filter adjusts the scores before a token is chosen
+type LogitFilter = (Tokens, Logits) -> Logits
 
-    def cleanupCaching() ->
-      for hooks | hook ->
-        hook.remove()
+-- Forbid a blank output right at the start of the transcript
+def suppressBlank: [Tokenizer] int -> LogitFilter = { sampleBegin ->
+  def blank = encode(" ")
+  { tokens, logits ->
+    if tokens.length == sampleBegin then
+      logits \mapIndexed { i, l -> if blank \contains(i) or i == eot then Math.negativeInfinity else l }
+    else logits
+  }
+}
 
-      set kvCache = {}
-      set hooks = []
+-- Extend every sequence by one token until all have ended or the limit is reached
+def mainLoop
+  : [Model & Tokenizer] (list(Tokens), AudioFeatures, Decoder, list(LogitFilter), sampleLen: int) -> list(Tokens)
+  = { initial, audio, decoder, filters, sampleLen ->
+    rec step = { sequences, i ->
+      def completed = sequences \all { s -> s \last == #some(eot) }
 
-    def rearrangeKvCache(sourceIndices) ->
-      if sourceIndices != list(0..(len(sourceIndices))) ->
-        for kvModules | module ->
-          --  update the key/value cache to contain the selected sequences
-          kvCache(module) = kvCache(module)(sourceIndices).detach()
-    )
-)
-
-
-type def SequenceRanker() -> (
-  --  Given a list of groups of samples and their cumulative log probabilities,
-  --  return the indices of the samples in each group to select as the final result
-  spec (list(list(Tensor)), list(list(float))) -> list(int)
-  def rank(tokens, sumLogprobs) ->
-    raise #NotImplementedError
-)
-
-
-type def MaximumLikelihoodRanker(lengthPenalty: float?) ->
-  ( def rank(tokens: list(list(Tensor)), sumLogprobs: list(list(float))) ->
-      def scores(logprobs, lengths) ->
-        def result = []
-
-        for logprobs, lengths | logprob, length ->
-          if lengthPenalty is #nil ->
-            def penalty = length
-          else ->
-            --  from the Google NMT paper
-            def penalty = ((5 + length) / 6) ** lengthPenalty
-          set result += (logprob / penalty)
-        return result
-
-      --  get the sequence with the highest score
-      def lengths = [for tokens | s -> for s | t -> len(t)]
-
-      return [for sumLogprobs, lengths | p, l -> np.argmax(scores(p, l))]
-  )
-
-
-type def TokenDecoder ->
-  def reset(self) ->
-    """Initialize any stateful variables for decoding a new sequence"""
-
-  spec (Tensor, Tensor, Tensor) -> (Tensor, bool)
-  def update(tokens, logits, sumLogprobs) ->
-    raise #NotImplementedError
-
-  spec (Tensor, Tensor ) -> (seq(seq(Tensor)), list(list(float))) ->
-  def finalize(tokens, sumLogprobs) ->
-    raise #NotImplementedError
-
-
-type def GreedyDecoder(temperature: float, eot: int) ->
-  ( update: Tensor, Tensor, Tensor -> (Tensor, bool) = { tokens, logits, sumLogprobs ->
-      def nextTokens =
-        if temperature == 0 ->
-          logits.argmax(dim = 1)
-        else ->
-          Categorical(logits = logits / temperature).sample()
-
-      def logprobs = F.logSoftmax(logits.float(), dim = -1)
-      def currentLogprobs = logprobs(torch.arange(logprobs.shape(0)), nextTokens)
-      def sumLogprobs += currentLogprobs * (tokens(.., -1) != eot)
-
-      set nextTokens(tokens(.., -1) == eot) = eot
-      def tokens = torch.cat((tokens, nextTokens(.., #nil)), dim = -1)
-
-      def completed = (tokens(.., -1) == eot).all()
-
-      return tokens, completed
+      if completed or i >= sampleLen then sequences
+      else
+        def extended = sequences \zip(logits(sequences, audio)) \map { tokens, raw ->
+          def filtered = filters \fold(raw) { l, filter -> filter(tokens, l) }
+          [...tokens, decoder.next(tokens, filtered)]
+        }
+        step(extended, i + 1)
     }
-
-    finalize
-      : (Tensor, Tensor) -> (Tensor, list(list(float)) 
-      = { tokens, sumLogprobs ->
-        --  make sure each sequence has at least one EOT token at the end
-        def tokens = F.pad(tokens, (0, 1), value = eot)
-
-        return tokens, sumLogprobs.tolist()
-      }
-  )
-
-
-type def BeamSearchDecoder
-  : int, int, Inference, float? -> ???
-  = { beamSize, eot, inference, patience = #nil ->
-    def patience = patience ?? 1.0
-
-    def maxCandidates: int = round(beamSize * patience)
-    mut finishedSequences = #nil
-
-    assert (
-      maxCandidates > 0
-    ), f"Invalid beam size ({beamSize}) or patience ({patience})"
-
-    ( reset = {
-        set finishedSequences = #nil
-      }
-
-      update: Tensor, Tensor, Tensor  -> (Tensor, bool) | Err(string)
-        = {(tokens, logits, sumLogprobs) ->
-        if tokens.shape(0) \mod(beamSize) != 0 ->
-          return Err("{tokens.shape}(0) % {beamSize} != 0")
-
-        def nAudio = tokens.shape(0) // beamSize
-
-        if finishedSequences is #nil ->  --  for the first update
-          finishedSequences = ({}ForInRange(nAudio))
-
-        def logprobs = F.logSoftmax(logits.float(), dim = -1)
-        def nextTokens, sourceIndices, finishedSequences = [], [], []
-
-        for 0..nAudio | i ->
-          def scores, sources, finished = [], [], []
-
-          --  STEP 1: calculate the cumulative log probabilities for possible candidates
-          for 0..beamSize | j ->
-            def idx = i * beamSize + j
-            def prefix = tokens(idx).tolist()
-
-            for logprobs(idx).topk(beamSize + 1) | logprob, token ->
-              def newLogprob = (sumLogprobs(idx) + logprob).item()
-              def sequence = prefix + [token.item()]
-              set scores(sequence) = newLogprob
-              set sources(sequence) = idx
-
-          --  STEP 2: rank the candidates and keep the top beamSize sequences for each audio
-          mut saved = 0
-
-          for sorted(scores, key = scores.get, reverse = True) 
-            | sequence if sequence(-1) == eot ->
-              set finished(sequence) = scores(sequence)
-            | sequence ->
-              sumLogprobs(len(nextTokens)) = scores(sequence)
-              nextTokens += (sequence)
-              sourceIndices += (sources(sequence))
-
-              set saved += 1
-              if saved == beamSize ->
-                break
-
-          set finishedSequences += finished
-
-        set tokens = torch.tensor(nextTokens, device = tokens.device)
-        inference.rearrangeKvCache(sourceIndices)
-
-        for finishedSequences, finishedSequences | previouslyFinished, newlyFinished ->
-          for sorted(newlyFinished, key = newlyFinished.get, reverse = True) | seq ->
-            if len(previouslyFinished) >= maxCandidates ->
-              break  --  the candidate list is full
-            set previouslyFinished(seq) = newlyFinished(seq)
-
-        --  mark as completed if all audio has enough number of samples
-        def completed = finishedSequences
-          \map { sequences -> len(sequences) >= maxCandidates } 
-          \all
-          
-        tokens, completed
-      }
-      
-      spec (Tensor, Tensor) -> ???
-      def finalize(precedingTokens: Tensor, sumLogprobs: Tensor) ->
-        --  collect all finished sequences, including patience, and add unfinished ones if not enough
-        def sumLogprobs = sumLogprobs.cpu()
-
-        for finishedSequences, 0.. | sequences, i ->
-          if len(sequences) < beamSize ->  --  when not enough sequences are finished
-            for np.argsort(sumLogprobs(i)) \reverse() | j ->
-              def sequence = precedingTokens(i, j) \tolist() \concat(list(eot))
-              set sequences(sequence) = sumLogprobs(i)(j).item()
-              
-              if len(sequences) >= beamSize ->
-                break
-
-        def tokens = finishedSequences 
-          \List.map { sequences -> sequences.keys() \List.map { seq -> torch.tensor(seq) } }
-
-        def sumLogprobs = finishedSequences
-          \List.map { sequences -> sequences.values() \toList() }
-
-        return tokens, sumLogprobs
-    )
+    step(initial, 0)
   }
 
-type def LogitFilter() -> (
-  def apply(logits: Tensor, tokens: Tensor): None ->
-    raise #NotImplementedError
-)
-
-
-type def SuppressBlank(tokenizer: Tokenizer, sampleBegin: int) -> (
-  def apply(logits: Tensor, tokens: Tensor) ->
-    if tokens.shape(1) == sampleBegin ->
-      set logits(.., tokenizer.encode(" ") + (tokenizer.eot)) = np.inf * -1
-)
-
-
-type def SuppressTokens(suppressTokens: Sequence(int)) ->
-  def suppressTokens = list(suppressTokens)
-
-  def apply(logits: Tensor, tokens: Tensor) ->
-    set logits(.., suppressTokens) = np.inf * -1
-)
-
-
-type def ApplyTimestampRules(
-    tokenizer: Tokenizer
-    sampleBegin: int
-    maxInitialTimestampIndex: int?
-  ) -> 
-  ( def apply(logits: Tensor, tokens: Tensor) ->
-      --  suppress <|notimestamps|> which is handled by withoutTimestamps
-      if tokenizer.noTimestamps is some ->
-        set logits(.., tokenizer.noTimestamps) = np.inf * -1
-
-      --  timestamps have to appear in pairs, except directly before EOT; mask logits accordingly
-      for 0..tokens.shape(0) | k ->
-        def sampledTokens = tokens(k, sampleBegin ..)
-        def seq = sampledTokens.tolist()
-
-        def lastWasTimestamp = 
-          len(seq) >= 1 and seq(-1) >= tokenizer.timestampBegin
-              
-        def penultimateWasTimestamp = 
-          len(seq) < 2 or seq(-2) >= tokenizer.timestampBegin      
-
-        if lastWasTimestamp ->
-          if penultimateWasTimestamp ->  --  has to be non-timestamp
-            set logits(k, tokenizer.timestampBegin :) = np.inf * -1
-          else ->  --  cannot be normal text tokens
-            set logits(k, : tokenizer.eot) = np.inf * -1
-
-        def timestamps = tokenizer \sampledTokens.ge() \sampledTokens
-
-        if timestamps.numel() > 0 ->
-          --  timestamps shouldn't decrease; forbid timestamp tokens smaller than the last
-          --  also force each segment to have a nonzero length, to prevent infinite looping
-          def timestampLast =
-            if lastWasTimestamp and not penultimateWasTimestamp ->
-              timestamps(-1)
-            else ->
-              timestamps(-1) + 1
-
-          set logits(k, tokenizer.timestampBegin .. timestampLast) = np.inf * -1
-
-      if tokens.shape(1) == sampleBegin ->
-        --  suppress generating non-timestamp tokens at the beginning
-        set logits(.., : tokenizer.timestampBegin) = np.inf * -1
-
-        --  apply the `maxInitialTimestamp` option
-        if maxInitialTimestampIndex is some ->
-          def lastAllowed =
-            tokenizer.timestampBegin + maxInitialTimestampIndex
-          
-          set logits(.., (lastAllowed + 1)..) = np.inf * -1
-
-      --  if sum of probability over timestamps is above any other token, sample timestamp
-      def logprobs = F.logSoftmax(logits.float(), dim = -1)
-      
-      for 0..tokens.shape(0) | k ->
-        def timestampLogprob = 
-          logprobs(k, tokenizer.timestampBegin..).logsumexp(dim = -1)
-
-        def maxTextTokenLogprob = logprobs(k, ..tokenizer.timestampBegin) \max()
-        
-        if timestampLogprob > maxTextTokenLogprob ->
-          set logits(k, ..tokenizer.timestampBegin) = np.inf * -1
-    )
-
-
-type def DecodingTask(model: "Whisper", options: DecodingOptions) ->
-    def language = options.language ?? "en"
-
-    def tokenizer = getTokenizer(
-      model.isMultilingual
-      numLanguages = model.numLanguages
-      language = language
-      task = options.task
-    )
-
-    def options = VerifyOptions(options) except 
-      | Err e -> return e
-
-    def nGroup = options.beamSize ?? options.bestOf ?? 1
-    def nCtx = model.dims.nTextCtx
-    def sampleLen = options.sampleLen ?? model.dims.nTextCtx // 2
-
-    def sotSequence =
-      if options.withoutTimestamps ->
-        tokenizer.sotSequenceIncludingNotimestamps
-      else -> tokenizer.sotSequence
-    
-    def initialTokens = GetInitialTokens()
-    def sampleBegin = len(initialTokens)
-    def sotIndex = initialTokens.index(tokenizer.sot)
-
-    --  inference: implements the forward pass through the decoder, including kv caching
-    def inference = PyTorchInference(model, len(initialTokens))
-
-    --  sequence ranker: implements how to rank a group of sampled sequences
-    def sequenceRanker = MaximumLikelihoodRanker(options.lengthPenalty)
-
-    --  decoder: implements how to select the next tokens, given the autoregressive distringibution
-    def decoder =
-      if options.beamSize is some ->
-        BeamSearchDecoder(options.beamSize, tokenizer.eot, inference, options.patience)
-      else ->
-        GreedyDecoder(options.temperature, tokenizer.eot)
-
-    --  logit filters: applies various rules to suppress or penalize certain tokens
-    mut logitFilters = list()
-
-    if options.suppressBlank ->
-      set logitFilters += SuppressBlank(tokenizer, sampleBegin)
-
-    if options.suppressTokens ->
-      set logitFilters += SuppressTokens(GetSuppressTokens())
-
-    if options.withoutTimestamps is #nil ->
-      def precision = CHUNKLENGTH / model.dims.nAudioCtx  --  usually 0.02 seconds
-      mut maxInitialTimestampIndex = #nil
-
-      if options.maxInitialTimestamp ->
-        set maxInitialTimestampIndex = 
-          round(options.maxInitialTimestamp / precision)
-
-      set logitFilters +=
-        ApplyTimestampRules(
-          tokenizer, sampleBegin, maxInitialTimestampIndex
-        )
-      
-
-  spec (DecodingOptions) -> DecodingOptions | Err(string)
-  def verifyOptions(options) -> if
-    | options.beamSize is some and options.bestOf is some ->
-      Err("beamSize and bestOf can't be given together")
-    | options.temperature == 0 && options.bestOf is some ->
-      Err("bestOf with greedy sampling (T = 0) is not compatible")
-    | options.patience is some and options.beamSize is #nil ->
-      Err("patience requires beamSize to be given")
-    | options.lengthPenalty is some and not (0 <= options.lengthPenalty <= 1) ->
-      Err("lengthPenalty (alpha) should be a value between 0 and 1")
-    | else -> options
-
-  def getInitialTokens(): int ->
-    mut tokens = sotSequence \toList()
-
-    if options.prefix is some prefix ->
-      mut prefixTokens = 
-        if prefix is string s ->
-          tokenizer.encode(" " + s.stringip())
-        else -> prefix
-      
-      if sampleLen is some ->
-        def maxPrefixLen = nCtx // 2 - sampleLen
-        set prefixTokens = prefixTokens(-maxPrefixLen:)
-
-      set tokens = tokens + prefixTokens
-
-    if options.prompt is Some(prompt) ->
-      def promptTokens =
-        if prompt is string s ->
-          tokenizer.encode(" " + s.stringip())
-        else -> prompt
-      
-      set tokens = 
-        (tokenizer.sotPrev)
-        + promptTokens(-(nCtx // 2 - 1) ..)
-        + tokens      
-
-    return tokens
-
-  def getSuppressTokens(): int ->
-    mut suppressTokens = options.suppressTokens
-
-    if isinstance(suppressTokens, string) ->
-      set suppressTokens = suppressTokens \split(",") \List.map(int)
-
-    if
-      | -1 in suppressTokens ->
-        suppressTokens = list { for suppressTokens | t -> if t >= 0 -> t }
-        set suppressTokens.extend(tokenizer.nonSpeechTokens)
-      | suppressTokens is #nil or len(suppressTokens) == 0 ->
-        set suppressTokens = []  --  interpret empty string as an empty list
-      | else ->
-        if not suppressTokens is list -> return Err("suppressTokens must be a list")
-
-    suppressTokens.extend(list(
-      tokenizer.transcribe
-      tokenizer.translate
-      tokenizer.sot
-      tokenizer.sotPrev
-      tokenizer.sotLm
-    ))
-
-    if tokenizer.noSpeech is some ->
-      --  no-speech probability is collected separately
-      set suppressTokens += (tokenizer.noSpeech)
-
-    return suppressTokens \set() \sorted()
-
-  def getAudioFeatures(mel: Tensor) ->
-    mut mel = mel
-
-    if options.fp16 ->
-      set mel = mel.half()
-
-    def audioFeatures =
-      if mel.shape(-2..) == list(model.dims.nAudioCtx, model.dims.nAudioState) ->
-        --  encoded audio features are given; skip audio encoding
-        mel
-      else ->
-        model.encoder(mel)
-
-    if audioFeatures.dtype != list(if options.fp16 -> torch.float16 else -> torch.float32) ->
-      return Err("audioFeatures has an incorrect dtype: {audioFeatures.dtype}")
-
-    return audioFeatures
-
-  def DetectLanguage(audioFeatures: Tensor, tokens: Tensor) ->
-    mut languages = [options.language] * audioFeatures.shape(0)
-    def langProbs = #nil
-
-    if options.language is #nil or options.task == "langId" ->
-      def langTokens, langProbs = model.detectLanguage(audioFeatures, tokenizer)
-      set languages = langProbs \List.map { probs -> max(probs, key = probs.get) } 
-
-      if options.language is #nil ->
-        set tokens(.., sotIndex + 1) = langTokens  --  write language tokens
-
-    languages, langProbs
-
-  def MainLoop(audioFeatures: Tensor, tokens: Tensor) ->
-    def nBatch = tokens.shape(0)
-    def sumLogprobs: Tensor = torch.zeros(nBatch, device = audioFeatures.device)
-    def noSpeechProbs = (np.nan) * nBatch
-
-    proc {
-      for 0..sampleLen | i ->
-        mut logits = inference.logits(tokens, audioFeatures)
-
-        if i == 0 and tokenizer.noSpeech is some ->  --  save noSpeechProbs
-          def probsAtSot = logits(.., sotIndex) \float() \softmax(dim = -1)
-          set noSpeechProbs = probsAtSot(.., tokenizer.noSpeech) \tolist()
-
-        --  now we need to consider the logits at the last token only
-        set logits = logits(.., -1)
-
-        --  apply the logit filters, e.g. for suppressing or applying penalty to
-        for logitFilters | logitFilter ->
-          logitFilter.apply(logits, tokens)
-
-        --  expand the tokens tensor with the selected next tokens
-        def tokens, completed = try decoder.update(tokens, logits, sumLogprobs)
-
-        if completed or tokens.shape(-1) > nCtx ->
-          break
-    } \finally {
-      inference.cleanupCaching()
-    }
-
-    return tokens, sumLogprobs, noSpeechProbs
-
-  @torch.noGrad()
-  def run(mel: Tensor) -> list(DecodingResult) ->
-    decoder.reset()
-    def tokenizer: Tokenizer = tokenizer
-    def nAudio: int = mel.shape(0)
-
-    def audioFeatures = GetAudioFeatures(mel)  --  encoder forward pass
-    def tokens = torch.tensor(list(initialTokens)).repeat(nAudio, 1)
-
-    --  detect language if requested, overwriting the language token
-    def languages, languageProbs = DetectLanguage(audioFeatures, tokens)
-
-    if options.task == "langId" -> 
-      return list {
-        for audioFeatures, languages, languageProbs | features, language, probs ->
-          DecodingResult(
-            audioFeatures = audioFeatures
-            language = language
-            languageProbs = probs
-          )
-      }
-      
-
-    --  repeat text tensors by the group size, for beam search or best-of-n sampling
-    def tokens = tokens.repeatInterleave(nGroup, dim = 0).to(audioFeatures.device)
-
-    --  call the main sampling loop
-    def tokens, sumLogprobs, noSpeechProbs = MainLoop(audioFeatures, tokens)
-
-    --  reshape the tensors to have (nAudio, nGroup) as the first two dimensions
-    def audioFeatures = audioFeatures(..nGroup..)
-    def noSpeechProbs = noSpeechProbs(..nGroup..)
-
-    def tokens = tokens.reshape(nAudio, nGroup, -1)
-    def sumLogprobs = sumLogprobs.reshape(nAudio, nGroup)
-
-    --  get the final candidates for each group, and slice between the first sampled token and EOT
-    def tokens, sumLogprobs = decoder.finalize(tokens, sumLogprobs)
-    
-    def tokens = list(
-      for tokens | s ->
-        list {
-          for s | t ->
-            t(sampleBegin .. (t == tokenizer.eot).nonzero()(0, 0))
-        }
-    )
-
-    --  select the top-ranked sample in each group
-    def selected = sequenceRanker.rank(tokens, sumLogprobs)
-    def tokens: list(list(int)) = list { for selected, tokens | i, t -> list(t(i)) }
-    def texts: list(string) = list { for tokens | t -> tokenizer.decode(t).stringip() }
-
-    def sumLogprobs = list(for selected, sumLogprobs | i, lp -> lp(i))
-
-    def avgLogprobs = (
-      lp / list(for tokens, sumLogprobs | t, lp -> len(t) + 1)
-    )
-
-    if map(len, fields) \toSet() \len() != 1 ->
-      return Err("inconsistent result lengths: {list(map(len, fields))}")
-
-    def fieldSets = (
-      texts
-      languages
-      tokens
-      audioFeatures
-      avgLogprobs
-      noSpeechProbs
-    )
-
-    return list(for fieldSets | fields -> 
-        DecodingResult(
-          audioFeatures = fields.features
-          language = fields.language
-          tokens = fields.tokens
-          text = fields.text
-          avgLogprob = fields.avgLogprob
-          noSpeechProb = fields.noSpeechProb
-          temperature = options.temperature
-          compressionRatio = compressionRatio(text)
-        )
-    )
-
-
-@torch.noGrad()
-spec (#whisper, Tensor, DecodingOptions?, series(string)) -> (DecodingResult, list(DecodingResult))
-def decode(model, mel, options, kwargs) -> DecodingResult | list(DecodingResult) ->
-  mut mel = mel
-  mut options = options
-
-  def single = mel.ndim
-
-  if single == 2 ->
-    set mel = mel.unsqueeze(0)
-
-  if kwargs \any() ->
-    set options = replace(options, **kwargs)
-
-  def result = DecodingTask(model, options).run(mel)
-
-  if single -> result(0)
-  else      -> result
+export def transcribe
+  : [Model & Tokenizer & Random] (AudioFeatures, DecodingOptions) -> #some(string) | #error(OptionsError)
+  = { audio, options -> proc {
+    def options = try verifyOptions(options)
+    def #some(sampleLen) = options.sampleLen except #none -> #some(448)
+    def decoder = greedyDecoder(options.temperature)
+    def filters = if options.suppressBlank then [suppressBlank(sotSequence.length)] else []
+
+    def #some(tokens) = mainLoop([sotSequence], audio, decoder, filters, sampleLen = sampleLen) \head
+      except #emptyList -> #some([])
+
+    -- Drop the start sequence and everything from the end-of-transcript token on
+    def text = decode(tokens \drop(sotSequence.length) \takeWhile { != eot })
+    return text \trim
+  }}

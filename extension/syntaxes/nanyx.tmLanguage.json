@@ -1,126 +1,350 @@
 {
   "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
-  "name": "nyx",
+  "name": "Nanyx",
   "scopeName": "source.nanyx",
+  "fileTypes": ["nyx"],
   "patterns": [
     { "include": "#comments" },
     { "include": "#strings" },
-    { "include": "#numbers" },
+    { "include": "#attributes" },
+    { "include": "#declarations" },
     { "include": "#keywords" },
-    { "include": "#types" },
+    { "include": "#constants" },
     { "include": "#tags" },
-    { "include": "#punctuation" },
-    { "include": "#operators" }
+    { "include": "#nominal" },
+    { "include": "#pipes" },
+    { "include": "#backtick-names" },
+    { "include": "#types" },
+    { "include": "#lambda-parameters" },
+    { "include": "#workflow-blocks" },
+    { "include": "#function-calls" },
+    { "include": "#members" },
+    { "include": "#operators" },
+    { "include": "#punctuation" }
   ],
   "repository": {
     "comments": {
       "patterns": [
         {
+          "comment": "Block comment: a line of three or more dashes, closed by a line with the same number of dashes",
           "name": "comment.block.nanyx",
-          "begin": "^(---)",
-          "end": "^(---)"
+          "begin": "^\\s*(-{3,})\\s*$",
+          "end": "^\\s*(\\1)\\s*$",
+          "beginCaptures": { "1": { "name": "punctuation.definition.comment.begin.nanyx" } },
+          "endCaptures": { "1": { "name": "punctuation.definition.comment.end.nanyx" } }
         },
         {
           "name": "comment.line.double-dash.nanyx",
-          "match": "--.*$"
+          "match": "(--).*$",
+          "captures": { "1": { "name": "punctuation.definition.comment.nanyx" } }
         }
       ]
     },
     "strings": {
       "patterns": [
         {
+          "comment": "Double-quoted strings support escapes and {interpolation}; {{ and }} are literal braces",
           "name": "string.quoted.double.nanyx",
           "begin": "\"",
           "end": "\"",
+          "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.nanyx" } },
+          "endCaptures": { "0": { "name": "punctuation.definition.string.end.nanyx" } },
           "patterns": [
             { "name": "constant.character.escape.nanyx", "match": "\\\\." },
-            { "name": "constant.other.placeholder.nanyx", "match": "\\{[^}]*\\}" }
+            { "name": "constant.character.escape.brace.nanyx", "match": "\\{\\{|\\}\\}" },
+            {
+              "name": "meta.embedded.interpolation.nanyx",
+              "begin": "\\{",
+              "end": "\\}",
+              "beginCaptures": { "0": { "name": "punctuation.section.interpolation.begin.nanyx" } },
+              "endCaptures": { "0": { "name": "punctuation.section.interpolation.end.nanyx" } },
+              "patterns": [{ "include": "$self" }]
+            }
           ]
         },
         {
-          "name": "string.quoted.single.nanyx",
+          "comment": "Single-quoted strings are raw: no escapes, no interpolation",
+          "name": "string.quoted.single.raw.nanyx",
           "begin": "'",
           "end": "'",
-          "patterns": [
-            { "name": "constant.character.escape.nanyx", "match": "\\\\." }
-          ]
+          "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.nanyx" } },
+          "endCaptures": { "0": { "name": "punctuation.definition.string.end.nanyx" } }
         }
       ]
     },
-    "numbers": {
+    "attributes": {
       "patterns": [
         {
-          "name": "constant.numeric.float.nanyx",
-          "match": "\\b-?[0-9][0-9_]*\\.[0-9][0-9_]*(?:[eE][+-]?[0-9][0-9_]*)?\\b"
+          "name": "meta.attribute.nanyx",
+          "match": "(@)([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "punctuation.definition.annotation.nanyx" },
+            "2": { "name": "entity.other.attribute-name.nanyx" }
+          }
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "comment": "def name, rec name, def Type.name, def Type.`op`",
+          "match": "\\b(def|rec)\\s+(?:(\\$?[A-Z][A-Za-z0-9_]*)(\\.))?(?:(`[^`]+`)|([a-z_][A-Za-z0-9_]*))(?![A-Za-z0-9_])",
+          "captures": {
+            "1": { "name": "keyword.declaration.nanyx" },
+            "2": { "name": "entity.name.type.nanyx" },
+            "3": { "name": "punctuation.accessor.nanyx" },
+            "4": { "name": "entity.name.function.operator.nanyx" },
+            "5": { "name": "entity.name.function.nanyx" }
+          }
         },
         {
-          "name": "constant.numeric.integer.nanyx",
-          "match": "\\b-?[0-9][0-9_]*\\b"
+          "comment": "type Name, context Name, type $Nominal",
+          "match": "\\b(type|context)\\s+(\\$?)([A-Z][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.nanyx" },
+            "2": { "name": "punctuation.definition.nominal.nanyx" },
+            "3": { "name": "entity.name.type.nanyx" }
+          }
+        },
+        {
+          "comment": "pattern declarations: only at the start of a line, since `pattern` is also a common identifier",
+          "match": "^\\s*(pattern)\\b(?!\\s*[=:,)])",
+          "captures": { "1": { "name": "keyword.declaration.nanyx" } }
+        },
+        {
+          "comment": "module name, module a.b, module name =",
+          "match": "\\b(module)\\s+([A-Za-z_][A-Za-z0-9_.]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.nanyx" },
+            "2": { "name": "entity.name.namespace.nanyx" }
+          }
+        },
+        {
+          "comment": "import ( ... ) block",
+          "name": "meta.import.nanyx",
+          "begin": "\\b(import)\\s*(\\()",
+          "end": "\\)",
+          "beginCaptures": {
+            "1": { "name": "keyword.declaration.nanyx" },
+            "2": { "name": "punctuation.section.parens.begin.nanyx" }
+          },
+          "endCaptures": { "0": { "name": "punctuation.section.parens.end.nanyx" } },
+          "patterns": [{ "include": "#import-items" }]
+        },
+        {
+          "comment": "import module, import pkg/module, import \"./file\" as alias",
+          "name": "meta.import.nanyx",
+          "begin": "\\b(import)\\b",
+          "end": "$",
+          "beginCaptures": { "1": { "name": "keyword.declaration.nanyx" } },
+          "patterns": [{ "include": "#import-items" }]
+        },
+        {
+          "comment": "re-export: export some.module (names)",
+          "match": "\\b(export)\\s+([a-z_][A-Za-z0-9_.]*(?:/[A-Za-z0-9_.]+)?)(?=\\s*\\()",
+          "captures": {
+            "1": { "name": "keyword.declaration.nanyx" },
+            "2": { "name": "entity.name.namespace.nanyx" }
+          }
         }
+      ]
+    },
+    "import-items": {
+      "patterns": [
+        { "include": "#comments" },
+        { "include": "#strings" },
+        { "name": "keyword.declaration.nanyx", "match": "\\b(as)\\b" },
+        {
+          "name": "entity.name.namespace.nanyx",
+          "match": "\\b(?!as\\b)[A-Za-z_][A-Za-z0-9_.]*(?:/[A-Za-z0-9_.]+)?"
+        },
+        { "name": "keyword.operator.and.nanyx", "match": "&" },
+        { "include": "#punctuation" }
       ]
     },
     "keywords": {
       "patterns": [
         {
-          "name": "keyword.control.nanyx",
-          "match": "\\b(if|else|match|with|return|except|then|in)\\b"
-        },
-        {
           "name": "keyword.declaration.nanyx",
-          "match": "\\b(def|type|context|module|import|export|use|in|as|rec|private)\\b"
+          "match": "\\b(def|type|context|module|import|export|use|rec|mut|private|as|in|typeof)\\b"
         },
         {
-          "name": "constant.language.boolean.nanyx",
-          "match": "\\b(true|false)\\b"
+          "name": "keyword.control.nanyx",
+          "match": "\\b(if|then|else|match|except|for|while|with)\\b"
         },
         {
-          "name": "constant.language.null.nanyx",
-          "match": "\\b(null|unit)\\b"
+          "comment": "Workflow keywords provided by builders such as proc, async and seq",
+          "name": "keyword.control.workflow.nanyx",
+          "match": "\\b(return|yield|try|await|defer)\\b"
+        },
+        {
+          "name": "keyword.operator.logical.nanyx",
+          "match": "\\b(and|or|not)\\b"
         }
       ]
     },
-    "types": {
+    "constants": {
       "patterns": [
+        { "name": "constant.language.boolean.nanyx", "match": "\\b(true|false)\\b" },
+        { "name": "constant.language.unit.nanyx", "match": "\\(\\)" },
+        { "name": "constant.language.unimplemented.nanyx", "match": "\\?\\?\\?" },
+        { "name": "variable.language.wildcard.nanyx", "match": "\\b_\\b" },
         {
-          "name": "entity.name.type.nanyx",
-          "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+          "comment": "Floats, with optional exponent and optional unit suffix (500ms, 0.5s)",
+          "name": "constant.numeric.float.nanyx",
+          "match": "\\b[0-9][0-9_]*\\.[0-9][0-9_]*(?:[eE][+-]?[0-9]+)?(?:[A-Za-z]+)?\\b"
+        },
+        {
+          "name": "constant.numeric.integer.nanyx",
+          "match": "\\b[0-9][0-9_]*(?:[eE][+-]?[0-9]+)?(?:[A-Za-z]+)?\\b"
         }
       ]
     },
     "tags": {
       "patterns": [
         {
-          "name": "entity.name.tag.nanyx",
-          "match": "#[A-Za-z_][A-Za-z0-9_]*"
+          "comment": "Capitalised tags are custom patterns",
+          "match": "(#)([A-Z][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "punctuation.definition.tag.nanyx" },
+            "2": { "name": "entity.name.tag.pattern.nanyx" }
+          }
+        },
+        {
+          "match": "(#)([a-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "punctuation.definition.tag.nanyx" },
+            "2": { "name": "entity.name.tag.nanyx" }
+          }
+        }
+      ]
+    },
+    "nominal": {
+      "patterns": [
+        {
+          "comment": "$Name is a nominal type or context",
+          "match": "(\\$)([A-Z][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "punctuation.definition.nominal.nanyx" },
+            "2": { "name": "entity.name.type.nominal.nanyx" }
+          }
+        }
+      ]
+    },
+    "pipes": {
+      "patterns": [
+        {
+          "comment": "x \\Type.f  or  x \\f",
+          "match": "(\\\\)\\s*(?:(\\$?[A-Z][A-Za-z0-9_]*)(\\.))?([a-z_][A-Za-z0-9_]*)(?![A-Za-z0-9_.])",
+          "captures": {
+            "1": { "name": "keyword.operator.pipe.nanyx" },
+            "2": { "name": "entity.name.type.nanyx" },
+            "3": { "name": "punctuation.accessor.nanyx" },
+            "4": { "name": "entity.name.function.nanyx" }
+          }
+        },
+        {
+          "comment": "x \\alias.f  (lowercase qualifier, e.g. a module alias)",
+          "match": "(\\\\)\\s*([a-z_][A-Za-z0-9_]*)(\\.)([a-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.operator.pipe.nanyx" },
+            "2": { "name": "entity.name.namespace.nanyx" },
+            "3": { "name": "punctuation.accessor.nanyx" },
+            "4": { "name": "entity.name.function.nanyx" }
+          }
+        },
+        { "name": "keyword.operator.pipe.nanyx", "match": "\\\\" }
+      ]
+    },
+    "backtick-names": {
+      "patterns": [
+        {
+          "comment": "Operator and other backtick-quoted names: `+`, `0`, `<+>`",
+          "match": "(`)([^`]+)(`)",
+          "captures": {
+            "1": { "name": "punctuation.definition.name.begin.nanyx" },
+            "2": { "name": "entity.name.function.operator.nanyx" },
+            "3": { "name": "punctuation.definition.name.end.nanyx" }
+          }
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "comment": "Pascal-cased names are types, contexts and record constructors",
+          "name": "entity.name.type.nanyx",
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+        },
+        {
+          "comment": "Built-in lowercase types, not when used as a member (json.string) or piped into (\\map)",
+          "name": "support.type.primitive.nanyx",
+          "match": "(?<![.\\\\A-Za-z0-9_])(int|float|string|bool|list|seq|gen|map|set|any|undefined)\\b"
+        }
+      ]
+    },
+    "lambda-parameters": {
+      "patterns": [
+        {
+          "comment": "{ x, y -> ... }  parameters between an opening brace and the arrow",
+          "match": "(?<=\\{)\\s*([a-z_][A-Za-z0-9_]*\\??(?:\\s*,\\s*[a-z_][A-Za-z0-9_]*\\??)*)\\s*(?=->)",
+          "captures": { "1": { "name": "variable.parameter.nanyx" } }
+        }
+      ]
+    },
+    "workflow-blocks": {
+      "patterns": [
+        {
+          "comment": "builder { ... }: a workflow such as proc, async, seq, memory or query",
+          "match": "\\b([a-z_][A-Za-z0-9_]*)(?=\\s*\\{)",
+          "captures": { "1": { "name": "entity.name.function.workflow.nanyx" } }
+        }
+      ]
+    },
+    "function-calls": {
+      "patterns": [
+        {
+          "name": "entity.name.function.call.nanyx",
+          "match": "\\b[a-z_][A-Za-z0-9_]*(?=\\s*\\()"
+        }
+      ]
+    },
+    "members": {
+      "patterns": [
+        {
+          "comment": "x.field and the shorthand { .field }",
+          "match": "(\\.)([a-z_][A-Za-z0-9_]*)(?!\\s*\\()",
+          "captures": {
+            "1": { "name": "punctuation.accessor.nanyx" },
+            "2": { "name": "variable.other.member.nanyx" }
+          }
         }
       ]
     },
     "operators": {
       "patterns": [
+        { "name": "keyword.operator.arrow.nanyx", "match": "->" },
+        { "name": "keyword.operator.map-entry.nanyx", "match": "=>" },
+        { "name": "keyword.operator.assignment.nanyx", "match": ":=" },
+        { "name": "keyword.operator.spread.nanyx", "match": "\\.\\.\\." },
+        { "name": "keyword.operator.range.nanyx", "match": "\\.\\." },
         {
+          "comment": "Operator names are sequences of + - * / % ^ ~ < > = !",
           "name": "keyword.operator.nanyx",
-          "match": "(\\|->|=|\\+|\\-|\\*|/|\\||&&|\\|\\||==|!=|<=|>=|<|>)"
-        }
+          "match": "[+\\-*/%^~<>=!]+"
+        },
+        { "name": "keyword.operator.bar.nanyx", "match": "\\|" },
+        { "name": "keyword.operator.and.nanyx", "match": "&" },
+        { "name": "keyword.operator.optional.nanyx", "match": "\\?" },
+        { "name": "punctuation.separator.annotation.nanyx", "match": ":" }
       ]
     },
     "punctuation": {
       "patterns": [
-        {
-          "name": "punctuation.section.parens.nanyx",
-          "match": "[()]"
-        },
-        {
-          "name": "punctuation.section.brackets.nanyx",
-          "match": "[\\[\\]]"
-        },
-        {
-          "name": "punctuation.section.braces.nanyx",
-          "match": "[{}]"
-        },
-        {
-          "name": "punctuation.separator.comma.nanyx",
-          "match": ","
-        }
+        { "name": "punctuation.section.parens.nanyx", "match": "[()]" },
+        { "name": "punctuation.section.brackets.nanyx", "match": "[\\[\\]]" },
+        { "name": "punctuation.section.braces.nanyx", "match": "[{}]" },
+        { "name": "punctuation.separator.comma.nanyx", "match": "," }
       ]
     }
   }

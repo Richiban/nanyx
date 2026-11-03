@@ -1,0 +1,82 @@
+module attestation
+
+import nanyx/time
+
+---
+There are no classes in Nanyx. This example takes a class from another
+language, a manager that caches a key attestation and refreshes it when it
+expires, and models it the Nanyx way:
+
+  - the object's fields become a record type
+  - its methods become definitions attached to that type
+  - mutation becomes a function from the old state to the new state
+  - its dependencies become contexts
+---
+
+type Attestation = (
+  certificateChain: list(string)
+  generatedAt: Instant
+)
+
+type Settings = (
+  tokenExpiry: Duration
+  maxRetryAttempts: int
+  retryDelay: Duration
+)
+
+export type AttestationCache = (
+  settings: Settings
+  current: #some(Attestation) | #none
+)
+
+export def AttestationCache.new: Settings -> AttestationCache = { settings ->
+  AttestationCache(settings = settings, current = #none)
+}
+
+def AttestationCache.needsRefresh: [Clock] AttestationCache -> bool = { cache ->
+  match cache.current
+    | #none -> true
+    | #some(attestation) -> Clock.now - attestation.generatedAt >= cache.settings.tokenExpiry
+}
+
+-- The service that produces attestations is a dependency, so it is a context
+context Attester = (
+  getChallenge: () -> string
+  generateCertificateChain: string -> #some(list(string)) | #error(#attestationFailed)
+)
+
+-- Retry an operation, waiting between attempts
+def retry: [Clock] (times: int, delay: int -> Duration, operation: () -> #some(a) | #error(e)) -> #some(a) | #error(e)
+  = { times, delay, operation ->
+    rec attempt = { n ->
+      match operation()
+        | #some(value) -> #some(value)
+        | #error(e) ->
+          if n >= times then #error(e)
+          else
+            Clock.sleep(delay(n))
+            attempt(n + 1)
+    }
+    attempt(1)
+  }
+
+-- Refresh the attestation if it is missing or expired. Returns the new cache;
+-- the old one is unchanged.
+export def AttestationCache.refresh
+  : [Clock & Attester] AttestationCache -> #some(AttestationCache) | #error(#attestationFailed)
+  = { cache ->
+    if not cache.needsRefresh then #some(cache)
+    else proc {
+      def chain = try retry(
+        times = cache.settings.maxRetryAttempts
+        delay = { n -> cache.settings.retryDelay * n }
+        operation = { generateCertificateChain(getChallenge()) }
+      )
+
+      return cache with current = #some(Attestation(certificateChain = chain, generatedAt = Clock.now))
+    }
+  }
+
+export def AttestationCache.certificateChain: AttestationCache -> #some(list(string)) | #none = { cache ->
+  cache.current \Option.map { .certificateChain }
+}
