@@ -1,0 +1,101 @@
+name: VS Code extension
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "extension/**"
+      - ".github/workflows/extension.yml"
+    tags:
+      - "extension-v*"
+  pull_request:
+    paths:
+      - "extension/**"
+      - ".github/workflows/extension.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: extension
+
+jobs:
+  build:
+    name: Build and package
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile
+        run: npm run compile
+
+      - name: Read the extension version
+        id: version
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Check that a release tag matches the extension version
+        if: startsWith(github.ref, 'refs/tags/extension-v')
+        run: |
+          tag="${GITHUB_REF_NAME#extension-v}"
+          if [ "$tag" != "${{ steps.version.outputs.version }}" ]; then
+            echo "Tag version $tag does not match package.json version ${{ steps.version.outputs.version }}" >&2
+            exit 1
+          fi
+
+      - name: Package
+        run: npx --yes @vscode/vsce@3 package --out "nanyx-${{ steps.version.outputs.version }}.vsix"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nanyx-vsix
+          path: extension/nanyx-*.vsix
+          if-no-files-found: error
+
+  publish:
+    name: Publish
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/extension-v')
+    runs-on: ubuntu-latest
+    environment: marketplace
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: nanyx-vsix
+          path: extension
+
+      - name: Publish to the Visual Studio Marketplace
+        run: npx --yes @vscode/vsce@3 publish --packagePath nanyx-${{ needs.build.outputs.version }}.vsix
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+      - name: Publish to Open VSX
+        if: env.OVSX_PAT != ''
+        run: npx --yes ovsx@0.10.1 publish nanyx-${{ needs.build.outputs.version }}.vsix
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+
+      - name: Attach the package to a GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: VS Code extension ${{ needs.build.outputs.version }}
+          files: extension/nanyx-${{ needs.build.outputs.version }}.vsix
+          generate_release_notes: true
