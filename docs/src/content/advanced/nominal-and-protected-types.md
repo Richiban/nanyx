@@ -12,86 +12,127 @@ The `$` prefix applies to `context` declarations as well as to `type` declaratio
 
 # Nominal Types
 
-A nominal type cannot be constructed (or cloned) outside its home module. Export a constructor function to create values safely.
+A nominal type is declared like any other type, with a `$` in front of its name. The declaration gives the type a shape, but the name is what matters: two nominal types with the same shape are still different types, and a plain value of that shape is not a nominal value until it has been wrapped.
 
 ```nanyx
-module user
+module email
 
+export type $Email = string
+```
+
+## Constructors
+
+Declaring `$Email` also declares a constructor of the same name. Applying `$Email` to a value of the underlying shape wraps it, and matching on `$Email(e)` unwraps it again:
+
+```nanyx
+def wrapped = $Email("ada@example.com")   -- $Email
+def $Email(raw) = wrapped                 -- raw: string
+```
+
+For record shapes the constructor takes the record's fields by name:
+
+```nanyx
 export type $User = (
-  id: UserId
   name: string
+  email: $Email
 )
 
-export def $User.new: (UserId, string) -> Result($User, list(string)) = { id, name ->
-  memory {
-    def errors = mut []
-    if id <= 0 then errors += "ID must be positive"
-    if name.length == 0 then errors += "Name cannot be empty"
-    
-    if errors.length > 0 then
-      #error(errors)
-    else
-      #some($User(id = id, name = name))
-  }
+def user = $User(name = "Ada", email = wrapped)
+```
+
+The constructor (and the ability to clone a value) is only available inside the type's home module. Everywhere else, `$Email("...")` is a compile error. This is the whole point: the home module is the only place a nominal value can come into existence, so it is the only place that needs to uphold the type's invariants.
+
+The usual pattern is to export a _smart constructor_—an ordinary function that validates its input and calls the real constructor only when the input is acceptable:
+
+```nanyx
+module email
+
+export type $Email = string
+
+export def $Email.parse: string -> Result($Email, #invalidEmail) = { value ->
+  if value \contains("@") then
+    #some($Email(value))
+  else
+    #error(#invalidEmail)
 }
 ```
 
+Callers in other modules obtain an `$Email` by going through `$Email.parse`; there is no other way to get one. Because the function is an [attached definition](./attached-definitions) on `$Email`, it reads naturally at the call site: `$Email.parse("ada@example.com")` or, in a pipeline, `input \$Email.parse`.
+
+The smart constructor can return whatever is appropriate: a `Result` when there is something useful to say about why the input was rejected, an [option-like type](./option-like-types) when there isn't, or the nominal type itself when construction cannot fail.
+
 ## Assignability
 
-Nominal types are not assignable to each other, even if their structures are identical. They are, however assignable to their underlying shape for compatibility with existing code.
+Nominal types are not assignable to each other, even if their structures are identical. They are, however, assignable to their underlying shape for compatibility with existing code.
 
-So, given the following definition of `$UserId`:
+So, given the definition of `$Email` above, `$Email` is assignable to `string` but `string` is not assignable to `$Email`. In practice this means an `$Email` can be used anywhere a `string` is expected, including with every attached definition on `String`:
 
 ```nanyx
-type $UserId = int
+def email: $Email = ...
+
+email.length                        -- 15
+email \contains("example")          -- true
+email \substring(start = 0, length = 3)  -- "ada"
+email \split(on = "@")              -- ["ada", "example.com"]
 ```
 
-Then `$UserId` is assignable to `int` but `int` is not assignable to `$UserId`.
+Note that these all produce plain `string`s (or `int`s, `bool`s and so on), not `$Email`s. Taking a substring of an email address does not give you another email address, and the type system agrees.
 
-If you wish a nominal type to be completely opaque and not assignable to its underlying shape, you can use a protected type instead (see below).
+If you wish a nominal type to be completely opaque and not assignable to its underlying shape, you can use a protected type instead.
 
 # Protected (opaque) types
 
-Protected types go further by hiding their structure completely outside their home module using the `private` keyword. This is useful for wrapping primitives safely and enforcing validation.
+Protected types go further by hiding their structure completely outside their home module using the `private` keyword. Outside that module the type has a name and nothing else: no shape, no constructor, and none of the operations of the underlying type.
 
 ```nanyx
 module ids
 
-export type $UserId = private string
+export type $UserId = private int
 
-export def $UserId.new: string -> Result($UserId, string) = { value ->
-  if value.length == 0 then
-    #error("UserId cannot be empty")
+export def $UserId.new: int -> Result($UserId, #invalidUserId) = { value ->
+  if value <= 0 then
+    #error(#invalidUserId)
   else
     #some($UserId(value))
 }
 ```
 
-Outside the module, callers can pass around `$UserId` values but cannot construct or inspect the underlying string directly.
-
-# Constructors and accessors
-
-Because protected types hide representation, you typically provide helpers that convert in and out of the type boundary.
+Outside the `ids` module, callers can pass `$UserId` values around and store them in records, but they cannot construct one directly, pattern-match on `$UserId(n)` to get at the integer, or treat the value as an `int`:
 
 ```nanyx
-module email
+def a: $UserId = ...
+def b: $UserId = ...
 
-export type $Email = private string
-
-export def $Email.parse: string -> #some($Email) | #none = { value ->
-  if value \contains("@") then
-    #some($Email(value))
-  else
-    #none
-}
-
--- expose a read-only view of the underlying string
-export def $Email.value: $Email -> string = { $Email(e) -> e }
+a + b              -- error: `+` is not defined for $UserId
+a < b              -- error: `<` is not defined for $UserId
+a \math.sqrt       -- error: $UserId is not assignable to float
+a * 2              -- error: $UserId is not assignable to int
 ```
+
+## Accessors
+
+Because protected types hide their representation, the home module is also the only place that can look inside one. If callers legitimately need the underlying value—to put it in a URL, say, or write it to a database—export an accessor that returns it:
+
+```nanyx
+module ids
+
+-- expose a read-only view of the underlying int
+export def $UserId.value: $UserId -> int = { $UserId(n) -> n }
+```
+
+The accessor is a deliberate choice about which operations make sense for the type. `$UserId.value` says "you may read the number out"; it does not say "you may add two of them together", and the type system will continue to reject that.
 
 # Choosing between them
 
-- Use nominal types when you want identity and explicit construction but still want to expose the shape.
-- Use protected types when you want a hard abstraction boundary and / or guarantees that changing the internal representation of a type will not affect external users.
+The difference comes down to one question: is a value of your type still a value of the underlying type?
+
+An email address is a particular kind of string. It makes sense to ask how long it is, whether it contains a substring, or what comes after the `@`. A nominal `$Email = string` captures this exactly: it cannot be confused with any other string, it can only be created by `$Email.parse`, and yet it still behaves as the string it is.
+
+A user ID is not a particular kind of integer. It happens to be represented as one, but no operation on integers is meaningful on it: adding two user IDs together, taking the square root of one, or asking whether one is less than another are all mistakes. A protected `$UserId = private int` captures this exactly: the integer is an implementation detail, and the only things you can do with a `$UserId` are the things the `ids` module chooses to export.
+
+Put another way:
+
+- Use a **nominal** type when you want identity and explicit construction but the operations of the underlying shape are still meaningful on your type. Examples: `$Email`, `$Name`, `$Path`, `$Metres`.
+- Use a **protected** type when you want a hard abstraction boundary, or a guarantee that changing the internal representation will not affect external users. Examples: `$UserId`, `$OrderId`, `$Token`, `$Handle`.
 
 Combine nominal and protected types with contexts and workflows to make safe domain-specific APIs.
