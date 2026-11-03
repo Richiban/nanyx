@@ -1,323 +1,169 @@
---  Examples from the paper "Liberating effects use rows and handlers"
---  by Daniel Hillerström and Sam Lindley.
---  <https://www.dhil.net/research/papers/liberating_effects-tyde2016.pdf>
+---
+Examples from the paper "Liberating effects with rows and handlers"
+by Daniel Hillerström and Sam Lindley, reworked for Nanyx contexts.
+<https://www.dhil.net/research/papers/liberating_effects-tyde2016.pdf>
 
-module Nim
+Nanyx contexts are implicit parameters rather than resumable effect
+handlers, so the examples that rely on multi-shot `resume` (game trees,
+exploring both choices) are written with direct recursion instead.
+---
 
-import(
-  Nyx.Num.Float64
-  Nyx.Num.Random
-)
+module nim
 
-----------------------------------------------------------
--- Definition of players
-----------------------------------------------------------
+import nanyx/math
 
--- A player is either `#bob` or `#alice`
-type Player
-  | #bob
-  | #alice
+-- Players ------------------------------------------------------------------
 
+type Player = #bob | #alice
 
-def Player.`==` = {
-  | #bob, #bob     -> true
-  | #alice, #alice -> true
-  | _              -> false
+def Player.show: Player -> string = {
+  | #bob -> "bob"
+  | #alice -> "alice"
 }
 
-default Player.show: Show(Player) = (
-  show = {
-    | #bob   -> "bob"
-    | #alice -> "alice"
-  }
-)
-
-----------------------------------------------------------
--- Game of Nim
-----------------------------------------------------------
-
--- Operation to move a certain number of sticks.
-context Move = (
-  ctl move: (Player, sticks: int) -> int
-)
-
-def aliceTurn: [Move] = {
-  | { <= 0 } -> #bob
-  | _        -> bobTurn(n - move(#alice, n))
+def Player.other: Player -> Player = {
+  | #bob -> #alice
+  | #alice -> #bob
 }
 
-def bobTurn: [Move] = {
-  | { <= 0 } -> #alice 
-  | _        -> aliceTurn(n - move(#bob, n))
+-- The game ----------------------------------------------------------------
+
+-- A strategy decides how many sticks a player takes from a heap of `n`
+context Move = (move: (Player, int) -> int)
+
+-- Alice goes first; the player who takes the last stick wins
+def turn: [Move] (Player, int) -> Player = { player, n ->
+  if n <= 0 then player.other
+  else turn(player.other, n - move(player, n))
 }
 
-def game = { n ->
-  aliceTurn(n)
-}
+def game: [Move] int -> Player = { n -> turn(#alice, n) }
 
-----------------------------------------------------------
--- Perfect strategy
-----------------------------------------------------------
+-- Perfect strategy --------------------------------------------------------
 
-def perfect: Move = (
-  move = { _, n -> max(1, n % 4) }
-)
+def perfect = Move(move = { _, n -> Math.max(1, n % 4) })
 
-export def examplePerfect1 = {
-  use perfect
-  game(7)       -- alice
-}
+def examplePerfect1 = { use perfect in game(7) }    -- alice
+def examplePerfect2 = { use perfect in game(12) }   -- bob
 
-export def examplePerfect2 = {
-  use perfect
-  game(12)      -- bob
-}
+-- Game trees --------------------------------------------------------------
 
-
-----------------------------------------------------------
--- Game trees
-----------------------------------------------------------
-
--- A game tree
 type GameTree =
-  | #take(Player, moves: List(int, GameTree))
+  | #take(Player, list((int, GameTree)))
   | #winner(Player)
 
+def validMoves: int -> list(int) = { n -> [1, 2, 3] \filter { <= n } }
 
-fun validMoves = { n ->
-  [1, 2, 3] \filter { <= n }
+-- The tree of every possible game from a heap of `n`
+def buildTree: (Player, int) -> GameTree = { player, n ->
+  if n <= 0 then #winner(player.other)
+  else
+    def subtrees = validMoves(n) \map { sticks -> (sticks, buildTree(player.other, n - sticks)) }
+    #take(player, subtrees)
 }
 
-def gametree: [Move] = (
-  return = { x -> Winner(x) }
-  ctl move = { p, n ->
-    def moves    = validMoves(n)
-    def subgames = moves \map(resume)
-    def subtrees = moves \zip(subgames)
-    
-    #take(p, subtrees)
-  }
-)
+def gameTree: int -> GameTree = { n -> buildTree(#alice, n) }
 
-export def GameTree.show = { gt ->
-  showGameTree(gt, indent = 2)
-}
-
-def showGameTree: (GameTree, indent: int) -> string 
-  = { 
-    | #winner(p), _ -> p.show ++ " wins"
-    | #take(p, moves), indent ->
-        def lines = moves \map { sticks, gtx ->
-          String.concatMany([
-            "\n"
-            String.repeat(" ", indent)
-            sticks.show
-            " -> "
-            gtx.showGameTree(indent+2)
-          ])
-        }
-
-        p.show ++ lines.join
-  }
-
-export def exampleGameTree = {
-  use gametree in game(3)   -- figure 1 in the paper
-}
-
-
-----------------------------------------------------------
--- Cheating
-----------------------------------------------------------
-
-context Cheat = (
-  cheat: Player -> a
-)
-
-def cheatReport: [Throws] = (
-  cheat = { p ->
-    throw(p.show ++ " cheated!")
-  }
-)
-
-def check: [Move] = (
-  ctl move = { p, n ->
-    def m = move(p, n)
-
-    if validMoves(n) \find { == m } \toBool ->
-      resume(m)
-    else -> 
-      cheat(p)
-  }
-)
-
-export def exampleCheck = {
-  use perfect, cheatReport, check
-  game(7)  -- alice
-}
-
-export def exampleUse = {
-  use (x = map([1,2,3]))
-  x + 2
-}
-
-----------------------------------------------------------
--- Cheating strategy
-----------------------------------------------------------
-
-def pc: Move = (
-  move = {
-    | #alice, n -> max(1, n % 4)
-    | #bob,   n -> n
-  }
-)
-
-export def examplePc1 = {
-  use pc, cheatReport, check
-  game(12)
-}
-
-
-export def examplePc2 = {
-  -- the `perfect` on the outside is necessary as the type system
-  -- does not detect that `check` will never perform a `move`.
-  use perfect, cheatReport, check, pc
-  game(12)
-}
-
-
-
-----------------------------------------------------------
--- Choosing a strategy
-----------------------------------------------------------
-
-context Choose = (
-  choose: () -> bool
-)
-
-def bobChooses: [Choose] = { m ->
-  if choose() -> pc(m) 
-  else -> perfect(m)
-}
-
-def allResults: [Choose] = (
-  ctl return = { x -> [x] }
-  ctl choose = { resume(true) ++ resume(false)}
-)
-
-export def exampleChoose = {
-  use (ctl choose = { resume(true) ++ resume(false) })
-  use bobChooses
-
-  [game(7)]   -- [bob,alice]
-}
-
-def coin: [Random] Choose = (
-  choose = { Random.coinToss() }
-)
-
-export def exampleCoin: [Random] = {
-  use coin, bobChooses
-  game(7)
-}
-
-----------------------------------------------------------
--- Scoreboard
-----------------------------------------------------------
-
-context State(s) = (
-  get: () -> s
-  put: s -> ()
-)
-
-def state: State(s) = { init, action ->
-  mut s = init
-
-  use State(int)(
-    get = { s }
-    put = { x -> set s = x }
-  )
-
-  action()
-}
-
-
--- The current state of the game as a list of moves.
-type GameState = List(player, int)
-
-def s0 = [(#alice, 0), (#bob, 0)]
-
-def scoreUpdater = (
-  ctl return = { p -> 
-    put(updateScore(p, get()))
-    p
-  }
-)
-
-def updateScore: Player, GameState -> GameState
-  = { p, gs ->
-    gs \replace { q, s ->
-      if p == q -> return (q, s + 1)
+def showIndented: (GameTree, int) -> string = {
+  | #winner(p), _ -> p.show ++ " wins"
+  | #take(p, moves), indent ->
+    def lines = moves \map { sticks, subtree ->
+      "\n" ++ String.repeat(" ", indent) ++ "{sticks} -> " ++ showIndented(subtree, indent + 2)
     }
-  }
-
-def printer: [Console] State = (
-  ctl return = { x -> printBoard(get()); x }
-)
-
-def printBoard: [Console] GameState -> () 
-  = { gs ->
-    def scores = gs \map { p, s -> "{p} -> {s}" }
-    scores \String.join("\n") \println
-  }
-
-export def examplePrint1 = {
-  use state(s0),
-      printer,
-      coin,
-      bobChooses,
-      scoreUpdater
-
-  game(7)
+    p.show ++ (lines \String.join(""))
 }
 
-def replay: [e] int, ([e] () -> a) -> a
-  = { n, action ->
-    use (
-      ctl return = { x -> 
-        if n <= 1 -> x 
-        else replay(n - 1, action)
-      }
-    )
+def GameTree.show: GameTree -> string = { tree -> showIndented(tree, 2) }
 
-    action()
-  }
+def exampleGameTree = { gameTree(3).show }   -- figure 1 in the paper
 
-export def examplePrint2 = {
-  use state(s0),
-      printer,
-      replay(10),
-      coin,
-      bobChooses,
-      scoreUpdater
+-- Cheating ----------------------------------------------------------------
 
-  game(7)
+type Outcome = #won(Player) | #cheated(Player)
+
+-- Check a move before playing it, so an illegal move ends the game
+def checkedMove: [Move] (Player, int) -> #some(int) | #error(#cheated(Player)) = { player, n ->
+  def m = move(player, n)
+  if validMoves(n) \contains(m) then #some(m) else #error(#cheated(player))
 }
 
+def checkedTurn: [Move] (Player, int) -> Outcome = { player, n ->
+  if n <= 0 then #won(player.other)
+  else
+    match checkedMove(player, n)
+      | #some(m) -> checkedTurn(player.other, n - m)
+      | #error(#cheated(p)) -> #cheated(p)
+}
 
-export def main()
-  [ "",
-    examplePerfect1() \write,
-    examplePerfect2() \write,
-    exampleGameTree() \write,
-    exampleCheck() \write,
-    examplePc2() \write,
-    exampleChoose() \write
-  ]
-  \String.join("\n-----------\n")
-  \print
+def checkedGame: [Move] int -> Outcome = { n -> checkedTurn(#alice, n) }
 
-  use (
-    ctl throw = { exn -> exn \write \println }
-  )
+-- Bob cheats by taking the whole heap
+def cheating = Move(move = {
+  | #alice, n -> Math.max(1, n % 4)
+  | #bob, n -> n
+})
 
-  examplePc1() \write \println -- raises exception
+def exampleCheck = { use perfect in checkedGame(7) }    -- #won(#alice)
+def exampleCheat = { use cheating in checkedGame(12) }  -- #cheated(#bob)
+
+-- Choosing a strategy -----------------------------------------------------
+
+context Choose = (choose: () -> bool)
+
+-- Bob cheats or plays perfectly depending on a choice made elsewhere
+def bobChooses: [Choose] () -> Move = {
+  Move(move = { player, n ->
+    if player == #bob and choose() then n else Math.max(1, n % 4)
+  })
+}
+
+-- Both outcomes, by running the game once per choice
+def exampleChoose = {
+  [true, false] \map { c ->
+    use Choose(choose = { c }) in
+    use bobChooses() in checkedGame(7)
+  }
+}   -- [#cheated(#bob), #won(#alice)]
+
+def exampleCoin: [Random] () -> Outcome = {
+  use Choose(choose = { Random.coinToss() }) in
+  use bobChooses() in checkedGame(7)
+}
+
+-- Scoreboard --------------------------------------------------------------
+
+type Scores = map(Player, int)
+
+def initialScores: Scores = [#alice => 0, #bob => 0]
+
+def updateScore: (Scores, Player) -> Scores = { scores, winner ->
+  def #some(current) = scores(winner) except #notFound -> #some(0)
+  scores \Map.insert(winner, current + 1)
+}
+
+def printBoard: [Console] Scores -> () = { scores ->
+  for scores | player, score -> println("{player.show} -> {score}")
+}
+
+-- Play a number of rounds against a coin-flipping Bob and keep the score
+def examplePrint: [Console & Random] int -> () = { rounds ->
+  def final = (1..rounds) \fold(initialScores) { scores, _ ->
+    def winner =
+      match exampleCoin()
+        | #won(p) -> p
+        | #cheated(p) -> p.other
+    updateScore(scores, winner)
+  }
+  printBoard(final)
+}
+
+@entry
+def main: [Console & Random] () -> () = {
+  println(examplePerfect1().show)
+  println(examplePerfect2().show)
+  println(exampleGameTree())
+  println("{exampleCheck()}")
+  println("{exampleCheat()}")
+  println("{exampleChoose()}")
+  examplePrint(10)
+}

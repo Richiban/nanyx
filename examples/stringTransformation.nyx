@@ -1,76 +1,51 @@
-def splitWords: string -> list(string) = { input ->
-  input
-  \split(RegEx("(?=[A-Z])|_|-|\s")) 
-}
+module casing
+
+import nanyx/text.regex
 
 export type Casing =
-  | #camel 
-  | #pascal 
-  | #kebab 
-  | #snake 
-  | #title 
-  | #sentence 
-  | #mid 
-  | #midSentence
+  | #camel
+  | #pascal
+  | #kebab
+  | #snake
+  | #title
+  | #sentence
 
-
-export def rejoin: list(string), Casing -> string = { words, casing ->
-  match casing
-    | #kebab ->
-      words \map { .toLowerCase() } \String.join('-')
-    | #snake ->
-      words \map { .toLowerCase() } \String.join('_')
-    | #pascal ->
-      words 
-        \map { replace(RegEx("(^\w|\s\w)(\S*)", #global), { _, m1, m2 -> m1.toUpperCase() + m2.toLowerCase() }) } 
-        \String.join
-    | #camel ->
-      mut first = true
-      def newWords = MList[]
-
-      for words | word ->
-        if first then
-          set newWords += word.toLowerCase()
-          set first = false
-        else
-          set newWords += word.replace(RegEx("(^\w|\s\w)(\S*)", #global), { _, m1, m2 -> m1.toUpperCase() + m2.toLowerCase() })
-
-      newWords.join("")
-    | #title ->
-      words 
-        \map { 
-          replace(RegEx("(^\w|\s\w)(\S*)", #global), { _, m1, m2 -> m1.toUpperCase() + m2.toLowerCase() })
-        } 
-        \String.join(" ")
-    | #sentence ->
-      mut first = true
-      def newWords = MList[]
-
-      for words | word ->
-        if first then
-          set newWords += word.replace(
-            RegEx("(^\w|\s\w)(\S*)", #global),
-            { _, m1, m2 -> m1.toUpperCase() + m2.toLowerCase() }
-          )
-          set first = false
-        else
-          newWords += word.toLowerCase()
-
-      newWords \String.join(' ')
-    | #midSentence ->
-      words \map { .toLowerCase() } \String.join(' ')
+-- Split on case changes, underscores, dashes and whitespace
+def splitWords: string -> list(string) = { input ->
+  input \Regex.split('(?=[A-Z])|_|-|\s') \filter { != "" }
 }
 
+def capitalize: string -> string = { word ->
+  match word \chars
+    | [] -> ""
+    | [first, ...rest] -> first \toUpper ++ (rest \String.join("") \toLower)
+}
 
-def tests = [
-  "oneTwoThree"
-  "one_two_three"
-  "one-two-three"
-  "one two three"
-]
+export def rejoin: (list(string), Casing) -> string = { words, casing ->
+  match casing
+    | #kebab -> words \map { .toLower } \String.join("-")
+    | #snake -> words \map { .toLower } \String.join("_")
+    | #pascal -> words \map(capitalize) \String.join("")
+    | #title -> words \map(capitalize) \String.join(" ")
+    | #camel ->
+      match words
+        | [] -> ""
+        | [first, ...rest] -> first \toLower ++ (rest \map(capitalize) \String.join(""))
+    | #sentence ->
+      match words
+        | [] -> ""
+        | [first, ...rest] -> capitalize(first) ++ " " ++ (rest \map { .toLower } \String.join(" "))
+}
 
-for tests | test ->
-  def words = splitWords(test)
-  def rejoined = rejoin(words, #midSentence)
+export def convert: (string, Casing) -> string = { input, casing ->
+  rejoin(splitWords(input), casing)
+}
 
-  println(rejoined)
+@entry
+def main = {
+  def tests = ["oneTwoThree", "one_two_three", "one-two-three", "one two three"]
+
+  for tests | test ->
+    for [#camel, #pascal, #kebab, #snake, #title, #sentence] | casing ->
+      println("{test} -> {convert(test, casing)}")
+}

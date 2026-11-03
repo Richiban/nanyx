@@ -1,176 +1,59 @@
-module PixelSorting
+module pixelSorting
 
-import (
-  cv2
-  numpy as np
-  math
-  colorsys
-  pandas as pd
-  os
-  argparse
-  tqdm
-  sound
-)
+import nanyx/math
 
--- Taking arguments from command line
-def parser = argparse.ArgumentParser()  -- you iniatize as such
-parser.addArgument("-f", required = true, help = "enter fileName of your picture")
--- parser.addArgument("-s", required = true, help = "Speed factor of the audio to be increased or decreased")
--- parser.addArgument("-av", required = true, help = "Speed factor of the audio visualizer to be increased or decreased")
+-- Pixel sorting: a glitch-art effect where the pixels of each row of an
+-- image are reordered by colour.
 
--- the addArgument tells you what needs to be given as an input sp its help
-set args = parser.parseArgs()  -- you take the arguments from command line
+type Pixel = (r: float, g: float, b: float)   -- each channel in 0..1
+type Image = list(list(Pixel))
 
-os.makedirs("ImageSort/{args.f}")
-print("{args.f.capitalize()} directory is created.")
-
--- Defining all global variables
-context AppCtx =
-  def df = []
-  def total = 0
-  def dict, final, imgList = {}, [], []
-
--- Create dataframe and save it as an excel file
-
-def createDataSet
-  : <AppCtx> int, list(???) -> ()
-  = { val = 0, data = [] ->
-    set dict(len(data)) = data
-
-    if val != 0 and val == max(dict.keys()) ->
-      def finalDf = pd.DataFrame(dict(val)
-        | columns = ["Blue", "Green", "Red"])
-      finalDf.toExcel("ImageSort/{args.f}-output.xlsx")
-  }
-
--- Generating colors for each row of the frame
-def generateColors(cSorted, frame, row) ->
-  def height = 25
-  def img = np.zeros((height, len(cSorted), 3), np.uint8)
-
-  for indices(cSorted) | x ->
-    def r, g, b = cSorted(x)(0) * 255, cSorted(x)(1) * 255, cSorted(x)(2) * 255
-    def c = [r, g, b]
-    df.append(c)
-    set img(.., x) = c  -- the color value for the xth column , this gives the color band
-    set frame(row, x) = c  -- changes added for every row in the frame
-
-  createDataSet(data = df)
-
-  return img, frame
-
-
--- Measures the total number of pixels that were involved in pixel sort
-def measure(count, row, col, height, width) ->
-  set total += count
-  
-  if row == height - 1 and col == width - 1 ->
-    createDataSet(val = total)
-
-
--- Step Sorting Algorithm
-def step(bgr, repetitions = 1) ->
-  def b, g, r = bgr
-
-  -- lum is calculated as per the way the humans view the colors
-  mut lum = math.sqrt(0.241 * r + 0.691 * g + 0.068 * b)
-
-  -- conversion of rgb to hsv values
-  def h, s, v = colorsys.rgbToHsv(
-    r, g, b
-  )  -- h,s,v is a better option for classifying each color
-
-  -- Repetitions are taken to decrease the noise
-  def h2 = int(h * repetitions)
-  mut v2 = int(v * repetitions)
-
-  -- To get a smoother color band
-  if h2 \mod 2 == 1 ->
-    set v2 = repetitions - v2
-    set lum = repetitions - lum
-
-  return h2, lum, v2
-
-
--- Threshold set for avoiding extreme sorting of the pixels
-def findThreshold(lst, add) ->
-  for list | i ->
-    add.append(sum(i))
-
-  return (max(add) + min(add)) / 2
-
-
-def makeVideo = {
-  def out = cv2.VideoWriter(
-    "ImageSort/{args.f}/{args.f}.mp4"
-    cv2.VideoWriterFourcc(*"mp4v")
-    16
-    (800, 500)
-  )
-  
-  for tqdm(1..500) | count ->
-    def fileName = "ImageSort/{args.f}/{count}.jpg"
-    def img = cv2.imread(fileName)
-    out.write(img)
-    os.remove(fileName)
-
-  out.release()
+-- Perceived luminance
+def Pixel.luminance: Pixel -> float = { p ->
+  Math.sqrt(0.241 * p.r + 0.691 * p.g + 0.068 * p.b)
 }
 
-def main = {
-  def img = cv2.imread("Image/{args.f}.jpg") \cv2.resize(800, 500)
-  imgList.append(img)
+-- Hue and value, which classify colours better than the raw channels
+def Pixel.hsv: Pixel -> (h: float, s: float, v: float) = { p ->
+  def max = [p.r, p.g, p.b] \max
+  def min = [p.r, p.g, p.b] \min
+  def delta = max - min
 
-  def height, width = Img.shape
-  
-  println(">>> Row-wise Color sorting")
-  
-  for tqdm(0..height) | row ->
-    def color, colorN, add = [], [], []
+  def h =
+    if | delta == 0.0 -> 0.0
+       | max == p.r -> (((p.g - p.b) / delta) % 6.0) / 6.0
+       | max == p.g -> ((p.b - p.r) / delta + 2.0) / 6.0
+       | else -> ((p.r - p.g) / delta + 4.0) / 6.0
 
-    for 0..width | col ->
-      def val = img(row)(col).tolist()
-
-      -- val includes all rgb values between the range of 0 to 1
-      -- This makes the sorting easier and efficient
-      def val = val \List.map { / 255.0 }
-      color.append(val)
-
-    def thresh = findThreshold(
-      color, add
-    )  -- setting the threshold value for every row in the frame
-
-    -- For the specific row , if all the values are non-zero then it is sorted with color
-    if np.all(np.asarray(color)) ->
-      color.sort(key = { bgr -> step(bgr, 8) })  -- step sorting
-      def band, img = generateColors(color, img, row)
-      measure(len(color), row, col, height, width)
-
-    -- For the specific row , if any of the values are zero it gets sorted with colorN
-    if np.all(np.asarray(color)) == false ->
-      for color, 0.. | ind, i ->
-        -- Accessing every list within color
-        -- Added to colorN if any of the element in the list is non-zero
-        -- and their sum is less than threshold  value
-
-        if np.any(np.asarray(i)) and sum(i) < thresh ->
-          colorN.append(i)
-
-      colorN.sort(key = lambda bgr: step(bgr, 8))  -- step sorting
-      def band, img = generateColors(colorN, img, row)
-      measure(len(colorN), row, col, height, width)
-    cv2.imwrite("ImageSort/{args.f}/{row + 1}.jpg", img)
-
-  -- Writing down the final sorted image
-  cv2.imwrite(
-    "ImageSort/{args.f}/{args.f}.jpg", img
-  )  -- Displaying the final picture
-
-  println("\n>>> Formation of the Video progress of the pixel-sorted image")
-  makeVideo()
-  sound.main(
-    args.f
-  )  -- Calling the external python file to create the audio of the pixel-sorted image
+  (h = h, s = if max == 0.0 then 0.0 else delta / max, v = max)
 }
 
-main()
+-- A sort key that groups pixels into `repetitions` hue bands, alternating the
+-- direction of the luminance in every other band so the result looks smoother
+def stepKey: (Pixel, int) -> (int, float, int) = { p, repetitions ->
+  def (h = h, v = v) = p.hsv
+  def band = Math.floor(h * repetitions.toFloat)
+  def value = Math.floor(v * repetitions.toFloat)
+
+  if band % 2 == 1 then (band, repetitions.toFloat - p.luminance, repetitions - value)
+  else (band, p.luminance, value)
+}
+
+def Pixel.isBlack: Pixel -> bool = { p -> p.r == 0.0 and p.g == 0.0 and p.b == 0.0 }
+
+-- A row is sorted only if every pixel has some colour; rows containing black
+-- pixels are left alone so that hard edges survive
+def sortRow: list(Pixel) -> list(Pixel) = { row ->
+  if row \any { p -> p.isBlack } then row
+  else row \sortBy { p -> stepKey(p, 8) }
+}
+
+export def sortImage: Image -> Image = { image -> image \map(sortRow) }
+
+-- The number of pixels that took part in the sort
+export def measure: Image -> int = { image ->
+  image
+    \filter { row -> not (row \any { p -> p.isBlack }) }
+    \map { .length }
+    \sum
+}

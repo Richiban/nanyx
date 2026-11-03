@@ -1,31 +1,27 @@
---  ------- Fizzbuzzbaz -------
+module fizzbuzzbaz
 
---  	Fizzbuzzbaz is a variant of fizzbuzz, where the function should take a list of `rules` at runtime.
---  	For example, 3 -> "fizz", 5 -> "buzz", 7 -> "baz", meaning that a multiple of 3 and 7 would be replaced
---  	with "fizzbaz" etc.
+-- Fizzbuzzbaz is a variant of fizzbuzz where the rules are supplied at
+-- runtime. For example, 3 -> "fizz", 5 -> "buzz", 7 -> "baz", so a multiple
+-- of both 3 and 7 is replaced with "fizzbaz".
 
-
-
-def playNumber: int, string, int -> string = { divisor, word, i ->
-  if i % divisor == 0 then
-    word
-  else
-    ""
+def playNumber: (divisor: int, word: string, i: int) -> string = { divisor, word, i ->
+  if i % divisor == 0 then word else ""
 }
-    
-def numberGame: Map(int, string) -> (int -> string) = { rules ->
+
+def numberGame: list((int, string)) -> (int -> string) = { rules ->
   { i ->
     rules
-      \flatMap { divisor, word -> playNumber(divisor, word, i) }
+      \map { divisor, word -> playNumber(divisor = divisor, word = word, i = i) }
       \String.join("")
       \match
-        | "" -> i.toString()
+        | "" -> "{i}"
         | s -> s
   }
 }
 
-def fizzbuzz = numberGame(dict {
-  3 => "fizz"
-  5 => "buzz"
-  7 => "baz"
-})
+def fizzbuzz = numberGame([(3, "fizz"), (5, "buzz"), (7, "baz")])
+
+@entry
+def main = {
+  for 1..30 | i -> println(fizzbuzz(i))
+}

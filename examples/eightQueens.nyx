@@ -2,30 +2,40 @@ module eightQueens
 
 def boardSize = 8
 
-def validate: list(int) -> Result((), #invalid) = { queens ->
-    def left, right, col = queens(-1), queens(-1), queens(-1)
-
-    for reversed(queens[:-1]) | r ->
-        set left, right = left - 1, right + 1
-
-        if r in (left, col, right) then
-            return #error(#invalid)
+-- A partial solution is the column of the queen in each row placed so far.
+-- A new queen is safe if no earlier queen shares its column or a diagonal.
+def isSafe: (list(int), int) -> bool = { queens, col ->
+  queens
+    \reverse
+    \zip(1..)
+    \all { q, distance -> q != col and q != col - distance and q != col + distance }
 }
 
-def addQueen: list(int) -> list(int) = { queens ->
-    for 0..boardSize | i ->
-        def testQueens = queens + [i]
+def solve: list(int) -> #some(list(int)) | #noSolution = { queens ->
+  if queens.length == boardSize then #some(queens)
+  else
+    rec tryColumns = {
+      | [] -> #noSolution
+      | [col, ...rest] ->
+        if isSafe(queens, col) then
+          match solve([...queens, col])
+            | #some(solution) -> #some(solution)
+            | #noSolution -> tryColumns(rest)
+        else tryColumns(rest)
+    }
 
-        match validate(testQueens)
-          | #error(#invalid) -> ()
-          | _ ->
-            if testQueens.length == boardSize then
-                return testQueens
-            else
-                return addQueen(testQueens)
+    tryColumns((0..(boardSize - 1)) \toList)
 }
 
-def queens = addQueen([])
-println(queens)
-def rows = queens \map { q -> ". " * q + "Q " + ". " * (boardSize - q - 1) }
-rows \String.join("\n") \println
+def render: list(int) -> string = { queens ->
+  queens
+    \map { q -> (0..(boardSize - 1)) \map { c -> if c == q then "Q " else ". " } \String.join("") }
+    \String.join("\n")
+}
+
+@entry
+def main = {
+  match solve([])
+    | #some(queens) -> println(render(queens))
+    | #noSolution -> println("No solution for a {boardSize}x{boardSize} board")
+}

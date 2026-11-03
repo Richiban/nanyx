@@ -1,23 +1,24 @@
+-- A script module: no module declaration, so the statements run top to bottom
+
 def things = [
   "Alex"
   "Sam"
   "Jo"
 ]
 
-
---  This is the "foreach" syntax in Nyx
+-- This is the "foreach" syntax in Nanyx
 for things | thing ->
   println(thing)
 
---  There's no need for an "enumerate" function or similar, because for-loops
---  in Nyx naturally support zipping. Combine that with concise syntactical 
---  support for ranges, and you get this:
+-- There's no need for an "enumerate" function or similar, because for-loops
+-- in Nanyx naturally support zipping. Combine that with the concise syntax
+-- for ranges, and you get this:
 for things, 0.. | thing, i ->
-  println(thing)
+  println("{i}: {thing}")
 
---  The advantage of this is as follows:
---    * It's very clear that the index being used is a counter, NOT the actual 
---      index of the item (an important distinction that is lost in most languages)
---    * It's immediately clear which loop parameter is the index and which is the
---      item, a distinction that can be quite tricky in other languages when 
---      one is looping over a series of ints
+-- The advantage of this is as follows:
+--   * It's very clear that the index being used is a counter, NOT the actual
+--     index of the item (an important distinction that is lost in most languages)
+--   * It's immediately clear which loop parameter is the index and which is the
+--     item, a distinction that can be quite tricky in other languages when
+--     one is looping over a series of ints

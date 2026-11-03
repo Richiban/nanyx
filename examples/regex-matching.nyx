@@ -1,34 +1,33 @@
+module contactInformation
+
 import nanyx/text.regex
 
-def emailPattern = """^(\w+)@(\w+(.\w+)+)$""" --Regex
-def phonePattern = """^(\d{3}-\d{3}-\d{4})$""" --Regex
+-- Custom patterns wrap the regular-expression matching, so that the match
+-- reads as if the language had email-address and phone-number literals.
+-- Single-quoted strings are raw, which suits regular expressions.
 
-pattern string -> #Email(string, string) | _ = { s ->
-  def matches = emailPattern.matches(s)
-  if matches.length == 2 then
-    #Email(matches(0), matches(1))
-  else
-    _
+def emailPattern = Regex('^(\w+)@(\w+(\.\w+)+)$')
+def phonePattern = Regex('^\d{3}-\d{3}-\d{4}$')
+
+pattern string -> #Email(localPart: string, domain: string) | _ = { s ->
+  match emailPattern \captures(s)
+    | #some([localPart, domain, ...]) -> #Email(localPart = localPart, domain = domain)
+    | _ -> _
 }
 
 pattern string -> #Phone(string) | _ = { s ->
-  def matches = phonePattern.matches(s)
-
-  if matches.length == 1 then
-    #Phone(matches(0))
-  else
-    _
+  if phonePattern \matches(s) then #Phone(s) else _
 }
 
 def saveContactInformation: [Console] string -> () = {
-  | #Email(localPart, domainName) ->
-      println("Hi {localPart}, we have saved your email address.")
-  | #Phone(phoneNumber) ->
-      println("Hi, we have saved your phone number {phoneNumber}.")
-  | _ ->
-      println("Invalid contact information, neither an email address nor phone number.")
+  | #Email(localPart, ...) -> println("Hi {localPart}, we have saved your email address.")
+  | #Phone(number) -> println("Hi, we have saved your phone number {number}.")
+  | _ -> println("Invalid contact information: neither an email address nor a phone number.")
 }
 
-saveContactInformation("123-456-7890")
-saveContactInformation("JohnSmith@sample.domain.com")
-saveContactInformation("2 Franklin St, Mars, Milky Way")
+@entry
+def main = {
+  saveContactInformation("123-456-7890")
+  saveContactInformation("JohnSmith@sample.domain.com")
+  saveContactInformation("2 Franklin St, Mars, Milky Way")
+}
