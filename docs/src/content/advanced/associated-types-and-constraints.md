@@ -51,7 +51,7 @@ context Sized(c) = (
 
 context Indexed(c) = (
   elem: type
-  get: c, int -> elem
+  get: (c, int) -> elem
 )
 ```
 

@@ -1,18 +1,18 @@
 ---
 title: "Arbitrary unions"
-description: "Why Nanyx doesn't support types like String | Int"
+description: "Why Nanyx doesn't support types like string | int"
 order: 4
 ---
 
-A common question from new users is: "Why can't I write a type like `String | Int`?" Nanyx deliberately does not support arbitrary unions of unrelated types, and instead restricts unions to tagged variants (e.g. `#some(Int) | #none`). This is a conscious design choice rooted in type inference, readability, and long-term maintainability.
+A common question from new users is: "Why can't I write a type like `string | int`?" Nanyx deliberately does not support arbitrary unions of unrelated types, and instead restricts unions to tagged variants (e.g. `#some(int) | #none`). This is a conscious design choice rooted in type inference, readability, and long-term maintainability.
 
 # Type inference
 
-The primary reason is type inference. Nanyx uses a Hindley-Milner style type system, which relies on types being predictable and composable. Arbitrary unions like `String | Int` quickly introduce ambiguity: if a function receives such a value, what operations are valid on it? Without explicit tagging, the compiler cannot reliably determine what code is safe without requiring pervasive runtime checks or annotations. By contrast, tagged unions carry explicit structure, so pattern matching remains precise and inference remains tractable.
+The primary reason is type inference. Nanyx uses a Hindley-Milner style type system, which relies on types being predictable and composable. Arbitrary unions like `string | int` quickly introduce ambiguity: if a function receives such a value, what operations are valid on it? Without explicit tagging, the compiler cannot reliably determine what code is safe without requiring pervasive runtime checks or annotations. By contrast, tagged unions carry explicit structure, so pattern matching remains precise and inference remains tractable.
 
 # Clarity at the call site
 
-Arbitrary unions tend to erode clarity at the call site. A value of type `String | Int` gives no semantic meaning — what does it represent? Why those two types? Tagged unions force the developer to name the cases (`#name(String) | #age(Int)`), which makes the intent explicit and self-documenting. This leads to better APIs and more maintainable code.
+Arbitrary unions tend to erode clarity at the call site. A value of type `string | int` gives no semantic meaning — what does it represent? Why those two types? Tagged unions force the developer to name the cases (`#name(string) | #age(int)`), which makes the intent explicit and self-documenting. This leads to better APIs and more maintainable code.
 
 # Pattern matching and exhaustiveness
 
@@ -24,4 +24,4 @@ Restricting unions to tags avoids a class of subtle design problems around subty
 
 # Summary
 
-While `String | Int` might seem convenient at first glance, it tends to trade short-term convenience for long-term complexity. Nanyx favours explicitness, inference simplicity, and clear domain modelling through tagged unions instead.
+While `string | int` might seem convenient at first glance, it tends to trade short-term convenience for long-term complexity. Nanyx favours explicitness, inference simplicity, and clear domain modelling through tagged unions instead.

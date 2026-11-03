@@ -39,7 +39,7 @@ def magnitude = { x, y -> math.sqrt(x * x + y * y) }
 
 ```nanyx
 -- The annotation makes field names part of the function signature
-def magnitude2: (x: int, y: int) -> () = { x, y -> math.sqrt(x * x + y * y) }
+def magnitude2: (x: int, y: int) -> float = { x, y -> math.sqrt(x * x + y * y) }
 ```
 
 Field names in function signatures should be a deliberate choice, since callers must use the field names to call the function:
@@ -50,14 +50,16 @@ magnitude2(3, 4) -- ✗ This will not compile because the function expects named
 magnitude2(x = 3, y = 4) -- The correct way to call a function with named parameters
 ```
 
+This is the one rule for named fields everywhere in the language: it applies equally when constructing a record from a type alias (see [Constructing records from a type alias](../tour/records#constructing-records-from-a-type-alias)), so `Point(x = 3, y = 4)` is correct and `Point(3, 4)` is an error for a type with named fields.
+
 Also, when fields in a function signature are named--as with any kind of deconstruction--deconstruction must also be by name in the function body (although if the deconstructed names are the same as the field names, you can collapse `field = field` to just `field`):
 
 ```nanyx
-def magnitude2: (x: int, y: int) -> () = { x, y -> math.sqrt(x * x + y * y) }
+def magnitude2: (x: int, y: int) -> float = { x, y -> math.sqrt(x * x + y * y) }
 
 -- or 
 
-def magnitude3: (x: int, y: int) -> ()
+def magnitude3: (x: int, y: int) -> float
     = { x = innerX, y = innerY -> 
         math.sqrt(innerX * innerX + innerY * innerY) 
     }
@@ -71,7 +73,7 @@ By convention, exported values should be annotated:
 export def add = { a, b -> a + b }
 -- Analyzer warning: missing type annotation
 
-export def add: Nat, Nat -> Nat = { a, b -> a + b }
+export def add: (int, int) -> int = { a, b -> a + b }
 ```
 
 Although the language itself doesn't mandate this practice, the [official style analyzer](../standard-tools/official-analyzer) will emit a warning if this is not followed.

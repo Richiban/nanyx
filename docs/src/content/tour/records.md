@@ -68,6 +68,18 @@ def alice: Person = (
 )
 ```
 
+# Constructing records from a type alias
+
+A record type alias is also callable as a constructor. Calling it builds a value of that shape:
+
+```nanyx
+type Point = (x: int, y: int)
+
+def p = Point(x = 3, y = 4)
+```
+
+The arguments follow exactly the same rule as any other call: positional fields are passed positionally and named fields are passed by name. Since `Point` has named fields, `Point(3, 4)` is an error. For a type with positional fields, such as `type Pair = (int, int)`, the constructor is called positionally: `Pair(3, 4)`.
+
 # Structural typing
 
 Record types are structural, meaning compatibility is based on shape rather than explicit inheritance. If two types have compatible fields, they can be used interchangeably where appropriate.
@@ -76,7 +88,7 @@ Record types are structural, meaning compatibility is based on shape rather than
 type Named = (name: string)
 type Person = (name: string)
 
-def john: Named = Person("John")
+def john: Named = Person(name = "John")
 ```
 
 You can also compose record requirements with intersections:
@@ -110,7 +122,7 @@ def valid = (10, 20, x = 10, y = 20)
 Records can contain optional members when a field may be absent:
 
 ```nanyx
-type Person = (name: string; petsName?: string)
+type Person = (name: string, petsName?: string)
 ```
 
 Optional fields can also be modeled explicitly with tag unions if you need stricter control.

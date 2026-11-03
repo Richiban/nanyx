@@ -30,7 +30,7 @@ Result.mapError: (#some(a) | #error(e1), (e1 -> e2)) -> #some(a) | #error(e2)
 Transforms error values.
 
 ```nanyx
-#error("bad") \Result.mapError { "ERR: {it}" }
+#error("bad") \Result.mapError { e -> "ERR: {e}" }
 -- #error("ERR: bad")
 ```
 
@@ -39,14 +39,15 @@ Transforms error values.
 # bind
 
 ```nanyx
-Result.bind: (#some(a) | #error(e), (a -> (#some(b) | #error(e)))) -> #some(b) | #error(e)
+Result.bind: (#some(a) | #error(e), (a -> (#some(b) | #error(f)))) -> #some(b) | #error(e | f)
 ```
 
-Chains result-producing operations.
+Chains result-producing operations. The error cases of both steps are preserved in the result, so the caller can still distinguish them.
 
 ```nanyx
 readLine()
-  \Result.bind { parseInt }
+  \Result.bind(parseInt)
+-- #some(int) | #error(IoError | #invalidInt)
 ```
 
 ---

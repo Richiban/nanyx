@@ -25,10 +25,10 @@ import (
 match file.read("input.txt")
   | #some(content) ->
     def words = content
-      \string.split(" ")
-      \list.filter { != "" }
-    
-    def count = list.length(words)
+      \split(on = " ")
+      \filter { != "" }
+
+    def count = words.length
     println("Word count: {count}")
   | #error(err) ->
     println("Error reading file: {err}")

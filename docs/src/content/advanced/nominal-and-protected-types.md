@@ -8,6 +8,8 @@ Nanyx is—by default—a structurally-typed language, but sometimes a type's na
 
 Nominal types have an identity that is distinct from their shape, which helps prevent accidental misuse when multiple values share a similar structure. They are very commonly used to wrap primitives—like strings and numbers—to create domain-specific types with invariants or validation.
 
+The `$` prefix applies to `context` declarations as well as to `type` declarations. A nominal context can only be instantiated by its home module; the standard library's `$Memory` context is the main example, which is why `memory { ... }` is the only way to obtain one (see [Memory](./memory)).
+
 # Nominal Types
 
 A nominal type cannot be constructed (or cloned) outside its home module. Export a constructor function to create values safely.
@@ -20,7 +22,7 @@ export type $User = (
   name: string
 )
 
-export def $User.new: UserId, string -> Result($User, list(string)) = { id, name ->
+export def $User.new: (UserId, string) -> Result($User, list(string)) = { id, name ->
   memory {
     def errors = mut []
     if id <= 0 then errors += "ID must be positive"
@@ -57,7 +59,7 @@ module ids
 
 export type $UserId = private string
 
-export def UserId.new: string -> Result($UserId, string) = { value ->
+export def $UserId.new: string -> Result($UserId, string) = { value ->
   if value.length == 0 then
     #error("UserId cannot be empty")
   else
@@ -76,7 +78,7 @@ module email
 
 export type $Email = private string
 
-export def Email?: string -> Option($Email) = { value ->
+export def $Email.parse: string -> #some($Email) | #none = { value ->
   if value \contains("@") then
     #some($Email(value))
   else
@@ -84,7 +86,7 @@ export def Email?: string -> Option($Email) = { value ->
 }
 
 -- expose a read-only view of the underlying string
-export def Email.value: $Email -> string = { $Email(e) -> e }
+export def $Email.value: $Email -> string = { $Email(e) -> e }
 ```
 
 # Choosing between them

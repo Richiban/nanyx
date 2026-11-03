@@ -114,7 +114,7 @@ A package can only import modules from packages that it directly depends on. Dep
 
 # Project references
 
-Packages being developed together can reference each other using `projectReference`s.
+Packages being developed together can reference each other using project references.
 
 ```toml
 [project-references]
@@ -220,7 +220,7 @@ packages = [
 
 Packages do not need to belong to a project. A package without a project can be restored, built, and distributed independently.
 
-Projects primarily exist to describe packages that should be treated as a single development workspace and to make `projectReference`s between them possible.
+Projects primarily exist to describe packages that should be treated as a single development workspace and to make project references between them possible.
 
 ## Running a project
 
@@ -253,7 +253,7 @@ nanyx run hello.nyx
 The script can import other anonymous modules by file path:
 
 ```nanyx
-import "./utils.nyx" as utils
+import "./utils" as utils
 ```
 
 For script mode, Nanyx synthesizes a package description in memory rather than requiring a `.nyxpack` file.

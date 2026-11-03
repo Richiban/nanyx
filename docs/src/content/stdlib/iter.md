@@ -12,7 +12,7 @@ The `iter` module provides generic operations for any type `a` for which an `Ite
 
 ```nanyx
 context Iter(a) = (
-  type elem
+  elem: type
   next: a -> #some(elem, a) | #done
 )
 ```
@@ -108,7 +108,7 @@ items\firstOr(fallback)
 ## fold
 
 ```nanyx
-fold: [Iter(a)] (a, state, ((state, elem) -> state)) -> state
+fold: [Iter(a)] (a, s, ((s, elem) -> s)) -> s
 ```
 
 Folds elements from left to right.

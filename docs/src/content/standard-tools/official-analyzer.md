@@ -71,7 +71,7 @@ def x = m.sqrt(16)
 match n
   | _ -> "always"
   | 0 -> "never reached"
--- Analyzer warning/error: unreachable pattern branch
+-- Analyzer warning: unreachable pattern branch
 ```
 
 ## Unreachable code path
@@ -84,7 +84,7 @@ match n
 
 ```nanyx
 def compute: [Console] int -> int = { n ->
-  readLine() -- Analyzer error: the result of `readLine` is computed but never used
+  readLine() -- Analyzer warning: the result of `readLine` is computed but never used
   42
 }
 ```

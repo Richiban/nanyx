@@ -32,7 +32,7 @@ Wow, that was pretty simple! Next, let's create your first Nanyx project and run
 # Create a project
 
 ```bash
-nanyx proj new hello_world
+nanyx new hello_world
 cd hello_world
 ```
 
@@ -40,11 +40,9 @@ This creates a new project with the following structure:
 
 ```
 hello_world/
-├── nanyx.toml
-├── src/
-│   └── main.nyx
-└── test/
-  └── main_test.nyx
+├── hello_world.nyxpack
+└── src/
+    └── main.nyx
 ```
 
 # Your first program
@@ -52,12 +50,15 @@ hello_world/
 Open `src/main.nyx` and you'll see:
 
 ```nanyx
-@entry module main
+module main
 
-println("Hello, World!")
+@entry
+def main = {
+  println("Hello, World!")
+}
 ```
 
-Notice how, once we move up to a project structure, we have a `module` declaration at the top of our files. This is how we organize code in Nanyx. The `main` module is the default entry point for the project, marked with the `@entry` attribute.
+Notice how, once we move up to a project structure, we have a `module` declaration at the top of our files. This is how we organize code in Nanyx. Named modules don't run statements at the top level; instead the program starts at the function marked with the `@entry` attribute.
 
 # Run it
 
@@ -71,7 +72,8 @@ nanyx run
 # Understanding the code
 
 - `module main` — declares the module name
-- `def main` — the entry point function
+- `@entry` — marks the function below as the program's entry point
+- `def main = { ... }` — the entry point function, which runs in the `Console` context
 - `println(...)` — prints a line to standard output
 
 # What's next?

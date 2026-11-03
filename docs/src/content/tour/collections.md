@@ -19,7 +19,7 @@ def numbers = [1, 2, 3]
 
 def addItems = {
   memory {
-    def items: MList(int) = []
+    def items: MList(int) = mut []
     items += 1
     items += 2
     MList.toList(items)
@@ -37,7 +37,7 @@ Most of the time, Nanyx programs don't care very much about the specific impleme
 |-----------------|-------------------|---------|
 | `List(a)` | `list(a)` | Indexable collections |
 | `Set(a)` | - | Membership checks |
-| `Map(k, v)` | `k -> v` | Key/value lookup |
+| `Map(k, v)` | `k -> #some(v) \| #notFound` | Key/value lookup (a map is callable, and calling it is a lookup) |
 | `Collection(a)` | - | Any in-memory collection |
 | `Sequence(a)` | `seq(a)` | Finite, deterministic sequences |
 | `Generator(a)` | `gen(a)` | Potentially infinite or non-deterministic sequences |
@@ -47,6 +47,10 @@ def lookup = ["a" => 1, "b" => 2]
 
 def unique: Set(int) = [1, 2, 2, 3]
 ```
+
+## Default literal types
+
+A square-bracket literal takes its type from the annotation or the surrounding usage. When neither says otherwise, `[1, 2, 3]` is a `list(a)` and `["a" => 1]` is a `map(k, v)`.
 
 For advanced patterns such as associated types and constrained collection capabilities, see [Associated types and constraints](../advanced/associated-types-and-constraints).
 
@@ -59,15 +63,15 @@ context ListBuilder(a) = (
   yield: a -> ()
 )
 
-def MyList.apply: ([ListBuilder(a)] () -> a) -> MyList(a) = { f ->
+def MyList.apply: ([ListBuilder(a)] () -> ()) -> MyList(a) = { f ->
   memory {
     def listRef = mut MyList()
 
     use (
-      yield = { element -> listRef := listRef.value \add(element) }
+      yield = { element -> listRef := listRef \add(element) }
     ) in f()
 
-    listRef.value
+    listRef
   }
 }
 
@@ -80,15 +84,15 @@ context MapBuilder(k, v) = (
   `=>`: (k, v) -> ()
 )
 
-def MyMap.apply: ([MapBuilder(a)] () -> a) -> MyMap(a) = { f ->
+def MyMap.apply: ([MapBuilder(k, v)] () -> ()) -> MyMap(k, v) = { f ->
   memory {
-    def mapRef = mut MyMap(string, int)()
-    
+    def mapRef = mut MyMap()
+
     use (
-      `=>` = { k, v -> mapRef := mapRef.value \ add(k, v) }
+      `=>` = { k, v -> mapRef := mapRef \add(k, v) }
     ) in f()
 
-    mapRef.value
+    mapRef
   }
 }
 

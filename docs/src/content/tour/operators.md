@@ -19,9 +19,9 @@ def r = "one" +++ "two"
 Operators can take more than two arguments. Extra arguments are passed as a record, [in the same way as piping](../tour/piping#piping-with-extra-arguments):
 
 ```nanyx
-def `+?` = { a, b, c -> ... }
+def `<+>` = { a, b, c -> ... }
 
-def r = a +? (b, c)
+def r = a <+> (b, c)
 ```
 
 # Using operators as functions
@@ -42,15 +42,15 @@ Also, lambda syntax supports an [operator-based shorthand](../tour/functions#sho
 
 # Arithmetic and comparison
 
-Core arithmetic (`+`, `-`, `*`, `/`, `%`, `**`) and comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`) are functions provided by contexts. You can overload them by supplying a context.
+Core arithmetic (`+`, `-`, `*`, `/`, `%`, `**`) and comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`) on the built-in types are [attached definitions](../advanced/attached-definitions): `1 + 2` resolves to `` int.`+` ``, exactly as any other attached function is resolved by the type of its first argument (here, the left operand). To give your own type an operator, attach a definition to it:
 
 ```nanyx
-context VectorOps = (
-  `+`: Vector, Vector -> Vector
-)
+def Vector.`+` = { a, b -> Vector(x = a.x + b.x, y = a.y + b.y) }
 
-use vectorOps in a + b
+def c = a + b   -- resolves to Vector.`+` because `a` is a Vector
 ```
+
+Generic code that needs an operator on an unknown type declares a context requirement instead, such as `[Sum(a)]` or `[Num(a)]`, and the compiler synthesises the instance from the type's attached definitions (see [Contexts](../advanced/contexts)). Loading a context with `use` only overrides the instance that such generic code sees for that particular type; it never changes what `1 + 2` means.
 
 # Pipe and composition
 
@@ -67,4 +67,40 @@ def result = data
 
 # Valid operator names
 
-The following symbols are valid operator names: `+`, `-`, `*`, `/`, `%`, `**`, `=`, `!`, `<`, `>`, `&`, `|`, `^`, `~`, `?`. They can be repeated, but the whole name must consist only of characters from the above list. For example, `++` and `>>>` are valid operator names, but `+a` and `` are not. Note: some operator names are reserved by the language, such as `=`.
+An operator name is any sequence of one or more of the following characters: `+`, `-`, `*`, `/`, `%`, `^`, `~`, `<`, `>`, `=`, `!`. For example, `++`, `>>>` and `<+>` are valid operator names, but `+a` is not.
+
+The characters `|`, `&`, `?`, `#`, `@`, `$`, `:` and `\` are not operator characters; they are syntax (see below).
+
+Boolean operations are the keywords `and`, `or` and `not`, not operators.
+
+## Reserved spellings
+
+Some sequences built from operator characters are syntax, not operators, and cannot be defined or redefined:
+
+| Token | Meaning |
+|---|---|
+| `--`, `---` | Line and block comments |
+| `->` | Lambda, match arm, function type |
+| `=` | Definition, named field, pattern test in `if` |
+| `\` | Pipe |
+| `..` | Range |
+| `...` | Spread and rest |
+| `:=` | Assignment |
+| `=>` | Map entry |
+| `\|` | Match arm, or-pattern, union type |
+| `&` | And-pattern, intersection type, context combination |
+| `#` | Tag prefix |
+| `@` | Attribute prefix |
+| `$` | Nominal prefix |
+| `:` | Type annotation |
+| `?` | Optional marker |
+| `???` | Unimplemented placeholder |
+
+The following operators are defined by the standard library as attached definitions on the built-in types. You can attach them to your own types, but you cannot redefine them globally:
+
+| Operators | Meaning |
+|---|---|
+| `+`, `-`, `*`, `/`, `%`, `**` | Arithmetic |
+| `==`, `!=`, `<`, `<=`, `>`, `>=` | Comparison |
+| `>>`, `<<` | Composition |
+| `++` | Concatenation |

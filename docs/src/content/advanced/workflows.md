@@ -8,7 +8,7 @@ Workflows are one of Nanyx's most distinctive features. They let libraries provi
 
 # The builder shape
 
-A workflow is just a unary higher order function (i.e. a function that takes a single argument that is, itself, a function) or a record with an `apply` function. That function will have some context attached that provides the body of the inner function with keyword methods such as `yield`, `await`, `try`, or `defer`.
+A workflow builder is a value with an `apply` function and a set of _keyword methods_ such as `yield`, `await`, `try`, or `return`. Writing a block after the builder's name:
 
 ```nanyx
 someBuilder {
@@ -16,46 +16,51 @@ someBuilder {
 }
 ```
 
-The block above desugars to either a function call or an `apply` call, whichever is appropriate:
-
-```nanyx
-someBuilder({
-  -- block content
-})
-```
-
-or
+desugars to a call to the builder's `apply` function, with the block body running under `use someBuilder` so that its keyword methods are in scope:
 
 ```nanyx
 someBuilder.apply({
-  -- block content
+  use someBuilder in
+    -- block content
 })
 ```
+
+Every keyword method takes two arguments: the value the keyword was applied to, and a _continuation_ containing the rest of the block. This is the one desugaring rule for all workflows; everything else on this page is a consequence of it.
 
 The simplest possible workflow can be illustrated with a builder that just provides a `yield` method that dumps the given value out to debug:
 
 ```nanyx
 def debug = (
+  apply = { body -> body() }
+
+  @customKeywordType(#bind)
   yield = { value, continuation ->
     hostDebug(value)
     continuation()
   }
 )
 
-use debug in
+debug {
   yield "Debug message 1"
   yield "Debug message 2"
+}
 ```
 
-The block content is rewritten to calls to the `yield` method on the `debug` builder, which in this case just prints the value and continues.
+The block content is rewritten to nested calls to the `yield` method, each receiving the rest of the block as its continuation:
 
 ```nanyx
-debug.yield("Debug message 1", {
-  debug.yield("Debug message 2", {
-    -- end of block
+debug.apply({
+  yield("Debug message 1", {
+    yield("Debug message 2", {
+      -- end of block
+    })
   })
 })
 ```
+
+Because `yield` here calls its continuation immediately, the block runs top to bottom like ordinary sequential code. A keyword that chooses _not_ to call its continuation stops the rest of the block from running, which is how short-circuiting keywords such as `try` work (see below).
+
+Applying a keyword to a value without parentheses, as in `yield 1` or `try f()`, is sugar reserved for workflow keywords; ordinary functions are always called with parentheses.
 
 # Yield and collection builders
 
@@ -69,13 +74,15 @@ def numbers = seq {
 }
 ```
 
-This desugars to:
+Under the single desugaring rule this becomes:
 
 ```nanyx
-seq.apply({ builder ->
-  builder.yield(1)
-  builder.yield(2)
-  builder.yield(3)
+seq.apply({
+  yield(1, {
+    yield(2, {
+      yield(3, { })
+    })
+  })
 })
 ```
 
@@ -100,22 +107,24 @@ def greetingAsync = async {
 }
 ```
 
-That expands into calls on the async builder:
+That expands into calls on the async builder, with the binding `def name = await ...` becoming the parameter of the continuation:
 
 ```nanyx
-async.apply({ builder ->
-  builder.await(getName(), { name ->
-    builder.return("Hello, {name}")
+async.apply({
+  await(getName(), { name ->
+    return("Hello, {name}", { })
   })
 })
 ```
 
-The language has built-in support for a number of common keywords, but you can define your own for any workflow. Custom keywords must end with the character `!` to avoid conflicts with normal method calls:
+A keyword is any builder member that carries the `@customKeywordType` attribute. The attribute's argument says how the keyword's arguments are passed (see [Keyword kinds](#keyword-kinds)). There is no naming convention for keywords; `await`, `try` and `yield` are ordinary member names that happen to be marked as keywords by the builders that define them.
 
 ```nanyx
 def retry = (
-  $keywordKind(#bind)
-  def retry! = { m, f ->
+  apply = { body -> body() }
+
+  @customKeywordType(#bind)
+  retry = { m, continuation ->
     ...
   }
 )
@@ -128,7 +137,9 @@ def retry = (
 | `yield`  | Produce a value in a collection builder |
 | `await`  | Await an asynchronous operation in an async workflow |
 | `try`    | Short-circuit on errors in a workflow that handles results |
-| | _More coming soon..._ |
+| `return` | Wrap the block's final value and finish the block |
+| `zero`   | The value of a block that produces no value (an `if` without `else`, or falling off the end without `return`) |
+| `defer`  | Run a thunk after the rest of the block has finished |
 
 ## Keyword kinds
 
@@ -140,17 +151,19 @@ def retry = (
 
 # Workflow keywords
 
-Builders can expose custom keywords by implementing special methods. Common examples include `yield`, `await`, `try`, and `defer`.
+Builders expose keywords by marking members with `@customKeywordType`. Attributes may be placed before a field inside a record literal:
 
 ```nanyx
 def async = (
+  apply = { body -> ... }
+
   @customKeywordType(#bind)
-  def await = { m, f ->
-      ...
+  await = { m, continuation ->
+    ...
   }
 
   @customKeywordType(#bindF)
-  def defer = { thunk, continuation ->
+  defer = { thunk, continuation ->
     continuation()
     thunk()
   }
@@ -166,13 +179,15 @@ def main = {
 }
 ```
 
+The block above never calls `return`, so its value is the builder's `zero`.
+
 # Error and option chaining
 
-A workflow can provide a `try` keyword to short-circuit on errors. This is useful for `Result` or `Option` chaining.
+A workflow can provide a `try` keyword to short-circuit on errors. This is useful for `Result` or option-like chaining.
 
 ```nanyx
-def getCustomer(id: int): Result(Customer, #customerNotFound) = ...
-def getLastOrder(c: Customer): Result(Order, #orderNotFound) = ...
+def getCustomer: int -> Result(Customer, #customerNotFound) = ...
+def getLastOrder: Customer -> Result(Order, #orderNotFound) = ...
 
 def lastOrderTotal: () -> Result(Money, #customerNotFound | #orderNotFound) = proc {
   def customer = try getCustomer(5)
@@ -180,6 +195,8 @@ def lastOrderTotal: () -> Result(Money, #customerNotFound | #orderNotFound) = pr
   return order.total
 }
 ```
+
+`proc` is the standard library's result workflow. Its `try` calls the continuation with the payload of `#some`, and returns any `#error` value directly without calling the continuation, which is what makes the rest of the block skip. See [Option chaining](../cookbook/option-chaining) for a worked example of writing such a builder.
 
 # Early return and defer
 

@@ -4,7 +4,7 @@ description: "Working with ranges and sequences"
 order: 11
 ---
 
-Ranges use the `x..y` syntax and are a form of sequence. Bounded ranges are finite (`series`), while unbounded ranges are potentially infinite (`seq`).
+Ranges use the `x..y` syntax and are a form of sequence. Bounded ranges are finite (`seq`), while unbounded ranges are potentially infinite (`gen`).
 
 ```nanyx
 for 1..5 | i -> println("Hello times {i}")
@@ -36,16 +36,16 @@ You can implement your own range generator when you have `succ` and a comparison
 
 ```nanyx
 def range
-  : [(succ: (a) -> a, `<=`: (a, a) -> bool)] (start: a, end: a) -> series(a)
-  = { | start, end where end < start ->
-        series {}
-      | (start, end) ->
-        mut current = start
+  : [(succ: a -> a, `<=`: (a, a) -> bool)] (start: a, end: a) -> seq(a)
+  = { start, end ->
+      seq {
+        memory {
+          def current = mut start
 
-        series {
           while current <= end ->
             yield current
-            set current = succ(current)
+            current := succ(current)
         }
+      }
     }
 ```

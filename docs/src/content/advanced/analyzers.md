@@ -4,7 +4,7 @@ description: "Pluggable diagnostics beyond compiler errors"
 order: 10
 ---
 
-One of the principles of Nanyx is that [the compiler is not a linter](../foundations/principles#the-compiler-is-not-a-linter); its focus is to take Nanyx files as input and produce an executable result. 
+One of the principles of Nanyx is that [the compiler is not a linter](../foundations/principles#no-warnings-the-compiler-is-not-a-linter); its focus is to take Nanyx files as input and produce an executable result. 
 
 Thus the compiler itself will only ever emit error-level diagnostics -- things that prevent your program from generating a release build. However, the _compilation process_ supports multiple diagnostic levels beyond errors:
 
@@ -36,30 +36,24 @@ Because analyzers produce diagnostics through the same infrastructure as the com
 
 Nanyx ships with a **default analyzer** that is automatically included in the standard project template. This analyzer covers common checks that most projects will want, such as flagging unused bindings or warning about shadowed names.
 
-When you create a new project with `nanyx init`, the default analyzer is already configured and active. You do not need to install or enable it manually.
+When you create a new project with `nanyx new`, the default analyzer is already configured and active. You do not need to install or enable it manually.
 
 # Configuring analyzers
 
-Analyzers are declared in your project configuration. Each analyzer can be enabled, disabled, or have its individual rules configured:
+Analyzers are declared in the package manifest (the `.nyxpack` file, see [Packages and projects](../tour/packages)). Each analyzer can be enabled, disabled, or have its individual rules configured:
 
-```nanyx
-analyzers = (
-  default = (
-    unusedBindings = #warning
-    shadowedNames = #info
-    deprecatedUsage = #warning
-  )
-)
+```toml
+[analyzers.default]
+unusedBindings = "warning"
+shadowedNames = "info"
+deprecatedUsage = "warning"
 ```
 
-You can suppress a specific rule by setting its severity to `#none`:
+You can suppress a specific rule by setting its severity to `"none"`:
 
-```nanyx
-analyzers = (
-  default = (
-    shadowedNames = #none
-  )
-)
+```toml
+[analyzers.default]
+shadowedNames = "none"
 ```
 
 # Writing custom analyzers
@@ -72,8 +66,8 @@ module myAnalyzer
 def analyze: TypedAst -> list(Diagnostic) = { ast ->
   -- Inspect the AST and collect diagnostics
   ast.declarations
-    \ filter { d -> d.name.startsWith("_") and d.isPublic }
-    \ map { d -> Diagnostic(
+    \filter { d -> d.name.startsWith("_") and d.isPublic }
+    \map { d -> Diagnostic(
       severity = #warning
       message = "Public definitions should not start with an underscore"
       location = d.location

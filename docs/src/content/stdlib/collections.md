@@ -10,6 +10,8 @@ The `collections` module provides functions for working with lists, maps, sets, 
 
 Since lists are immutable, all transform operations on lists return new lists.
 
+These functions are [attached definitions](../advanced/attached-definitions) on `List`, so `xs \map(f)` and `xs.map(f)` both resolve to `List.map` without qualification when `xs` is a list.
+
 ## all
 
 ```nanyx
@@ -157,7 +159,7 @@ Reduces a list to a single value. Runs through the list backwards (from right to
 
 ```nanyx
 [1, 2, 3] \List.foldBack(0) { - }
--- 0
+-- -6, i.e. ((0 - 3) - 2) - 1
 ```
 
 ---
@@ -282,7 +284,7 @@ type Color = #red | #green | #blue | #other(string)
 
 def f: list(Color) -> list(string) = { items ->
     items \List.select { item ->
-        if item is #other(v) then yield(v)
+        if #other(v) = item then yield(v)
     }
 }
 ```
@@ -314,14 +316,14 @@ def f: list(Color) -> #some(string) | #emptyList = { items ->
 ## unfold
 
 ```nanyx
-List.unfold: (b, (b -> #some(a, b) | #stop)) -> list(a)
+List.unfold: (b, (b -> #some(a, b) | #done)) -> list(a)
 ```
 
-Generates a sequence from an initial state value and a function that produces either `#stop` to end the sequence or `#some(element, newState)` to yield an element and a new state for the next step. Returns a list of all yielded elements.
+Generates a sequence from an initial state value and a function that produces either `#done` to end the sequence or `#some(element, newState)` to yield an element and a new state for the next step. Returns a list of all yielded elements.
 
 ```nanyx
 def fibonacci = List.unfold((0, 1)) { current, next ->
-    if current > 100 then #stop
+    if current > 100 then #done
     else #some(current, (next, current + next))
 }
 ```

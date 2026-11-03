@@ -11,7 +11,8 @@ Attributes are annotations that start with `@` and modify how the compiler treat
 Place an attribute immediately before the declaration it applies to:
 
 ```nanyx
-@entry module main
+@entry
+def main = { ... }
 ```
 
 ```nanyx
@@ -19,19 +20,24 @@ Place an attribute immediately before the declaration it applies to:
 def optionChain = (...)
 ```
 
-A declaration can have one or more attributes, each on its own line.
+A declaration can have one or more attributes, each on its own line. An attribute may also precede a field inside a record literal.
 
 # Common attributes
 
 ## `@entry`
 
-Marks the program entry module in project-based apps.
+Marks the program entry point: the function the runtime calls when the package is run. A package may contain at most one `@entry`.
 
 ```nanyx
-@entry module main
+module main
+
+@entry
+def main = {
+  println("Hello, World!")
+}
 ```
 
-See [Hello, World!](../getting-started/hello-world).
+See [Hello, World!](../getting-started/hello-world) and [Entrypoints](./packages#entrypoints).
 
 ## `@workflow`
 
@@ -41,7 +47,8 @@ Marks a workflow builder definition and enables workflow helper generation.
 @workflow
 def optionChain = (
   try = { ... }
-  unit = #none
+  return = { value -> #some(value) }
+  zero = #none
 )
 ```
 
@@ -49,12 +56,12 @@ See [Option chaining](../cookbook/option-chaining) and [Workflows](../advanced/w
 
 ## `@customKeywordType(...)`
 
-Used in workflow builders to specify how a custom keyword behaves.
+Used in workflow builders to specify how a custom keyword behaves. It is placed before the field of the builder record that implements the keyword.
 
 ```nanyx
 def async = (
   @customKeywordType(#bind)
-  def await = { m, f -> ... }
+  await = { m, continuation -> ... }
 )
 ```
 
@@ -62,24 +69,13 @@ See [Workflows](../advanced/workflows).
 
 ## `@baseUnit`
 
-Marks a unit declaration as a base/reference unit for unit-of-measure definitions.
+Marks a unit declaration as a base unit of its dimension. Base units name the dimension and are never defined in terms of other units.
 
 ```nanyx
-@baseUnit unit(s) Seconds = 10_000_000ticks
+@baseUnit unit(s) Seconds: Time
 ```
 
-See [Units and dimensions](../advanced/units-and-dimensions).
-
-## `@builderPattern`
-
-Marks types intended for builder-style initialization.
-
-```nanyx
-@builderPattern
-type Point = (x: int, y: int)
-```
-
-See [Higher-order functions](./lambdas-and-higher-order-functions).
+See [Units and dimensions](../advanced/units-and-dimensions), which is currently a design proposal.
 
 # Notes
 
