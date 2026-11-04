@@ -92,10 +92,9 @@ jobs:
           -p:DebugType=none
           --output publish/${{ matrix.rid }}
 
-      # The referenced F# projects are executables too, so publish copies their
-      # runtimeconfig files alongside the real binary; drop those and the XML docs.
+      # The CLI generates XML docs (Consolo builds its help text from them); they are not needed at runtime.
       - name: Remove files that are not part of the binary
-        run: rm -f publish/${{ matrix.rid }}/*.runtimeconfig.json publish/${{ matrix.rid }}/*.xml
+        run: rm -f publish/${{ matrix.rid }}/*.xml
 
       - name: Smoke test the published binary
         if: matrix.rid == 'linux-x64'

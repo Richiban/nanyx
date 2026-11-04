@@ -5,6 +5,7 @@ using Transpiler.Wasm;
 
 enum Target
 {
+    Parse,
     Check,
     Wasm
 }
@@ -15,7 +16,7 @@ internal static class CliCommands
     /// Compile a Nanyx source file.
     /// </summary>
     /// <param name="inputFile">The path to the .nyx file to compile.</param>
-    /// <param name="target">The compilation target: check or wasm.</param>
+    /// <param name="target">The compilation target: parse (print the AST), check or wasm.</param>
     /// <param name="outputPath">Optional output path for generated artifacts.</param>
     [Consolo("")]
     public static void Run(
@@ -40,6 +41,11 @@ internal static class CliCommands
             return 2;
         }
 
+        if (target == Target.Parse)
+        {
+            return RunParse(inputFile);
+        }
+
         var result = Compiler.compileFile(inputFile);
         Console.WriteLine($"Phase: {result.Phase}");
         PrintDiagnostics(result.Diagnostics);
@@ -50,6 +56,25 @@ internal static class CliCommands
             Target.Wasm => RunWasm(result, inputFile, outputPath),
             _ => UnsupportedTarget(target.ToString())
         };
+    }
+
+    private static int RunParse(string inputFile)
+    {
+        var parsed = Parser.Program.parseModule(File.ReadAllText(inputFile));
+
+        if (parsed.IsError)
+        {
+            Console.WriteLine($"Parse error: {parsed.ErrorValue}");
+            return 1;
+        }
+
+        Console.WriteLine("Parsed successfully:");
+        foreach (var item in parsed.ResultValue)
+        {
+            Console.WriteLine($"  {item}");
+        }
+
+        return 0;
     }
 
     private static void PrintDiagnostics(FSharpList<Diagnostic> diagnostics)

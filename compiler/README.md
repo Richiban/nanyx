@@ -34,25 +34,15 @@ Currently supports parsing:
 
 ```
 compiler/
-├── Nyx.Parser/                # Main parser library (F#)
-│   ├── Program.fs             # Parser implementation and AST
-│   └── NyxParser.fsproj
-├── Nyx.Parser.Tests/          # Parser-focused unit tests
-│   ├── ParserTests.fs
-│   ├── Parser.Tests.fsproj
-│   └── testdata/
-├── Nanyx.Compiler/              # Type-checker core library
-│   └── NyxCompiler.fsproj
-├── Nanyx.Compiler.Cli/          # CLI entry point wrapping the compiler (C#)
-│   ├── Program.cs
-│   └── NanyxCompiler.Cli.csproj
-├── Nanyx.Compiler.Tests/        # Compiler-level unit/integration tests
-│   └── Nanyx.Compiler.Tests.fsproj
-├── Nyx.Transpiler.JS/         # JS transpiler
-│   └── Transpiler.fsproj
-├── Nyx.Transpiler.JS.Tests/   # Transpiler tests
-│   └── Transpiler.Tests.fsproj
-├── Nanyx.Compiler.sln           # Solution covering all projects
+├── Nanyx.Parser/              # Parser library (F#, FParsec)
+│   └── Program.fs             # Parser implementation and AST
+├── Nanyx.Parser.Tests/        # Parser unit and fixture tests
+├── Nanyx.Compiler/            # Type checker (F#)
+├── Nanyx.Compiler.Tests/      # Compiler-level unit/integration tests
+├── Nanyx.Compiler.Wasm/       # WebAssembly text (.wat) backend (F#)
+├── Nanyx.Compiler.Wasm.Tests/ # Backend fixture and end-to-end tests
+├── Nanyx.Compiler.Cli/        # The `nanyx` executable (C#, Consolo)
+├── Nyx.Compiler.slnx          # Solution covering all projects
 └── README.md
 ```
 
@@ -60,14 +50,14 @@ compiler/
 
 ```powershell
 cd compiler
-dotnet build Nanyx.Compiler.sln
+dotnet build Nyx.Compiler.slnx
 ```
 
 ## Running Tests
 
 ```powershell
 cd compiler
-dotnet test Nanyx.Compiler.sln
+dotnet test Nyx.Compiler.slnx
 ```
 
 All 56 tests should pass:
@@ -107,8 +97,11 @@ GitHub release. (The VS Code extension is released the same way with `extension/
 
 ## Running the Parser
 
+The parser and WASM backend are libraries; the `nanyx` CLI is the only executable. To dump
+the AST for a file:
+
 ```powershell
-dotnet run --project compiler/Nyx.Parser/NyxParser.fsproj sample.nyx
+dotnet run --project compiler/Nanyx.Compiler.Cli/NanyxCompiler.Cli.csproj -- parse sample.nyx
 ```
 
 ## WebAssembly (MVP)
