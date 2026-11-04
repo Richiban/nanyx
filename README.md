@@ -65,7 +65,16 @@ Nanyx is young: the compiler runs a small subset of the language the docs descri
 
 `nanyx` compiles a `.nyx` file to WebAssembly and runs it on an embedded [Wasmtime](https://wasmtime.dev) engine, so it is the only thing you need to install.
 
-Download the release for your platform from the [releases page](https://github.com/nanyx-lang/nanyx/releases): Windows (x64), Linux (x64, arm64) or macOS (x64, Apple Silicon). The executable is self-contained and needs no .NET runtime. Unzip it, on Linux and macOS run `chmod +x nanyx`, and put it on your `PATH`.
+On Windows, install it with [Scoop](https://scoop.sh):
+
+```powershell
+scoop bucket add nanyx https://github.com/nanyx-lang/scoop-nanyx
+scoop install nanyx
+```
+
+`scoop update nanyx` picks up new compiler releases.
+
+Otherwise, download the release for your platform from the [releases page](https://github.com/nanyx-lang/nanyx/releases): Windows (x64), Linux (x64, arm64) or macOS (x64, Apple Silicon). The executable is self-contained and needs no .NET runtime. Unzip it, on Linux and macOS run `chmod +x nanyx`, and put it on your `PATH`.
 
 If you would rather build it yourself, follow [Working on the language](#working-on-the-language) below; the result is the same binary.
 
