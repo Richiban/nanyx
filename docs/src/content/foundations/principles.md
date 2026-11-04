@@ -65,7 +65,9 @@ The Nanyx compiler enforces that pattern matches handle all cases of an algebrai
 
 ## Separation of pure and impure code
 
-Nanyx supports functional, imperative, and logic programming. The type and effect system of Nanyx cleanly and safely separates pure code from impure code. That is, if a function is pure then the programmer can trust that the function behaves like a mathematical function: it returns the same value when given the same arguments and it has no side-effects.
+Nanyx supports both functional and imperative programming styles; we do not feel that mutation or side effects are bad, but _hidden_ mutation or side effects are.
+
+So, the type and effect system of Nanyx cleanly and safely separates pure code from impure code. That is, if a function is pure then the programmer can trust that the function behaves like a mathematical function: it returns the same value when given the same arguments and it has no side-effects.
 
 ## Illegal states should be unrepresentable
 
