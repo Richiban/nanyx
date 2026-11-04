@@ -6,6 +6,25 @@ open Parser.Program
 open ParserTestHelpers
 
 [<Fact>]
+let ``list spread desugars to concatenation`` () =
+    match parseModule "def x = [1, ...xs, 2, 3, ...ys]" with
+    | Result.Ok [ Def (ValueDef (_, "x", _, BinaryOp ("++", ListExpr [ LiteralExpr (IntLit 1) ],
+                                                     BinaryOp ("++", IdentifierExpr ("xs", _),
+                                                        BinaryOp ("++", ListExpr [ LiteralExpr (IntLit 2); LiteralExpr (IntLit 3) ],
+                                                                        IdentifierExpr ("ys", _)))))) ] -> ()
+    | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
+    | Result.Error err -> failwith $"Parse failed: {err}"
+
+[<Fact>]
+let ``a list of only a spread is the spread itself, and no spread is a plain list`` () =
+    match parseModule "def x = [...xs]\ndef y = [1, 2]\ndef z = []" with
+    | Result.Ok [ Def (ValueDef (_, "x", _, IdentifierExpr ("xs", _)))
+                  Def (ValueDef (_, "y", _, ListExpr [ _; _ ]))
+                  Def (ValueDef (_, "z", _, ListExpr [])) ] -> ()
+    | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
+    | Result.Error err -> failwith $"Parse failed: {err}"
+
+[<Fact>]
 let ``Parse literals.nyx file`` () =
     let result = parseTestFile "literals.nyx"
 
