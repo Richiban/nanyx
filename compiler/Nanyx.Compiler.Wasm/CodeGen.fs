@@ -2403,11 +2403,17 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                 | _ -> []
 
             // `(a, b) -> r` annotates a two-parameter function with one tuple type: split it over the parameters.
+            // The annotation can describe more inputs than the lambda declares: `() -> r` has a unit input but
+            // no parameters, and `a -> (b -> c)` is a one-parameter function that returns a function. Only keep
+            // as many types as there are parameters, so the padding below never needs a negative count.
             let defParamTypes =
-                match unwrapContextType defTypeOpt with
-                | Some (TypeFunc(TypeTuple items, _)) when items.Length = parameterNames.Length -> items
-                | Some t -> extractParamTypes t
-                | None -> []
+                let annotated =
+                    match unwrapContextType defTypeOpt with
+                    | Some (TypeFunc(TypeTuple items, _)) when items.Length = parameterNames.Length -> items
+                    | Some (TypeFunc(TypeUnit, _)) when parameterNames.IsEmpty -> []
+                    | Some t -> extractParamTypes t
+                    | None -> []
+                annotated |> List.truncate parameterNames.Length
 
             let initialRecordInfo =
                 List.zip parameterNames (defParamTypes @ List.replicate (parameterNames.Length - defParamTypes.Length) (TypeUnit))
