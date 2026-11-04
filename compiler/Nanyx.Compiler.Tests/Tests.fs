@@ -933,6 +933,85 @@ let ``Typecheck types list and guard patterns`` () =
     Assert.True(hasListPattern)
 
 [<Fact>]
+let ``Typecheck joins the tags of if branches into a union`` () =
+    let source =
+        "def getMessage = {\n" +
+        "  def message = \"Hello\"\n" +
+        "  if false then #some(message)\n" +
+        "  else #noMessage\n" +
+        "}"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    let typed = result.Typed.Value
+    let expected = TyFunc(TyPrimitive "unit", TyUnion [ TyTag("some", Some (TyPrimitive "string")); TyTag("noMessage", None) ])
+    Assert.Equal(expected, typed.Types.["getMessage"])
+
+[<Fact>]
+let ``Typecheck joins the tags of match arms into a union`` () =
+    let source =
+        "def classify = { n ->\n" +
+        "  match n\n" +
+        "    | 0 -> #zero\n" +
+        "    | 1 -> #one(n)\n" +
+        "    | _ -> #many(n)\n" +
+        "}"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    let typed = result.Typed.Value
+    let expected =
+        TyFunc(TyPrimitive "int", TyUnion [ TyTag("zero", None); TyTag("one", Some (TyPrimitive "int")); TyTag("many", Some (TyPrimitive "int")) ])
+    Assert.Equal(expected, typed.Types.["classify"])
+
+[<Fact>]
+let ``Typecheck joins nested if branches and repeated tags once`` () =
+    let source =
+        "def pick = { n ->\n" +
+        "  if n == 0 then #zero\n" +
+        "  else if n == 1 then #small(n)\n" +
+        "  else if n == 2 then #small(n)\n" +
+        "  else #big\n" +
+        "}"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    let typed = result.Typed.Value
+    let expected = TyFunc(TyPrimitive "int", TyUnion [ TyTag("zero", None); TyTag("small", Some (TyPrimitive "int")); TyTag("big", None) ])
+    Assert.Equal(expected, typed.Types.["pick"])
+
+[<Fact>]
+let ``Typecheck still rejects same-named tags with different payloads across branches`` () =
+    let source = "def f = { c -> if c then #some(1) else #some(\"one\") }"
+    let result = Compiler.compile source
+    Assert.False(result.Diagnostics.IsEmpty)
+    Assert.Contains("mismatch", (List.head result.Diagnostics).Message)
+
+[<Fact>]
+let ``Typecheck still rejects branches of different non-tag types`` () =
+    let source = "def f = { c -> if c then 1 else \"one\" }"
+    let result = Compiler.compile source
+    Assert.False(result.Diagnostics.IsEmpty)
+    Assert.Contains("Type mismatch", (List.head result.Diagnostics).Message)
+
+[<Fact>]
+let ``Typecheck matches on an inferred tag union exhaustively`` () =
+    // Exhaustiveness is checked against the scrutinee's known type; an inferred union counts as known.
+    // (Scrutinees that are call results or local bindings are not checked today, inferred or annotated.)
+    let source =
+        "def message = if false then #some(\"hi\") else #noMessage\n" +
+        "def describe = {\n" +
+        "  match message\n" +
+        "    | #some(_) -> \"message\"\n" +
+        "    | #noMessage -> \"nothing\"\n" +
+        "}\n" +
+        "def partial = {\n" +
+        "  match message\n" +
+        "    | #some(_) -> \"message\"\n" +
+        "}"
+    let result = Compiler.compile source
+    Assert.Equal(1, result.Diagnostics.Length)
+    Assert.Contains("Non-exhaustive match", (List.head result.Diagnostics).Message)
+    Assert.Contains("noMessage", (List.head result.Diagnostics).Message)
+
+[<Fact>]
 let ``Typecheck infers list element type`` () =
     let source = "def numbers = [1, 2, 3]"
     let result = Compiler.compile source

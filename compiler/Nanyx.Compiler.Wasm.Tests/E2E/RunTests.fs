@@ -356,6 +356,27 @@ let ``Run - interpolation holes that allocate or have effects run once`` () =
     runSource source |> assertRan "a b! c B d\nshouting x\n[X]\n"
 
 [<Fact>]
+let ``Run - an unannotated function whose branches return different tags`` () =
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def getMessage = { flag ->\n" +
+        "  def message = \"Hello, from Nanyx!\"\n" +
+        "  if flag then #some(message)\n" +
+        "  else #noMessage\n" +
+        "}\n" +
+        "\n" +
+        "def describe = { flag ->\n" +
+        "  match getMessage(flag)\n" +
+        "    | #some(_) -> println(\"There was a message\")\n" +
+        "    | #noMessage -> println(\"No message available\")\n" +
+        "}\n" +
+        "\n" +
+        "describe(true)\n" +
+        "describe(false)\n"
+    runSource source |> assertRan "There was a message\nNo message available\n"
+
+[<Fact>]
 let ``Run - importing an unknown standard library module is a diagnostic`` () =
     let outcome = runSource "import nanyx/sockets\n\ndbg(1)\n"
     Assert.Equal(1, outcome.ExitCode)
