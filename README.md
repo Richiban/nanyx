@@ -2,7 +2,7 @@
 
 Nanyx is a statically-typed, functional-first programming language with Hindley-Milner type inference, structural records and tag unions, context-based effects, and a pipeline operator that keeps data flow reading left to right. It compiles to WebAssembly.
 
-This README is a quick feel for the language. The full documentation lives on the [docs site][docs].
+The full documentation lives on the [docs site][docs]. This README gives a quick taste and then shows how to get going, whether you want to [write Nanyx programs](#writing-nanyx-programs) or [work on the language itself](#working-on-the-language).
 
 ```nanyx
 module main
@@ -25,84 +25,27 @@ def main = {
 }
 ```
 
-## A short tour
+## A taste of the language
 
-### Values and functions
-
-Everything is an expression and every binding is immutable. Braces always mean a function; a function takes exactly one argument, and "multiple parameters" are a record being destructured.
-
-```nanyx
-def name = "Nanyx"
-def double = { x -> x * 2 }
-def add: (int, int) -> int = { x, y -> x + y }
-
-def greet = { name, greeting = "Hello" ->
-  "{greeting}, {name}!"
-}
-```
-
-Types are inferred almost everywhere; annotations are for exported definitions and clarity. [Functions][functions] · [Type inference][inference]
-
-### Pipes
-
-`\` sends the value on the left into the first argument of the function on the right, so a chain reads in the order it runs. Shorthand lambdas cover the common cases.
+Everything is an expression, every binding is immutable, and braces always mean a function. The `\` pipe sends the value on the left into the function on the right, so a chain reads in the order it runs:
 
 ```nanyx
 def adultNames = users
   \filter { .age >= 18 }
   \map { .name }
   \sortBy { .length }
-
-def total = [1, 2, 3] \fold(0) { + }
 ```
 
-[Piping][piping] · [Higher-order functions][lambdas]
-
-### Records and tuples
-
-Records are structural. A tuple is just a record whose fields are positional, and the two can mix. Updates are non-destructive.
+Tags such as `#notFound` are values and types at once. They combine into unions, carry payloads, and are matched exhaustively, so there is no null and no exceptions for ordinary failures:
 
 ```nanyx
-type Person = (name: string, age: int, email?: string)
-
-def alice = Person(name = "Alice", age = 30)
-def older = alice with age = 31
-def (x, y) = (10, 20)
-```
-
-[Records and tuples][records]
-
-### Tags and pattern matching
-
-A tag like `#notFound` is both a value and its own type. Tags combine into unions, carry payloads, and are matched exhaustively. There is no null and no single `Option` type: any union containing `#some(a)` is "option-like", and the standard library's helpers preserve whatever other tags are present.
-
-```nanyx
-def findUser: UserId -> #some(User) | #notFound | #error(DbError) = { id -> ... }
-
 match findUser(id)
   | #some(user) -> println("Found {user.name}")
   | #notFound -> println("No such user")
   | #error(e) -> println("Database error: {e}")
-
--- Transform only the #some case; #notFound and #error pass through
-def name = findUser(id) \Option.map { .name }
 ```
 
-Patterns nest, bind, and can use arbitrary predicates in place of guards:
-
-```nanyx
-def describe: int -> string = {
-  | 0 -> "zero"
-  | n & { < 0 } -> "negative: {n}"
-  | _ -> "positive"
-}
-```
-
-[Tags][tags] · [Pattern matching][patterns] · [Error handling][errors]
-
-### Contexts
-
-A context is an implicit parameter. Functions declare the contexts they need in their type, which makes effects visible and lets the same mechanism express typeclass-style constraints. `use` supplies an instance; when a type has matching attached definitions, the compiler synthesises one.
+Effects and typeclass-style constraints share one mechanism, contexts, which are implicit parameters declared in a function's type:
 
 ```nanyx
 context Console = (println: string -> ())
@@ -110,95 +53,71 @@ context Console = (println: string -> ())
 def greet: [Console] string -> () = { name ->
   println("Hello, {name}!")
 }
-
-context Sum(a) = (`0`: a, `+`: (a, a) -> a)
-
-def sum: [Sum(a)] list(a) -> a = { items -> items \fold(`0`) { + } }
 ```
 
-[Contexts][contexts] · [Contexts vs interfaces][contexts-vs-interfaces]
+That is enough to recognise Nanyx code. The docs cover the rest, including [records][records], [pattern matching][patterns], [attached definitions][attached] in place of classes, [scoped mutation][memory] and [workflows][workflows]. If you are coming from another language, start with the [principles][principles] and the "coming from other languages" pages on [classes][classes], [overloading][overloading] and [currying][currying].
 
-### Attached definitions
+## Writing Nanyx programs
 
-There are no classes. Behaviour is attached to a type by name, and `x.f`, `x \f` and `T.f(x)` all resolve to the same definition. Operators are attached definitions too.
+Nanyx is young: the compiler runs a small subset of the language the docs describe, and there is no standard library yet beyond a built-in `println`. The docs' [Hello, World!][hello] works today; `compiler/README.md` lists what else does.
+
+### 1. Get the `nanyx` tool
+
+`nanyx` compiles a `.nyx` file to WebAssembly and runs it on an embedded [Wasmtime](https://wasmtime.dev) engine, so it is the only thing you need to install.
+
+Download the release for your platform from the [releases page](https://github.com/Richiban/nanyx/releases): Windows (x64), Linux (x64, arm64) or macOS (x64, Apple Silicon). The executable is self-contained and needs no .NET runtime. Unzip it, on Linux and macOS run `chmod +x nanyx`, and put it on your `PATH`.
+
+If you would rather build it yourself, follow [Working on the language](#working-on-the-language) below; the result is the same binary.
+
+### 2. Run your first program
+
+Create `hello.nyx`:
 
 ```nanyx
-type Point = (x: int, y: int)
+import nanyx/console
 
-def Point.length = { p -> Math.sqrt(p.x ** 2 + p.y ** 2) }
-def Point.`+` = { a, b -> Point(x = a.x + b.x, y = a.y + b.y) }
-
-def len = (Point(x = 3, y = 4) + Point(x = 0, y = 0)).length
+println("Hello, Nanyx!")
 ```
 
-[Attached definitions][attached] · [Operators][operators] · [Classes, for OOP readers][classes]
+and run it:
 
-### Scoped mutation
-
-Values are immutable by default. Mutation requires the `$Memory` context, obtained with `memory { }`, and a mutable value cannot escape that scope, so a function can be imperative inside and pure outside.
-
-```nanyx
-def sort: [Ord(a)] list(a) -> list(a) = { l ->
-  memory {
-    def arr = MArray.of(l)
-    MArray.sort(arr)
-    MArray.toList(arr)
-  }
-}
+```bash
+nanyx run hello.nyx
+# Hello, Nanyx!
 ```
 
-[Memory][memory]
+`nanyx wasm hello.nyx` writes the WebAssembly text to `hello.wat` instead of running it, and `nanyx check hello.nyx` type-checks and prints the inferred types.
 
-### Workflows
+### 3. Set up your editor
 
-Libraries can add language-like constructs. A block after a builder is rewritten into continuation-passing calls on that builder, which is how `async`/`await`, result chaining with `try`, sequence builders and query DSLs are all implemented without compiler support.
+The Nanyx extension for VS Code (search for "Nanyx" in the Marketplace; its source is in `extension/`) gives you syntax highlighting and type errors as you type.
 
-```nanyx
-def lastOrderTotal = proc {
-  def customer = try getCustomer(5)
-  def order = try getLastOrder(customer)
-  return order.total
-}
-```
+### 4. Learn the language
 
-[Workflows][workflows] · [Option chaining cookbook][option-chaining]
-
-## Getting started
-
-- [Installation][install]
-- [Hello, World!][hello]
+- [Hello, World!][hello], then the [language tour][tour]
 - [Files, packages and projects][packages]
-- [Standard library][stdlib]
+- [The standard library][stdlib], as designed; most of it is not implemented yet
+- `examples/` in this repository, for longer programs
 
-## Design
+## Working on the language
 
-Nanyx aims to feel small: few rules, few exceptions, and features that compose rather than special cases. The compiler emits only errors, never warnings, and a debug build still runs in the face of type errors so iteration stays fast; style and quality checks come from pluggable [analyzers][analyzers]. There is no function overloading, no currying by default, and no arbitrary unions, each for reasons written up in the docs.
+Nanyx is under active development and the language is still changing, so contributions, bug reports and documentation fixes are all welcome.
 
-[Principles][principles] · [Why no overloading?][overloading] · [Why no currying?][currying] · [Why no `string | int`?][unions]
-
-## This repository
+### What is in this repository
 
 | Path | Contents |
 |---|---|
-| `compiler/` | The compiler, written in F#: parser, type checker, WebAssembly backend, CLI |
-| `docs/` | The documentation site |
-| `examples/` | Example Nanyx programs |
-| `extension/` | VS Code extension |
+| `compiler/` | The compiler: an F# parser (FParsec), type checker and WebAssembly backend, a C# CLI (`nanyx`), and the runtime that embeds Wasmtime |
+| `docs/` | The documentation site, built with Astro |
+| `examples/` | Example Nanyx programs, also rendered into the docs |
+| `extension/` | The VS Code extension and its language server |
 
-### Compiling and running Nanyx programs
+### Prerequisites
 
-The `nanyx` command-line tool compiles a `.nyx` file to WebAssembly and runs it on an embedded
-[Wasmtime](https://wasmtime.dev) engine. Wasmtime is bundled: there is nothing else to install.
+- The [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) for the compiler. `dotnet --version` should print `10.x`. Everything else, including Wasmtime, is restored from NuGet.
+- [Node.js](https://nodejs.org) (with npm) for the docs site and the VS Code extension.
 
-There are two ways to get `nanyx`:
-
-- **A release binary.** Each `compiler/<version>` tag publishes a self-contained executable for
-  Windows (x64), Linux (x64, arm64) and macOS (x64, Apple Silicon) on the
-  [releases page](https://github.com/Richiban/nanyx/releases). It needs no .NET runtime. Unzip it,
-  on Linux and macOS run `chmod +x nanyx`, and put it on your `PATH`. The `Compiler` workflow also
-  attaches the same binaries to every CI run as artifacts.
-- **Building from source**, which needs the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
-  (the `dotnet` command). Everything else, including Wasmtime, is restored from NuGet by the build.
+### The compiler
 
 ```bash
 cd compiler
@@ -207,41 +126,50 @@ dotnet test Nyx.Compiler.slnx
 dotnet run --project Nanyx.Compiler.Cli/NanyxCompiler.Cli.csproj -- run hello.nyx
 ```
 
-Then, with either binary, given the `hello.nyx` from the [Hello, World!][hello] page:
+The CLI has `run`, `wasm`, `check` and `parse` targets; `parse` prints the AST and is the quickest way to see what the parser makes of a file. The pipeline is parser (`Nanyx.Parser`) → type checker (`Nanyx.Compiler`) → WAT backend (`Nanyx.Compiler.Wasm`) → Wasmtime (`Nanyx.Compiler.Runtime`), and each stage has its own test project. The backend tests are snapshot fixtures (`.nyx` next to the expected `.wat`) plus execution tests that run the built CLI and check its output. See [`compiler/README.md`](compiler/README.md) for the layout and the current state of what compiles.
+
+### The docs site
 
 ```bash
-nanyx run hello.nyx    # compile and execute: prints "Hello, Nanyx!"
-nanyx wasm hello.nyx   # emit hello.wat
-nanyx check hello.nyx  # type-check and print the inferred types
+cd docs
+npm install
+npm run dev      # http://localhost:4321
 ```
 
-The compiler currently handles a small subset of the language described in the docs; see
-[`compiler/README.md`](compiler/README.md) for what works today.
+Pages are Markdown files under `docs/src/content/<section>/`. The site's own README explains how sections, code highlighting and the examples page are wired up. The language is specified by its documentation, so a language change usually starts with a docs change.
 
-Nanyx is under active development and the language is still changing. Contributions, bug reports and documentation fixes are welcome.
+### The VS Code extension
+
+```bash
+cd extension
+npm install
+npm run compile
+```
+
+Then press F5 in VS Code to launch an Extension Development Host. The extension's README covers its settings and how the language server calls the compiler.
+
+### Continuous integration and releases
+
+GitHub Actions build and test the compiler on Linux and Windows for every pull request. Releases are cut by tagging: `compiler/<version>` (matching `<Version>` in `compiler/Nanyx.Compiler.Cli/NanyxCompiler.Cli.csproj`) publishes self-contained binaries to a GitHub release, and `extension/<version>` publishes the extension.
+
+## Design
+
+Nanyx aims to feel small: few rules, few exceptions, and features that compose rather than special cases. The compiler emits only errors, never warnings, and a debug build still runs in the face of type errors so iteration stays fast; style and quality checks come from pluggable [analyzers][analyzers]. There is no function overloading, no currying by default, and no arbitrary unions, each for reasons written up in the docs.
+
+[Principles][principles] · [Why no overloading?][overloading] · [Why no currying?][currying] · [Why no `string | int`?][unions]
 
 [docs]: https://nanyx.dev/docs
-[install]: https://nanyx.dev/docs/getting-started/installation
 [hello]: https://nanyx.dev/docs/getting-started/hello-world
+[tour]: https://nanyx.dev/docs/tour/variables
 [packages]: https://nanyx.dev/docs/tour/packages
-[functions]: https://nanyx.dev/docs/tour/functions
-[inference]: https://nanyx.dev/docs/tour/type-inference-and-annotations
-[piping]: https://nanyx.dev/docs/tour/piping
-[lambdas]: https://nanyx.dev/docs/tour/lambdas-and-higher-order-functions
 [records]: https://nanyx.dev/docs/tour/records
-[tags]: https://nanyx.dev/docs/tour/tags
 [patterns]: https://nanyx.dev/docs/tour/pattern-matching
-[errors]: https://nanyx.dev/docs/tour/error-handling
-[operators]: https://nanyx.dev/docs/tour/operators
-[contexts]: https://nanyx.dev/docs/advanced/contexts
 [attached]: https://nanyx.dev/docs/advanced/attached-definitions
 [memory]: https://nanyx.dev/docs/advanced/memory
 [workflows]: https://nanyx.dev/docs/advanced/workflows
 [analyzers]: https://nanyx.dev/docs/advanced/analyzers
-[option-chaining]: https://nanyx.dev/docs/cookbook/option-chaining
 [stdlib]: https://nanyx.dev/docs/stdlib/standard-library
 [principles]: https://nanyx.dev/docs/foundations/principles
-[contexts-vs-interfaces]: https://nanyx.dev/docs/coming-from-other-languages/contexts-vs-interfaces
 [classes]: https://nanyx.dev/docs/coming-from-other-languages/classes
 [overloading]: https://nanyx.dev/docs/coming-from-other-languages/overloading
 [currying]: https://nanyx.dev/docs/coming-from-other-languages/currying
