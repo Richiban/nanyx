@@ -5,7 +5,7 @@
   "publisher": "nanyx",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Richiban/nanyx"
+    "url": "https://github.com/nanyx-lang/nanyx"
   },
   "license": "MIT",
   "version": "0.2.0",
@@ -71,7 +71,7 @@
         "nanyx.downloadUrl": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Where to download the compiler from. `${version}`, `${rid}` (e.g. `win-x64`) and `${ext}` (`zip` or `tar.gz`) are substituted. Leave empty for the GitHub releases of Richiban/nanyx."
+          "markdownDescription": "Where to download the compiler from. `${version}`, `${rid}` (e.g. `win-x64`) and `${ext}` (`zip` or `tar.gz`) are substituted. Leave empty for the GitHub releases of nanyx-lang/nanyx."
         }
       }
     }

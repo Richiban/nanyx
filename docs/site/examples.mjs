@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 export const EXAMPLES_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../examples");
 
-export const EXAMPLES_SOURCE_URL = "https://github.com/Richiban/nanyx/blob/main/examples";
+export const EXAMPLES_SOURCE_URL = "https://github.com/nanyx-lang/nanyx/blob/main/examples";
 
 /** Slug of the generated page that lists every example. */
 export const EXAMPLES_OVERVIEW_SLUG = "all-examples";
