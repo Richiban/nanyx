@@ -1131,6 +1131,19 @@ let ``Typecheck accepts arithmetic and comparison on floats`` () =
     Assert.False(mixed.Diagnostics.IsEmpty, "int + float should not type-check")
     let stillInt = Compiler.compile "def n: float = 1 + 2"
     Assert.False(stillInt.Diagnostics.IsEmpty, "int arithmetic is still int")
+[<Fact>]
+let ``Typecheck types for loops and ranges`` () =
+    let ok =
+        Compiler.compile (
+            "def r = 1..3\n" +
+            "def total = { xs -> for xs | x -> x + 1 }\n" +
+            "def f = for 1..3 | i -> i * 2\n" +
+            "def g: () = for [\"a\"] | s -> s ++ \"!\"\n")
+    Assert.True(ok.Diagnostics.IsEmpty, sprintf "%A" ok.Diagnostics)
+    let wrong = Compiler.compile "def h = for 1..3 | i -> i ++ \"x\""
+    Assert.False(wrong.Diagnostics.IsEmpty, "a range element is an int")
+    let badRange = Compiler.compile "def h = \"a\"..\"z\""
+    Assert.False(badRange.Diagnostics.IsEmpty, "ranges are over ints")
 
 [<Fact>]
 let ``Typecheck rejects boolean keywords on non-booleans`` () =
