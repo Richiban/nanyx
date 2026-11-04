@@ -20,7 +20,7 @@ When a `.nyx` file is opened the extension looks for it in this order:
 
 If none is found it offers, once per session, to download the compiler release the extension was
 built for (`nanyx-<version>-<rid>.zip` or `.tar.gz` from the
-[GitHub releases](https://github.com/Richiban/nanyx/releases) tagged `compiler/<version>`) for the
+[GitHub releases](https://github.com/nanyx-lang/nanyx/releases) tagged `compiler/<version>`) for the
 current platform (`win-x64`, `linux-x64`, `linux-arm64`, `osx-x64` or `osx-arm64`). The archive is
 unpacked with the platform's `tar` into the extension's storage, so nothing else on the machine is
 touched. If you are offline, or the release does not exist, the extension says so and you can run
@@ -34,7 +34,7 @@ touched. If you are offline, or the release does not exist, the extension says s
   was built for.
 - `nanyx.downloadUrl`: a URL template to download from, with `${version}`, `${rid}` and `${ext}`
   (`zip` on Windows, `tar.gz` elsewhere) substituted. Empty means the GitHub releases of
-  `Richiban/nanyx`. Point it somewhere else to install from a mirror, or at a release that has not
+  `nanyx-lang/nanyx`. Point it somewhere else to install from a mirror, or at a release that has not
   been published on GitHub yet.
 
 Changing any of these restarts the language server.
