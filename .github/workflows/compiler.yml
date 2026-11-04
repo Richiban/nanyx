@@ -5,12 +5,14 @@ on:
     branches: [main]
     paths:
       - "compiler/**"
+      - "!compiler/**/*.md"
       - ".github/workflows/compiler.yml"
     tags:
       - "compiler/*"
   pull_request:
     paths:
       - "compiler/**"
+      - "!compiler/**/*.md"
       - ".github/workflows/compiler.yml"
   workflow_dispatch:
 

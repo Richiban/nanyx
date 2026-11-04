@@ -5,12 +5,14 @@ on:
     branches: [main]
     paths:
       - "extension/**"
+      - "!extension/**/*.md"
       - ".github/workflows/extension.yml"
     tags:
       - "extension/*"
   pull_request:
     paths:
       - "extension/**"
+      - "!extension/**/*.md"
       - ".github/workflows/extension.yml"
   workflow_dispatch:
 
