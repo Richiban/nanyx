@@ -769,6 +769,59 @@ let private collectInterpolatedStringExpr (expr: Expression) : bool =
     | InterpolatedString _ -> true
     | _ -> false
 
+/// The immediate sub-expressions of `expr`, for traversals that only need to look inside.
+let private exprChildren (expr: Expression) : Expression list =
+    match expr with
+    | InterpolatedString parts ->
+        parts |> List.choose (function StringExpr value -> Some value | StringText _ -> None)
+    | Block statements ->
+        statements
+        |> List.choose (function
+            | DefStatement(_, _, _, rhs) -> Some rhs
+            | ExprStatement value -> Some value
+            | _ -> None)
+    | BinaryOp(_, left, right) -> [ left; right ]
+    | IfExpr(cond, thenExpr, elseExpr) -> [ cond; thenExpr; elseExpr ]
+    | FunctionCall(_, _, args) -> args
+    | Lambda(_, body) -> [ body ]
+    | Pipe(value, _, _, args) -> value :: args
+    | TupleExpr items
+    | ListExpr items -> items
+    | RecordExpr fields ->
+        fields
+        |> List.map (function
+            | NamedField(_, value) -> value
+            | PositionalField value -> value)
+    | Match(values, arms) -> values @ (arms |> List.map snd)
+    | UseIn(_, body) -> [ body ]
+    | MemberAccess(inner, _, _) -> [ inner ]
+    | TagExpr(_, payload) -> Option.toList payload
+    | WorkflowBindExpr(_, value)
+    | WorkflowReturnExpr value -> [ value ]
+    | ContextMemberCall(_, _, args) -> args
+    | ContextMemberAccess(_, _)
+    | UnitExpr
+    | LiteralExpr _
+    | IdentifierExpr _ -> []
+
+/// Whether lowering `expr` needs the interpolation scratch locals (see `interpolationLocalNames`).
+/// Used for function bodies and for the script start function alike, so both declare the same locals.
+let rec private containsInterpolation (expr: Expression) : bool =
+    match expr with
+    | InterpolatedString _ -> true
+    | _ -> exprChildren expr |> List.exists containsInterpolation
+
+/// The most `{...}` holes any single interpolated string in `expr` has: each hole is evaluated once
+/// into its own `__interp_hole_N` local, so the function has to declare that many.
+let rec private maxInterpolationHoles (expr: Expression) : int =
+    let own =
+        match expr with
+        | InterpolatedString parts -> parts |> List.filter (function StringExpr _ -> true | _ -> false) |> List.length
+        | _ -> 0
+    exprChildren expr |> List.fold (fun acc child -> max acc (maxInterpolationHoles child)) own
+
+let private interpolationHoleLocalName (index: int) = $"__interp_hole_{index}"
+
 let private interpolationLocalNames =
     [ "__interp_len"
       "__interp_base"
@@ -781,6 +834,14 @@ let private interpolationLocalNames =
       "__interp_lo"
       "__interp_hi"
       "__interp_swap" ]
+
+/// Every local that lowering the interpolations in `expr` needs, or none when it has no interpolation.
+let private interpolationLocalsFor (expr: Expression) : string list =
+    if containsInterpolation expr then
+        interpolationLocalNames
+        @ [ for index in 0 .. maxInterpolationHoles expr - 1 -> interpolationHoleLocalName index ]
+    else
+        []
 
 let private collectContextUseBindings (expr: Expression) : (string * Expression) list list =
     // Helper to extract bindings from a record expression
@@ -1181,9 +1242,14 @@ and private collectStringLiteralsExpr (expr: Expression) : string list =
     | UseIn(_, body) -> collectStringLiteralsExpr body
     | MemberAccess(inner, _, _) -> collectStringLiteralsExpr inner
     | TagExpr(_, payload) -> payload |> Option.map collectStringLiteralsExpr |> Option.defaultValue []
-    | InterpolatedString _
-    | WorkflowBindExpr _
-    | WorkflowReturnExpr _
+    | InterpolatedString parts ->
+        // Literals inside `{...}` holes need data-segment offsets like any other literal.
+        parts
+        |> List.collect (function
+            | StringText _ -> []
+            | StringExpr value -> collectStringLiteralsExpr value)
+    | WorkflowBindExpr(_, value)
+    | WorkflowReturnExpr value -> collectStringLiteralsExpr value
     | ContextMemberAccess(_, _) -> []
     | ContextMemberCall(_, _, args) -> args |> List.collect collectStringLiteralsExpr
     | UnitExpr
@@ -1487,32 +1553,41 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
         let falseBytes = renderStaticBytes (Encoding.UTF8.GetBytes "false")
         $"{exprCode}\n    if\n      {trueBytes}\n    else\n      {falseBytes}\n    end"
 
-    let renderInterpolationPartLength part =
+    // Each `{...}` hole is evaluated exactly once, up front, into `__interp_hole_N`. The length and
+    // write passes then only read that local. Evaluating a hole in the write pass would be wrong twice
+    // over: its side effects would run again, and anything it allocated would land on top of the
+    // output buffer, which is only reserved once the whole string has been written.
+    let interpolationHoleType inner =
+        match tryGetExprTypeName env inner with
+        | Some ("string" | "int" | "bool" as typeName) -> typeName
+        | Some other -> failwith $"Unsupported interpolated value type for WASM MVP backend: {other}"
+        | None -> failwith $"Unable to determine interpolated value type for WASM MVP backend: {inner}"
+
+    let renderInterpolationHoleEval (index: int) (inner: Expression) =
+        $"{transpileExpression env inner}\n    local.set ${interpolationHoleLocalName index}"
+
+    let renderInterpolationPartLength (part, holeIndex) =
         match part with
         | StringText text ->
             let len = Encoding.UTF8.GetByteCount text
             $"local.get $__interp_len\n    i32.const {len}\n    i32.add\n    local.set $__interp_len"
         | StringExpr inner ->
-            let exprCode = transpileExpression env inner
-            match tryGetExprTypeName env inner with
-            | Some "string" ->
-                $"{exprCode}\n    local.tee $__interp_ptr\n    i32.const 4\n    i32.sub\n    i32.load\n    local.get $__interp_len\n    i32.add\n    local.set $__interp_len"
-            | Some "int" -> renderIntLength exprCode
-            | Some "bool" -> renderBoolLength exprCode
-            | Some other -> failwith $"Unsupported interpolated value type for WASM MVP backend: {other}"
-            | None -> failwith $"Unable to determine interpolated value type for WASM MVP backend: {inner}"
+            let valueCode = $"local.get ${interpolationHoleLocalName holeIndex}"
+            match interpolationHoleType inner with
+            | "string" ->
+                $"{valueCode}\n    i32.const 4\n    i32.sub\n    i32.load\n    local.get $__interp_len\n    i32.add\n    local.set $__interp_len"
+            | "int" -> renderIntLength valueCode
+            | _ -> renderBoolLength valueCode
 
-    let renderInterpolationPartWrite part =
+    let renderInterpolationPartWrite (part, holeIndex) =
         match part with
         | StringText text -> renderStaticBytes (Encoding.UTF8.GetBytes text)
         | StringExpr inner ->
-            let exprCode = transpileExpression env inner
-            match tryGetExprTypeName env inner with
-            | Some "string" -> renderStringCopy exprCode
-            | Some "int" -> renderIntWrite exprCode
-            | Some "bool" -> renderBoolWrite exprCode
-            | Some other -> failwith $"Unsupported interpolated value type for WASM MVP backend: {other}"
-            | None -> failwith $"Unable to determine interpolated value type for WASM MVP backend: {inner}"
+            let valueCode = $"local.get ${interpolationHoleLocalName holeIndex}"
+            match interpolationHoleType inner with
+            | "string" -> renderStringCopy valueCode
+            | "int" -> renderIntWrite valueCode
+            | _ -> renderBoolWrite valueCode
 
     match expr with
     | UnitExpr ->
@@ -1523,9 +1598,24 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
         if value then "i32.const 1" else "i32.const 0"
     | LiteralExpr(StringLit value) -> stringLiteralCode value
     | InterpolatedString parts ->
-        let lengthCode = parts |> List.map renderInterpolationPartLength |> String.concat "\n    "
-        let writeCode = parts |> List.map renderInterpolationPartWrite |> String.concat "\n    "
-        $"i32.const 0\n    local.set $__interp_len\n    {lengthCode}\n    global.get $heap_ptr\n    local.tee $__interp_base\n    local.get $__interp_len\n    i32.store\n    local.get $__interp_base\n    i32.const 4\n    i32.add\n    local.set $__interp_cursor\n    {writeCode}\n    local.get $__interp_cursor\n    i32.const 0\n    i32.store8\n    local.get $__interp_base\n    local.get $__interp_len\n    i32.const 5\n    i32.add\n    i32.add\n    global.set $heap_ptr\n    local.get $__interp_base\n    i32.const 4\n    i32.add"
+        // Pair every part with the index of the hole local it reads (text parts get a dummy index).
+        let indexedParts =
+            parts
+            |> List.fold (fun (acc, nextHole) part ->
+                match part with
+                | StringExpr _ -> ((part, nextHole) :: acc, nextHole + 1)
+                | StringText _ -> ((part, -1) :: acc, nextHole)) ([], 0)
+            |> fst
+            |> List.rev
+        let evalCode =
+            indexedParts
+            |> List.choose (function
+                | (StringExpr inner, holeIndex) -> Some (renderInterpolationHoleEval holeIndex inner)
+                | _ -> None)
+            |> String.concat "\n    "
+        let lengthCode = indexedParts |> List.map renderInterpolationPartLength |> String.concat "\n    "
+        let writeCode = indexedParts |> List.map renderInterpolationPartWrite |> String.concat "\n    "
+        $"{evalCode}\n    i32.const 0\n    local.set $__interp_len\n    {lengthCode}\n    global.get $heap_ptr\n    local.tee $__interp_base\n    local.get $__interp_len\n    i32.store\n    local.get $__interp_base\n    i32.const 4\n    i32.add\n    local.set $__interp_cursor\n    {writeCode}\n    local.get $__interp_cursor\n    i32.const 0\n    i32.store8\n    local.get $__interp_base\n    local.get $__interp_len\n    i32.const 5\n    i32.add\n    i32.add\n    global.set $heap_ptr\n    local.get $__interp_base\n    i32.const 4\n    i32.add"
     | IdentifierExpr(name, _) ->
         match env.Locals |> Map.tryFind name with
         | Some localName -> $"local.get ${localName}"
@@ -2436,35 +2526,10 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                 |> List.map snd
                 |> Set.ofList
 
-            let rec containsInterpolation expr =
-                match expr with
-                | InterpolatedString _ -> true
-                | Block statements -> statements |> List.exists (function | DefStatement(_, _, _, rhs) -> containsInterpolation rhs | ExprStatement value -> containsInterpolation value | _ -> false)
-                | BinaryOp(_, left, right) -> containsInterpolation left || containsInterpolation right
-                | IfExpr(cond, thenExpr, elseExpr) -> containsInterpolation cond || containsInterpolation thenExpr || containsInterpolation elseExpr
-                | FunctionCall(_, _, args) -> args |> List.exists containsInterpolation
-                | Lambda(_, body) -> containsInterpolation body
-                | Pipe(value, _, _, args) -> containsInterpolation value || (args |> List.exists containsInterpolation)
-                | TupleExpr items
-                | ListExpr items -> items |> List.exists containsInterpolation
-                | RecordExpr fields -> fields |> List.exists (function | NamedField(_, value) -> containsInterpolation value | PositionalField value -> containsInterpolation value)
-                | Match(values, arms) -> (values |> List.exists containsInterpolation) || (arms |> List.exists (fun (_, armExpr) -> containsInterpolation armExpr))
-                | UseIn(_, body) -> containsInterpolation body
-                | MemberAccess(inner, _, _) -> containsInterpolation inner
-                | TagExpr(_, payload) -> payload |> Option.exists containsInterpolation
-                | WorkflowBindExpr(_, value)
-                | WorkflowReturnExpr value -> containsInterpolation value
-                | ContextMemberCall(_, _, args) -> args |> List.exists containsInterpolation
-                | ContextMemberAccess(_, _)
-                | UnitExpr
-                | LiteralExpr _
-                | IdentifierExpr _ -> false
+            let interpolationLocals = interpolationLocalsFor bodyExpr
 
-            let usesInterpolation = containsInterpolation bodyExpr
-
-            if usesInterpolation then
-                for localName in interpolationLocalNames do
-                    usedLocalNames <- usedLocalNames |> Set.add localName
+            for localName in interpolationLocals do
+                usedLocalNames <- usedLocalNames |> Set.add localName
 
             let matchArity = countMatchArity bodyExpr
             let matchTempNames =
@@ -2637,8 +2702,7 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                     yield! (localNames |> List.map (fun localName -> localMap.[localName]))
                     yield! matchTempNames
                     yield! payloadLocalNames
-                    if usesInterpolation then
-                        yield! interpolationLocalNames
+                    yield! interpolationLocals
                     match dbgLocalName with
                     | Some name -> yield name
                     | None -> ()
@@ -2709,6 +2773,7 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                 [ yield! (localNames |> List.map (fun localName -> localMap.[localName]))
                   yield! matchTempNames
                   yield! payloadLocalNames
+                  yield! interpolationLocalsFor (Block (topLevelExprs |> List.map ExprStatement))
                   match dbgLocalName with
                   | Some name -> yield name
                   | None -> () ]

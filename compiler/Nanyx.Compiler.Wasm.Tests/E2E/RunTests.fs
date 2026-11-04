@@ -276,6 +276,47 @@ let ``Run - interpolating variables bound by match patterns`` () =
         "println(greet(#named(\"Ada\")) ++ \", \" ++ greet(#anon))\n" +
         "println(first([7, 8]) ++ \", \" ++ first([]))\n"
     runSource source |> assertRan "some 3, none\nhello Ada, hello stranger\nfirst 7, empty\n"
+[<Fact>]
+let ``Run - interpolation at the top level of a script`` () =
+    // Regression: the script start function used to omit the interpolation scratch locals (#48).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def x = 1 + 1\n" +
+        "println(\"script {x}\")\n" +
+        "println(\"{x * 10} again\")\n"
+    runSource source |> assertRan "script 2\n20 again\n"
+
+[<Fact>]
+let ``Run - string literals inside interpolation holes`` () =
+    // Regression: literals nested in `{...}` were not collected into the data section (#49).
+    let source =
+        "import nanyx/console\n" +
+        "import nanyx/text\n" +
+        "\n" +
+        "def main = {\n" +
+        "  println(\"len {length(\"abc\")} and {toUpper(\"x\")}\")\n" +
+        "}\n" +
+        "\n" +
+        "main()\n"
+    runSource source |> assertRan "len 3 and X\n"
+
+[<Fact>]
+let ``Run - interpolation holes that allocate or have effects run once`` () =
+    // Regression: holes used to be evaluated twice, and an allocating hole in the second pass
+    // overwrote the output buffer, so `"a {s ++ "!"} c"` printed just `b!`.
+    let source =
+        "import nanyx/console\n" +
+        "import nanyx/text\n" +
+        "\n" +
+        "def s = \"b\"\n" +
+        "def shout: string -> string = { v ->\n" +
+        "  println(\"shouting \" ++ v)\n" +
+        "  toUpper(v)\n" +
+        "}\n" +
+        "println(\"a {s ++ \"!\"} c {toUpper(s)} d\")\n" +
+        "println(\"[{shout(\"x\")}]\")\n"
+    runSource source |> assertRan "a b! c B d\nshouting x\n[X]\n"
 
 [<Fact>]
 let ``Run - importing an unknown standard library module is a diagnostic`` () =
