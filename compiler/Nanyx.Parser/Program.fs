@@ -891,12 +891,27 @@ let tagExpr =
     | Some multiple -> preturn (TagExpr(tagName, Some (TupleExpr multiple)))  // Multiple values as tuple
 
 // If-expression parser: if condition then trueExpr else falseExpr
+// `if cond then a else b`, or if-matching: `if value is pattern then body [else other]` (see the
+// pattern-matching page), which is desugared to `match value | pattern -> body | _ -> other`, with `()` as
+// the other arm when there is no `else`. `is` makes it plain that the pattern binds its names rather than
+// comparing against existing ones.
 let ifExpr =
+    let keywordEnd = notFollowedBy (satisfy (fun c -> Char.IsLetterOrDigit c || c = '_'))
+    let patternBinding =
+        attempt (expression .>> ws .>> pstring "is" .>> keywordEnd .>> ws) .>>. pattern
+        |>> fun (value, pat) -> Choice2Of2 (pat, value)
+    let condition = expression |>> Choice1Of2
     pipe3
-        (pstring "if" >>. ws >>. expression)
-        (ws >>. pstring "then" >>. ws >>. expression)
-        (ws >>. pstring "else" >>. ws >>. expression)
-        (fun cond thenExpr elseExpr -> IfExpr(cond, thenExpr, elseExpr))
+        (pstring "if" >>. keywordEnd >>. ws >>. (patternBinding <|> condition))
+        (ws >>. pstring "then" >>. keywordEnd >>. ws >>. expression)
+        (opt (attempt (ws >>. pstring "else" >>. keywordEnd >>. ws >>. expression)))
+        (fun head thenExpr elseOpt -> head, thenExpr, elseOpt)
+    >>= fun (head, thenExpr, elseOpt) ->
+        match head, elseOpt with
+        | Choice1Of2 cond, Some elseExpr -> preturn (IfExpr(cond, thenExpr, elseExpr))
+        | Choice1Of2 _, None -> fail "an if expression needs an else branch (only if-matching may omit it)"
+        | Choice2Of2 (pat, value), _ ->
+            preturn (Match([ value ], [ [ pat ], thenExpr; [ WildcardPattern ], defaultArg elseOpt UnitExpr ]))
     <?> "if expression"
 
 let workflowBindExpr =

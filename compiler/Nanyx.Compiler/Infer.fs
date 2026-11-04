@@ -1071,6 +1071,7 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
             let mutable scrutineeOverrides: Map<int, Ty> = Map.empty
             for (index, scrutineeTy) in scrutineeTypes |> List.indexed do
                 let patternsAtPos = patternsForIndex index
+                let hasCatchAll = patternsAtPos |> List.exists isCatchAllPattern
                 let nonCatchAll = patternsAtPos |> List.filter (fun pat -> not (isCatchAllPattern pat))
                 let allTagPatterns =
                     not nonCatchAll.IsEmpty
@@ -1081,7 +1082,10 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                         |> List.choose (function TagPattern(tagName, payloadOpt) -> Some (tagName, payloadOpt) | _ -> None)
                         |> List.groupBy fst
                         |> List.sortBy fst
-                    if tagInfos.Length > 1 then
+                    // The arms describe the scrutinee's union. With a catch-all arm they need not name every
+                    // tag, so the union is left open with a rest variable for the tags the arms do not name
+                    // (`if #some(v) = get(n) then ...` must accept a `#some(int) | #none`).
+                    if tagInfos.Length > 1 || hasCatchAll then
                         let mutable stateForUnion = current
                         let unionItems =
                             tagInfos
@@ -1093,6 +1097,13 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                                     TyTag(tagName, Some payloadTy)
                                 else
                                     TyTag(tagName, None))
+                        let unionItems =
+                            if hasCatchAll then
+                                let restTy, nextState = freshVar stateForUnion
+                                stateForUnion <- nextState
+                                unionItems @ [ restTy ]
+                            else
+                                unionItems
                         let unionTy = TyUnion unionItems
                         scrutineeOverrides <- scrutineeOverrides |> Map.add index unionTy
                         current <- addConstraint scrutineeTy unionTy stateForUnion
