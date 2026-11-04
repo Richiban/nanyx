@@ -272,9 +272,9 @@ let ``Run - an annotated zero-parameter function returning a tag union`` () =
     runSource source |> assertRan "There was a message\n"
 
 [<Fact>]
-let ``Run - a function annotated as returning a function is reported as unsupported, not a crash`` () =
-    // `int -> (int -> int)` is one parameter returning a function. Closures are not supported yet, so this
-    // must fail with the backend's own diagnostic rather than the negative-count exception it used to throw.
+let ``Run - a function annotated as returning a function returns a closure`` () =
+    // `int -> (int -> int)` is one parameter returning a function; the backend used to crash with a
+    // negative padding count on the annotation, then reported closures as unsupported (#29).
     let source =
         "import nanyx/console\n" +
         "\n" +
@@ -285,10 +285,7 @@ let ``Run - a function annotated as returning a function is reported as unsuppor
         "  def add5 = makeAdder(5)\n" +
         "  dbg(add5(10))\n" +
         "}\n"
-    let outcome = runSource source
-    Assert.Equal(1, outcome.ExitCode)
-    Assert.Contains("Unsupported", outcome.StandardError)
-    Assert.DoesNotContain("non-negative", outcome.StandardError)
+    runSource source |> assertRan "dbg: 15\n"
 
 [<Fact>]
 let ``Run - interpolating variables bound by match patterns`` () =
@@ -724,16 +721,42 @@ let ``Run - functions as values and higher-order calls`` () =
     runSource source |> assertRan "dbg: 42\ndbg: 42\ndbg: 42\ndbg: 40\ndbg: 36\ndbg: 12\ndbg: 60\n"
 
 [<Fact>]
-let ``Run - a capturing lambda is still reported as unsupported`` () =
+let ``Run - a capturing lambda passed to a function`` () =
     let source =
         "def apply = { f, x -> f(x) }\n" +
         "def main = { n ->\n" +
         "  apply({ x -> x + n }, 1)\n" +
         "}\n" +
         "dbg(main(2))\n"
-    let outcome = runSource source
-    Assert.Equal(1, outcome.ExitCode)
-    Assert.Contains("Unsupported", outcome.StandardError)
+    runSource source |> assertRan "dbg: 3\n"
+
+[<Fact>]
+let ``Run - closures`` () =
+    // Closures capture locals, parameters and other closures; captured strings and records keep their types.
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def makeAdder: int -> (int -> int) = { x -> { y -> x + y } }\n" +
+        "def twice: ((int -> int), int) -> int = { f, v -> f(f(v)) }\n" +
+        "def greeter: string -> (string -> string) = { greeting -> { name -> greeting ++ \", \" ++ name } }\n" +
+        "type Point = (x: int, y: int)\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  def add5 = makeAdder(5)\n" +
+        "  println(\"{add5(10)} {twice(add5, 1)} {twice(makeAdder(1), 0)}\")\n" +
+        "  def hello = greeter(\"Hello\")\n" +
+        "  println(hello(\"Ada\"))\n" +
+        "  def origin = Point(x = 1, y = 2)\n" +
+        "  def shiftX = { d -> origin.x + d }\n" +
+        "  def compose = { g -> { v -> add5(g(v)) } }\n" +
+        "  def shiftedThenAdd5 = compose(shiftX)\n" +
+        "  def doubledThenAdd5 = compose({ v -> v * 2 })\n" +
+        "  println(\"{shiftX(10)} {shiftedThenAdd5(1)} {doubledThenAdd5(3)}\")\n" +
+        "  def limit = 3\n" +
+        "  rec countTo = { i -> if i < limit then countTo(i + 1) else i }\n" +
+        "  println(\"{countTo(0)}\")\n" +
+        "}\n"
+    runSource source |> assertRan "15 11 2\nHello, Ada\n11 7 11\n3\n"
 
 [<Fact>]
 let ``Run - a match with no matching arm exits 1 with a runtime error`` () =
