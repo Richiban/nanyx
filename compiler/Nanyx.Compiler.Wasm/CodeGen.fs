@@ -60,6 +60,7 @@ module private Helpers =
     let listLength = "__nanyx_list_length"
     let listConcat = "__nanyx_list_concat"
     let recordSet = "__nanyx_record_set"
+    let recordCopy = "__nanyx_record_copy"
     let writeStdout = NyxCompiler.Intrinsics.writeStdout
     let stringLength = NyxCompiler.Intrinsics.stringLength
     let stringByteAt = NyxCompiler.Intrinsics.stringByteAt
@@ -349,6 +350,19 @@ let private runtimeHelpers : Map<string, string> =
             "  local.get $value"
             "  i32.store"
             "  local.get $base"
+            ")" ]
+      Helpers.recordCopy,
+      lines
+          [ $"(func ${Helpers.recordCopy} (param $src i32) (param $size i32) (result i32)"
+            "  (local $dst i32)"
+            "  local.get $size"
+            $"  call ${Helpers.alloc}"
+            "  local.set $dst"
+            "  local.get $dst"
+            "  local.get $src"
+            "  local.get $size"
+            $"  call ${Helpers.copyBytes}"
+            "  local.get $dst"
             ")" ]
       Helpers.listCons,
       lines
@@ -822,6 +836,7 @@ let rec private tryExprTy (env: TranspileEnv) (expr: Expression) : Ty option =
     | IdentifierExpr(name, _) -> env.ValueTys |> Map.tryFind name
     | MemberAccess(inner, fieldName, _) ->
         tryExprTy env inner |> Option.bind tryRecordFieldTys |> Option.bind (Map.tryFind fieldName)
+    | FunctionCall("__with", _, baseExpr :: _) -> tryExprTy env baseExpr  // a record update has the record's type
     | FunctionCall(name, _, _)
     | Pipe(_, name, _, _) ->
         env.ValueTys
@@ -856,6 +871,7 @@ let rec private tryGetExprTypeName (env: TranspileEnv) (expr: Expression) =
     | MemberAccess _ -> fromInferredType ()
     | BinaryOp(op, _, _) when [ "=="; "!="; "<"; "<="; ">"; ">="; "and"; "or" ] |> List.contains op -> Some "bool"
     | FunctionCall("not", _, _) -> Some "bool"
+    | FunctionCall("__with", _, baseExpr :: _) -> tryGetExprTypeName env baseExpr
     | BinaryOp(_, left, right) ->
         tryGetExprTypeName env left |> Option.orElseWith (fun () -> tryGetExprTypeName env right)
     | ListExpr _ -> Some "list"
@@ -2063,6 +2079,30 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
     // ...existing code...
     | FunctionCall("not", _, [ operand ]) ->
         $"{transpileExpression env operand}\n    i32.eqz"
+    | FunctionCall("__with", _, [ baseExpr; RecordExpr updates ]) ->
+        // `record with f = v, ...`: copy the record's block, then overwrite the updated fields in place. The
+        // record is evaluated once and the copy's pointer stays on the stack, so the values may allocate.
+        let layout =
+            tryRecordLayoutOfExpr env baseExpr
+            |> Option.orElseWith (fun () ->
+                match baseExpr with
+                | IdentifierExpr(name, _) -> env.RecordLayouts |> Map.tryFind name
+                | _ -> None)
+        match layout with
+        | None -> failwith "Unsupported for WASM MVP backend: `with` on a value whose record layout is not known"
+        | Some fieldNames ->
+            env.UsedHelpers.Add Helpers.recordCopy |> ignore
+            env.UsedHelpers.Add Helpers.recordSet |> ignore
+            let stores =
+                updates
+                |> List.map (function
+                    | NamedField(fieldName, value) ->
+                        match fieldNames |> List.tryFindIndex ((=) fieldName) with
+                        | Some index -> $"{transpileExpression env value}\n    i32.const {index * 4}\n    call ${Helpers.recordSet}"
+                        | None -> failwith $"Unknown field '{fieldName}' in record update"
+                    | PositionalField _ -> failwith "Unsupported for WASM MVP backend: positional field in a record update")
+            ($"{transpileExpression env baseExpr}\n    i32.const {fieldNames.Length * 4}\n    call ${Helpers.recordCopy}" :: stores)
+            |> String.concat "\n    "
     | FunctionCall(name, _, args) when name = "dbg" ->
         let dbgLocal =
             match env.DbgTempLocal with
@@ -2331,6 +2371,18 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                                 RecordLayouts = env.RecordLayouts |> Map.add name fieldNames
                                 RecordFieldTypes = env.RecordFieldTypes |> Map.add name fieldTypes
                                 ValueTypes = env.ValueTypes |> Map.add name "tuple" }
+                        | FunctionCall("__with", _, IdentifierExpr(baseName, _) :: _) when env.RecordLayouts |> Map.containsKey baseName ->
+                            // A record update has the layout of the record it copies
+                            { env with
+                                RecordLayouts = env.RecordLayouts |> Map.add name env.RecordLayouts.[baseName]
+                                RecordFieldTypes =
+                                    match env.RecordFieldTypes |> Map.tryFind baseName with
+                                    | Some fieldTypes -> env.RecordFieldTypes |> Map.add name fieldTypes
+                                    | None -> env.RecordFieldTypes
+                                ValueTypes =
+                                    match env.ValueTypes |> Map.tryFind baseName with
+                                    | Some tyName -> env.ValueTypes |> Map.add name tyName
+                                    | None -> env.ValueTypes }
                         | FunctionCall(typeName, _, _) when env.TypeLayouts |> Map.containsKey typeName ->
                             // Type constructor call - use the type's field types
                             let typeFieldTypes = env.TypeFieldTypes |> Map.tryFind typeName |> Option.defaultValue Map.empty
@@ -3188,6 +3240,7 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
           Helpers.writeStdout, [ Helpers.stringLength ]
           Helpers.listCons, [ Helpers.alloc ]
           Helpers.recordSet, []
+          Helpers.recordCopy, [ Helpers.alloc; Helpers.copyBytes ]
           Helpers.listLength, []
           Helpers.listConcat, [ Helpers.listCons ] ]
     let rec closeHelpers (acc: Set<string>) (pending: string list) =
