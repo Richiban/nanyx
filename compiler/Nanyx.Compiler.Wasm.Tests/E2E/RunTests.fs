@@ -251,6 +251,27 @@ let ``Run - a function annotated as returning a function is reported as unsuppor
     Assert.DoesNotContain("non-negative", outcome.StandardError)
 
 [<Fact>]
+let ``Run - an unannotated function whose branches return different tags`` () =
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def getMessage = { flag ->\n" +
+        "  def message = \"Hello, from Nanyx!\"\n" +
+        "  if flag then #some(message)\n" +
+        "  else #noMessage\n" +
+        "}\n" +
+        "\n" +
+        "def describe = { flag ->\n" +
+        "  match getMessage(flag)\n" +
+        "    | #some(_) -> println(\"There was a message\")\n" +
+        "    | #noMessage -> println(\"No message available\")\n" +
+        "}\n" +
+        "\n" +
+        "describe(true)\n" +
+        "describe(false)\n"
+    runSource source |> assertRan "There was a message\nNo message available\n"
+
+[<Fact>]
 let ``Run - importing an unknown standard library module is a diagnostic`` () =
     let outcome = runSource "import nanyx/sockets\n\ndbg(1)\n"
     Assert.Equal(1, outcome.ExitCode)

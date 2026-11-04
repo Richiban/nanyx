@@ -420,6 +420,40 @@ let private instantiate (state: InferState) (scheme: TypeScheme) : Ty * InferSta
                 subst |> Map.add id tyVar) Map.empty
         Unifier.apply substitutions scheme.Type, current
 
+/// The type of an `if` or `match` whose branches have the given types.
+///
+/// When every branch is a tag (or a union of tags), the tags are collected into one union instead of
+/// being forced to agree, so `if c then #some(x) else #none` is `#some(a) | #none` without an
+/// annotation. Same-named tags unify their payloads, so `#some(1)` against `#some("a")` is still an
+/// error. If any branch is not a tag, the branches have to agree as before: every later branch is
+/// constrained equal to the first.
+let private joinBranchTypes (state: InferState) (branchTypes: Ty list) : Ty * InferState =
+    let tagsOf ty =
+        match ty with
+        | TyTag _ -> Some [ ty ]
+        | TyUnion items when items |> List.forall (function TyTag _ -> true | _ -> false) -> Some items
+        | _ -> None
+    match branchTypes with
+    | [] -> TyPrimitive "unit", state
+    | head :: tail ->
+        let branchTags = branchTypes |> List.map tagsOf
+        if branchTags |> List.forall Option.isSome then
+            // Merge in order of first appearance; an existing tag of the same name unifies with the new one.
+            let merged, nextState =
+                branchTags
+                |> List.choose id
+                |> List.concat
+                |> List.fold (fun (acc: Ty list, st) tag ->
+                    let name = match tag with TyTag(n, _) -> n | _ -> ""
+                    match acc |> List.tryFind (function TyTag(n, _) -> n = name | _ -> false) with
+                    | Some existing -> acc, addConstraint existing tag st
+                    | None -> acc @ [ tag ], st) ([], state)
+            match merged with
+            | [ single ] -> single, nextState
+            | items -> TyUnion items, nextState
+        else
+            head, tail |> List.fold (fun st ty -> addConstraint head ty st) state
+
 let private mkTypedExpr expr ty body statements matchArms : TypedExpr =
     { Expr = expr; Type = ty; Body = body; Statements = statements; MatchArms = matchArms }
 
@@ -761,8 +795,8 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                 match inferExpr env nextState elseExpr with
                 | Error err -> Error err
                 | Ok (elseExprTyped, finalState) ->
-                    let constrained = addConstraint thenExprTyped.Type elseExprTyped.Type finalState
-                    Ok (mkTypedExpr expr thenExprTyped.Type None None None, constrained)
+                    let resultTy, constrained = joinBranchTypes finalState [ thenExprTyped.Type; elseExprTyped.Type ]
+                    Ok (mkTypedExpr expr resultTy None None None, constrained)
     | Match(scrutinees, arms) ->
         let mutable current = state
         let scrutineeResults =
@@ -1117,11 +1151,9 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                     if not exhaustivenessErrors.IsEmpty then
                         Error exhaustivenessErrors
                     else
-                    match List.rev armExprs with
-                    | [] -> Ok (mkTypedExpr expr (TyPrimitive "unit") None None (Some typedArms), current)
-                    | head :: tail ->
-                        let constrained = tail |> List.fold (fun st typedExpr -> addConstraint head.Type typedExpr.Type st) current
-                        Ok (mkTypedExpr expr head.Type None None (Some typedArms), constrained)
+                    let armTypes = armExprs |> List.rev |> List.map (fun typedExpr -> typedExpr.Type)
+                    let resultTy, constrained = joinBranchTypes current armTypes
+                    Ok (mkTypedExpr expr resultTy None None (Some typedArms), constrained)
             else
                 Error errors
     | MemberAccess(baseExpr, memberName, rangeOpt) ->
