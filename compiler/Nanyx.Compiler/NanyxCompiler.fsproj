@@ -18,6 +18,15 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!--
+      The standard library (the `nanyx` package) is Nanyx source in stdlib/nanyx at the repository root.
+      It is embedded here so the published single-file `nanyx` binary carries it: one resource per
+      module, named "nanyx/<module>.nyx" (see StandardLibrary in Builtins.fs).
+    -->
+    <EmbeddedResource Include="..\..\stdlib\nanyx\*.nyx" LogicalName="nanyx/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Nanyx.Parser\Nanyx.Parser.fsproj" />
   </ItemGroup>
 

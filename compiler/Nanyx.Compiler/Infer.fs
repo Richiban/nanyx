@@ -605,7 +605,14 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
             | Error err -> Error err
             | Ok (rightExpr, nextState) ->
                 let constrained = addConstraint leftExpr.Type rightExpr.Type nextState
+                let isStringType ty =
+                    match ty with
+                    | TyPrimitive "string" -> true
+                    | _ -> false
                 match expr with
+                | BinaryOp("+", _, _) when isStringType leftExpr.Type || isStringType rightExpr.Type ->
+                    // `+` concatenates strings. (An operand whose type is still unknown here is taken to be numeric.)
+                    Ok (mkTypedExpr expr (TyPrimitive "string") None None None, constrained)
                 | BinaryOp(op, _, _) when ["+"; "-"; "*"; "/"] |> List.contains op ->
                     let numericConstrained =
                         constrained
