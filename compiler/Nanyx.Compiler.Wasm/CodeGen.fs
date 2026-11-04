@@ -640,6 +640,47 @@ let private trySimpleTypeName (ty: Ty) =
     | TyApply("list", _) -> Some "list"
     | _ -> None
 
+/// The payload type of `#tagName(...)` within `ty`, which may be the tag itself, a union containing it, or a
+/// nominal type wrapping either.
+let rec private tryTagPayloadType (tagName: string) (ty: Ty) : Ty option =
+    match ty with
+    | TyTag(name, Some payloadTy) when name = tagName -> Some payloadTy
+    | TyUnion options -> options |> List.tryPick (tryTagPayloadType tagName)
+    | TyNominal(_, underlying, _) -> tryTagPayloadType tagName underlying
+    | _ -> None
+
+let rec private tryListElementType (ty: Ty) : Ty option =
+    match ty with
+    | TyApply("list", [ elementTy ]) -> Some elementTy
+    | TyNominal(_, underlying, _) -> tryListElementType underlying
+    | _ -> None
+
+/// The simple types of the identifiers a typed pattern binds: `#some(n)` binds `n` at the tag's payload
+/// type, `[x, ...rest]` binds `x` at the element type and `rest` as a list, and a bare `n` binds at the
+/// scrutinee's type.
+let private patternBoundValueTypes (typedPattern: TypedPattern) : (string * string) list =
+    match typedPattern.Pattern with
+    | IdentifierPattern ident ->
+        trySimpleTypeName typedPattern.Type |> Option.map (fun tyName -> ident, tyName) |> Option.toList
+    | TagPattern(tagName, Some (IdentifierPattern ident)) ->
+        tryTagPayloadType tagName typedPattern.Type
+        |> Option.bind trySimpleTypeName
+        |> Option.map (fun tyName -> ident, tyName)
+        |> Option.toList
+    | ListPattern(elements, restOpt) ->
+        let elementTyName = tryListElementType typedPattern.Type |> Option.bind trySimpleTypeName
+        let elementBindings =
+            elements
+            |> List.choose (function
+                | IdentifierPattern ident -> elementTyName |> Option.map (fun tyName -> ident, tyName)
+                | _ -> None)
+        let restBinding =
+            match restOpt with
+            | Some (IdentifierPattern ident) -> [ ident, "list" ]
+            | _ -> []
+        elementBindings @ restBinding
+    | _ -> []
+
 /// The simple types inference found for a function's parameters and the locals of its body.
 let private collectTypedValueTypes (typedExpr: TypedExpr) =
     let parameterTypes =
@@ -665,7 +706,14 @@ let private collectTypedValueTypes (typedExpr: TypedExpr) =
             | Some statements -> statements |> List.fold collectStatement accWithBody
             | None -> accWithBody
         match expr.MatchArms with
-        | Some arms -> arms |> List.fold (fun state (_, armExpr) -> collectExpr state armExpr) accWithStatements
+        | Some arms ->
+            arms
+            |> List.fold (fun state (typedPatterns, armExpr) ->
+                let withBindings =
+                    typedPatterns
+                    |> List.collect patternBoundValueTypes
+                    |> List.fold (fun acc (ident, tyName) -> acc |> Map.add ident tyName) state
+                collectExpr withBindings armExpr) accWithStatements
         | None -> accWithStatements
     and collectStatement (acc: Map<string, string>) statement =
         match statement with
