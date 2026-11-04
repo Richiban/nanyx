@@ -837,6 +837,20 @@ let tagExpr =
     | Some [single] -> preturn (TagExpr(tagName, Some single))  // Single value
     | Some multiple -> preturn (TagExpr(tagName, Some (TupleExpr multiple)))  // Multiple values as tuple
 
+// If-matching: `if pattern = expr then body [else body]`. The pattern is tested against the value of
+// `expr`, binding its variables in the `then` branch. This is sugar for a match with one real arm and a
+// wildcard arm, so the rest of the compiler only ever sees a `Match`; a missing `else` is `()`.
+let ifMatchExpr =
+    let isIdentChar c = isLetter c || isDigit c || c = '_'
+    pipe4
+        (attempt (pstring "if" >>. notFollowedBy (satisfy isIdentChar) >>. ws >>. pattern .>> ws .>> pstring "=" .>> notFollowedBy (pchar '=') .>> ws))
+        expression
+        (ws >>. pstring "then" >>. ws >>. expression)
+        (opt (attempt (ws >>. pstring "else" >>. notFollowedBy (satisfy isIdentChar) >>. ws >>. expression)))
+        (fun pat scrutinee thenExpr elseOpt ->
+            Match([ scrutinee ], [ [ pat ], thenExpr; [ WildcardPattern ], defaultArg elseOpt UnitExpr ]))
+    <?> "if-matching expression"
+
 // If-expression parser: if condition then trueExpr else falseExpr
 let ifExpr =
     pipe3
@@ -920,6 +934,7 @@ let primaryExprNoWs =
         attempt workflowBindExpr
         attempt useInExpr
         attempt unitExpr
+        attempt ifMatchExpr  // `if pattern = expr then ...` must be tried before plain if-then-else
         attempt ifExpr  // if-then-else must be early to avoid partial matches
         attempt matchExpr
         attempt lambda

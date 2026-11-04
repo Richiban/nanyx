@@ -1,0 +1,17 @@
+def get: int -> #some(int) | #none = { n -> if n > 0 then #some(n) else #none }
+
+def main = {
+  if #some(v) = get(3) then println("got {v}")
+}
+
+def withElse = if #some(v) = get(3) then v else 0
+
+def noPayload = if #Zero = num then println("It's zero!")
+
+def tuple = if (x, y) = getCoordinates() then x + y
+
+def multiline =
+  if #some(value) = getResult() then
+    println("Got a value: {value}")
+  else
+    println("Nothing")

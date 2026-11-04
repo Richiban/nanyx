@@ -76,6 +76,45 @@ let rec private isAssignableType (expected: Ty) (actual: Ty) =
     | TyUnion options, _ -> options |> List.exists (fun optionTy -> isAssignableType optionTy actual)
     | _ -> true
 
+/// The result type of an `if` or `match` from the types of its branches. When every branch is a tag or a
+/// closed tag union, the result is the union of them all (same-named tags must agree on their payload), so
+/// `if n > 0 then #some(n) else #none` has type `#some(int) | #none` and can be returned from a function
+/// declared that way. Otherwise every branch is constrained to equal the first, as before.
+let private joinBranchTypes (branchTypes: Ty list) (state: InferState) : Ty * InferState =
+    let rec closedTags ty =
+        match ty with
+        | TyTag _ -> Some [ ty ]
+        | TyUnion items ->
+            let parts = items |> List.map closedTags
+            if parts |> List.forall Option.isSome then Some (parts |> List.collect Option.get) else None
+        | _ -> None
+    let tagsPerBranch = branchTypes |> List.map closedTags
+    match branchTypes with
+    | first :: rest when rest.IsEmpty || not (tagsPerBranch |> List.forall Option.isSome) ->
+        first, rest |> List.fold (fun st ty -> addConstraint first ty st) state
+    | _ ->
+        let mutable current = state
+        let merged =
+            tagsPerBranch
+            |> List.collect Option.get
+            |> List.fold (fun (acc: (string * Ty) list) ty ->
+                match ty with
+                | TyTag(name, payload) ->
+                    match acc |> List.tryFind (fun (existingName, _) -> existingName = name) with
+                    | Some (_, existing) ->
+                        match existing, payload with
+                        | TyTag(_, Some existingPayload), Some newPayload ->
+                            current <- addConstraint existingPayload newPayload current
+                        | TyTag(_, None), None -> ()
+                        | _ -> current <- addConstraint existing ty current  // payload/no-payload clash: let the unifier report it
+                        acc
+                    | None -> acc @ [ name, ty ]
+                | _ -> acc) []
+            |> List.map snd
+        match merged with
+        | [ single ] -> single, current
+        | _ -> TyUnion merged, current
+
 let private ensureAttachedTypeExists (state: InferState) (currentModuleOpt: string option) (name: Identifier) : Result<unit, Diagnostic list> =
     let firstDot = name.IndexOf(".")
     if firstDot <= 0 then
@@ -775,8 +814,8 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                 match inferExpr env nextState elseExpr with
                 | Error err -> Error err
                 | Ok (elseExprTyped, finalState) ->
-                    let constrained = addConstraint thenExprTyped.Type elseExprTyped.Type finalState
-                    Ok (mkTypedExpr expr thenExprTyped.Type None None None, constrained)
+                    let resultTy, constrained = joinBranchTypes [ thenExprTyped.Type; elseExprTyped.Type ] finalState
+                    Ok (mkTypedExpr expr resultTy None None None, constrained)
     | Match(scrutinees, arms) ->
         let mutable current = state
         let scrutineeResults =
@@ -1133,9 +1172,9 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                     else
                     match List.rev armExprs with
                     | [] -> Ok (mkTypedExpr expr (TyPrimitive "unit") None None (Some typedArms), current)
-                    | head :: tail ->
-                        let constrained = tail |> List.fold (fun st typedExpr -> addConstraint head.Type typedExpr.Type st) current
-                        Ok (mkTypedExpr expr head.Type None None (Some typedArms), constrained)
+                    | armExprsInOrder ->
+                        let resultTy, constrained = joinBranchTypes (armExprsInOrder |> List.map (fun typedExpr -> typedExpr.Type)) current
+                        Ok (mkTypedExpr expr resultTy None None (Some typedArms), constrained)
             else
                 Error errors
     | MemberAccess(baseExpr, memberName, rangeOpt) ->

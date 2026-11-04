@@ -644,6 +644,26 @@ let ``Typecheck supports tag union rest parameter`` () =
     | other -> Assert.True(false, $"Unexpected rest union result type: %A{other}")
 
 [<Fact>]
+let ``Branches producing different tags join into a union`` () =
+    // #42: the issue's `get` returns `#some(n)` from one branch and `#none` from the other.
+    let source =
+        "def get: int -> #some(int) | #none = { n -> if n > 0 then #some(n) else #none }\n" +
+        "def pick: int -> #some(int) | #none = { n -> match n | 0 -> #none | _ -> #some(n) }\n" +
+        "def inferred = if true then #some(1) else #none"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    let typed = result.Typed.Value
+    Assert.Equal(TyUnion [ TyTag("some", Some (TyPrimitive "int")); TyTag("none", None) ], typed.Types.["inferred"])
+
+[<Fact>]
+let ``Branches producing the same tag with different payloads are rejected`` () =
+    let source = "def bad = if true then #some(1) else #some(\"one\")"
+    let result = Compiler.compile source
+    Assert.False(result.Diagnostics.IsEmpty)
+    let message = result.Diagnostics |> List.head |> fun diag -> diag.Message
+    Assert.Contains("Type mismatch", message)
+
+[<Fact>]
 let ``Typecheck requires catch-all for tag union rest`` () =
     let source =
         "def mapOption: ((#some(a) | r), a -> b) -> #some(b) | r = { o, f ->\n" +

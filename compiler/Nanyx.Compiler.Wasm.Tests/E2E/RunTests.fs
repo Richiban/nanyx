@@ -493,6 +493,22 @@ let ``Run - functions as values and higher-order calls`` () =
     runSource source |> assertRan "dbg: 42\ndbg: 42\ndbg: 42\ndbg: 40\ndbg: 36\ndbg: 12\ndbg: 60\n"
 
 [<Fact>]
+let ``Run - if-matching tests a pattern and binds its variables`` () =
+    // #42: `if #some(v) = get(3) then ...` is sugar for a match with a wildcard arm.
+    let source =
+        "import nanyx/console\n" +
+        "def get: int -> #some(int) | #none = { n -> if n > 0 then #some(n) else #none }\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  if #some(v) = get(3) then println(\"got {v}\")\n" +
+        "  if #some(v) = get(0) then println(\"unexpected {v}\")\n" +
+        "  if #none = get(0) then println(\"none\")\n" +
+        "  dbg(if #some(v) = get(7) then v * 2 else -1)\n" +
+        "  dbg(if #some(v) = get(-7) then v * 2 else -1)\n" +
+        "}\n"
+    runSource source |> assertRan "got 3\nnone\ndbg: 14\ndbg: -1\n"
+
+[<Fact>]
 let ``Run - a capturing lambda is still reported as unsupported`` () =
     let source =
         "def apply = { f, x -> f(x) }\n" +
