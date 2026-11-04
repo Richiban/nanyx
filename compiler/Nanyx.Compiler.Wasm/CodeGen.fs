@@ -466,8 +466,8 @@ let private wasmBinaryInstruction op =
     | "<=" -> Some "i32.le_s"
     | ">" -> Some "i32.gt_s"
     | ">=" -> Some "i32.ge_s"
-    | "&&" -> Some "i32.and"
-    | "||" -> Some "i32.or"
+    | "and" -> Some "i32.and"
+    | "or" -> Some "i32.or"
     | _ -> None
 
 let private flattenCallArgs (args: Expression list) =
@@ -828,7 +828,8 @@ let rec private tryGetExprTypeName (env: TranspileEnv) (expr: Expression) =
     | MemberAccess(IdentifierExpr(varName, _), fieldName, _) when env.RecordFieldTypes |> Map.containsKey fieldName |> not && env.RecordFieldTypes |> Map.containsKey varName ->
         env.RecordFieldTypes.[varName] |> Map.tryFind fieldName |> Option.orElseWith fromInferredType
     | MemberAccess _ -> fromInferredType ()
-    | BinaryOp(op, _, _) when [ "=="; "!="; "<"; "<="; ">"; ">="; "&&"; "||" ] |> List.contains op -> Some "bool"
+    | BinaryOp(op, _, _) when [ "=="; "!="; "<"; "<="; ">"; ">="; "and"; "or" ] |> List.contains op -> Some "bool"
+    | FunctionCall("not", _, _) -> Some "bool"
     | BinaryOp(_, left, right) ->
         tryGetExprTypeName env left |> Option.orElseWith (fun () -> tryGetExprTypeName env right)
     | ListExpr _ -> Some "list"
@@ -2017,6 +2018,8 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
         let armsCode = emitArms arms
         $"{setScrutineeLocals}\n    {armsCode}"
     // ...existing code...
+    | FunctionCall("not", _, [ operand ]) ->
+        $"{transpileExpression env operand}\n    i32.eqz"
     | FunctionCall(name, _, args) when name = "dbg" ->
         let dbgLocal =
             match env.DbgTempLocal with

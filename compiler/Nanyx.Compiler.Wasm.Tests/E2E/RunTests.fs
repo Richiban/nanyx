@@ -418,6 +418,21 @@ let ``Run - nested record field access`` () =
         "main()\n"
     // The last line covers #31: a record built through a type constructor at the top level.
     runSource source |> assertRan "dbg: 3\ndbg: 4\ndeep\ndbg: 0\ndbg: 2\n"
+[<Fact>]
+let ``Run - boolean keywords not, and, or`` () =
+    // #39: the docs make boolean operations keywords; `not` had no spelling at all.
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def show: bool -> () = { b -> println(if b then \"yes\" else \"no\") }\n" +
+        "def between: (int, int, int) -> bool = { x, lo, hi -> x >= lo and x <= hi }\n" +
+        "show(not true)\n" +
+        "show(not false)\n" +
+        "show(true and false)\n" +
+        "show(true or false)\n" +
+        "show(not (1 > 2) and between(5, 1, 10))\n" +
+        "show(not between(50, 1, 10) or false)\n"
+    runSource source |> assertRan "no\nyes\nno\nyes\nyes\nyes\n"
 
 [<Fact>]
 let ``Run - a match with no matching arm exits 1 with a runtime error`` () =

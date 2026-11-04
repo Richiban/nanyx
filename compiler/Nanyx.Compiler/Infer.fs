@@ -491,6 +491,16 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                 match rangeOpt with
                 | Some (line, col) -> Error [ Diagnostics.errorAt "dbg expects a single argument" (line, col) ]
                 | None -> Error [ Diagnostics.error "dbg expects a single argument" ]
+        elif name = "not" then
+            // The `not` keyword: the parser represents `not x` as a call to "not" with one argument.
+            match args with
+            | [single] ->
+                match inferExpr env state single with
+                | Ok (typedArg, next) ->
+                    let constrained = addConstraint typedArg.Type (TyPrimitive "bool") next
+                    Ok (mkTypedExpr expr (TyPrimitive "bool") None None None, constrained)
+                | Error err -> Error err
+            | _ -> Error [ Diagnostics.error "not expects a single operand" ]
         else
         let contextCheck =
             match state.ContextRequirements |> Map.tryFind name with
@@ -630,6 +640,10 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                     Ok (mkTypedExpr expr (TyPrimitive "bool") None None None, numericConstrained)
                 | BinaryOp(op, _, _) when ["=="; "!="] |> List.contains op ->
                     Ok (mkTypedExpr expr (TyPrimitive "bool") None None None, constrained)
+                | BinaryOp(op, _, _) when ["and"; "or"] |> List.contains op ->
+                    // Both operands are already unified with each other; pin them to bool.
+                    let boolConstrained = constrained |> addConstraint leftExpr.Type (TyPrimitive "bool")
+                    Ok (mkTypedExpr expr (TyPrimitive "bool") None None None, boolConstrained)
                 | _ -> Ok (mkTypedExpr expr leftExpr.Type None None None, constrained)
     | Pipe(value, name, rangeOpt, args) ->
         match inferExpr env state value with
