@@ -356,6 +356,32 @@ let ``Run - matching on string literals`` () =
         "println(kind(\"Sa\" ++ suffix))\n" +
         "println(greet(#name(\"Ada\")) ++ \" / \" ++ greet(#name(\"Bob\")) ++ \" / \" ++ greet(#anon))\n"
     runSource source |> assertRan "weekend weekend weekday\nweekend\nhello, Ada! / hello, someone / hello, stranger\n"
+[<Fact>]
+let ``Run - identifier patterns bind the scrutinee`` () =
+    // Regression: `| n -> ...` and `| 0, y -> ...` failed with "Unsupported identifier" (#34).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def echo: int -> int = { v ->\n" +
+        "  match v\n" +
+        "    | 0 -> 100\n" +
+        "    | n -> n + 1\n" +
+        "}\n" +
+        "def pick: (int, int) -> int = { a, b ->\n" +
+        "  match a, b\n" +
+        "    | 0, y -> y\n" +
+        "    | x, _ -> x\n" +
+        "}\n" +
+        "def label: string -> string = { s ->\n" +
+        "  match s\n" +
+        "    | text -> \"<\" ++ text ++ \">\"\n" +
+        "}\n" +
+        "dbg(echo(0))\n" +
+        "dbg(echo(41))\n" +
+        "dbg(pick(0, 5))\n" +
+        "dbg(pick(7, 5))\n" +
+        "println(label(\"x\"))\n"
+    runSource source |> assertRan "dbg: 100\ndbg: 42\ndbg: 5\ndbg: 7\n<x>\n"
 
 [<Fact>]
 let ``Run - a match with no matching arm exits 1 with a runtime error`` () =
