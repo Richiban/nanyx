@@ -1,4 +1,4 @@
-﻿module Nanyx.Compiler.Tests
+module Nanyx.Compiler.Tests
 
 open System
 open System.IO
@@ -1029,3 +1029,22 @@ let ``Typecheck still generalizes a def used after its definition`` () =
     Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
     Assert.Equal(TyPrimitive "int", result.Typed.Value.Types.["a"])
     Assert.Equal(TyPrimitive "string", result.Typed.Value.Types.["b"])
+[<Fact>]
+let ``Typecheck types the boolean keywords as bool`` () =
+    let source =
+        "def a = true and false\n" +
+        "def b = a or not a\n" +
+        "def c = not (1 < 2)"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    let types = result.Typed.Value.Types
+    Assert.Equal(TyPrimitive "bool", types.["a"])
+    Assert.Equal(TyPrimitive "bool", types.["b"])
+    Assert.Equal(TyPrimitive "bool", types.["c"])
+
+[<Fact>]
+let ``Typecheck rejects boolean keywords on non-booleans`` () =
+    let andResult = Compiler.compile "def a = 1 and 2"
+    Assert.False(andResult.Diagnostics.IsEmpty, "`1 and 2` should not type-check")
+    let notResult = Compiler.compile "def b = not \"text\""
+    Assert.False(notResult.Diagnostics.IsEmpty, "`not \"text\"` should not type-check")
