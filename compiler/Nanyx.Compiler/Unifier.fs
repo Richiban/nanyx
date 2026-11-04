@@ -251,33 +251,36 @@ module Unifier =
                     match parseTagUnion lItems with
                     | Ok (lMap, lRest) ->
                         let tags = lMap |> Map.toList |> List.map snd
-                        let rec tryItems items =
+                        // A member of the union that unifies with `ty` is tried against the rest of the
+                        // constraints too, so when none works the failure may come from later on; report
+                        // the innermost failure rather than a bare mismatch here.
+                        let rec tryItems items (lastError: string option) =
                             match items with
                             | [] ->
                                 match lRest with
                                 | Some restVar -> loop subst ((TyVar restVar, ty, Equal) :: rest)
-                                | None -> Error (mismatchMessage l r)
+                                | None -> Error (lastError |> Option.defaultValue (mismatchMessage l r))
                             | item :: restItems ->
                                 match loop subst ((item, ty, Equal) :: rest) with
                                 | Ok result -> Ok result
-                                | Error _ -> tryItems restItems
-                        tryItems tags
+                                | Error inner -> tryItems restItems (Some inner)
+                        tryItems tags None
                     | Error message -> Error message
                 | ty, TyUnion rItems ->
                     match parseTagUnion rItems with
                     | Ok (rMap, rRest) ->
                         let tags = rMap |> Map.toList |> List.map snd
-                        let rec tryItems items =
+                        let rec tryItems items (lastError: string option) =
                             match items with
                             | [] ->
                                 match rRest with
                                 | Some restVar -> loop subst ((ty, TyVar restVar, Equal) :: rest)
-                                | None -> Error (mismatchMessage l r)
+                                | None -> Error (lastError |> Option.defaultValue (mismatchMessage l r))
                             | item :: restItems ->
                                 match loop subst ((ty, item, Equal) :: rest) with
                                 | Ok result -> Ok result
-                                | Error _ -> tryItems restItems
-                        tryItems tags
+                                | Error inner -> tryItems restItems (Some inner)
+                        tryItems tags None
                     | Error message -> Error message
                 | _ -> Error (mismatchMessage l r)
             match remaining with

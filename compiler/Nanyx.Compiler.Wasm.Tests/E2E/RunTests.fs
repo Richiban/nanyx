@@ -558,6 +558,25 @@ let ``Run - boolean keywords not, and, or`` () =
         "show(not between(50, 1, 10) or false)\n"
     runSource source |> assertRan "no\nyes\nno\nyes\nyes\nyes\n"
 [<Fact>]
+let ``Run - if-matching`` () =
+    // Regression: `if #some(v) = get(3) then ...` was a parse error (#42).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def get: int -> #some(int) | #none = { n -> #some(n) }\n" +
+        "def nothing: int -> #some(int) | #none = { n -> #none }\n" +
+        "def describe: #some(int) | #none -> string = { r ->\n" +
+        "  if #some(v) = r then \"got {v}\" else \"nothing\"\n" +
+        "}\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  if #some(v) = get(3) then println(\"got {v}\")\n" +
+        "  if #some(v) = nothing(0) then println(\"unexpected {v}\")\n" +
+        "  println(describe(get(5)) ++ \" \" ++ describe(nothing(5)))\n" +
+        "}\n"
+    runSource source |> assertRan "got 3\ngot 5 nothing\n"
+
+[<Fact>]
 let ``Run - or-patterns in match arms`` () =
     // #43: `| a | b -> ...` is one arm matching either alternative.
     let source =

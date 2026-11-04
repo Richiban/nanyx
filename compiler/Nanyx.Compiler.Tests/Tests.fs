@@ -1072,6 +1072,18 @@ let ``Typecheck allows member access on the result of a call`` () =
     Assert.True(inferred.Diagnostics.IsEmpty, sprintf "%A" inferred.Diagnostics)
     let missing = Compiler.compile "type Point = (x: int, y: int)\ndef id: Point -> Point = { p -> p }\ndef z = id(Point(x = 1, y = 2)).z"
     Assert.False(missing.Diagnostics.IsEmpty, "a field the result lacks should still be an error")
+[<Fact>]
+let ``Typecheck leaves the scrutinee union open when a match has a catch-all arm`` () =
+    // `| #some(v) -> ... | _ -> ...` names only one tag; the scrutinee may still be a wider union.
+    let result =
+        Compiler.compile (
+            "def get: int -> #some(int) | #none = { n -> #some(n) }\n" +
+            "def d = { n -> match get(n)\n" +
+            "  | #some(v) -> v\n" +
+            "  | _ -> 0\n" +
+            "}\n" +
+            "def e = if #some(v) = get(1) then v else 0\n")
+    Assert.True(result.Diagnostics.IsEmpty, sprintf "%A" result.Diagnostics)
 
 [<Fact>]
 let ``Typecheck rejects boolean keywords on non-booleans`` () =
