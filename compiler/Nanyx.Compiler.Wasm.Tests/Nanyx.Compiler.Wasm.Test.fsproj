@@ -11,6 +11,7 @@
     <Compile Include="Features\Core\FunctionAndLocalsTests.fs" />
     <Compile Include="Features\ControlFlow\ControlFlowFixtureTests.fs" />
     <Compile Include="E2E\E2ETests.fs" />
+    <Compile Include="E2E\RunTests.fs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -31,6 +32,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The execution tests in E2E/RunTests.fs run the built CLI (nanyx.dll) as a child process. -->
+    <ProjectReference Include="..\Nanyx.Compiler.Cli\NanyxCompiler.Cli.csproj" />
     <ProjectReference Include="..\Nanyx.Compiler.Wasm\Nanyx.Compiler.Wasm.fsproj" />
     <ProjectReference Include="..\Nanyx.Parser\Nanyx.Parser.fsproj" />
   </ItemGroup>

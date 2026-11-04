@@ -40,7 +40,8 @@ compiler/
 ├── Nanyx.Compiler/            # Type checker (F#)
 ├── Nanyx.Compiler.Tests/      # Compiler-level unit/integration tests
 ├── Nanyx.Compiler.Wasm/       # WebAssembly text (.wat) backend (F#)
-├── Nanyx.Compiler.Wasm.Tests/ # Backend fixture and end-to-end tests
+├── Nanyx.Compiler.Wasm.Tests/ # Backend fixture, end-to-end and execution tests
+├── Nanyx.Compiler.Runtime/    # Runs emitted modules on an embedded Wasmtime engine (F#)
 ├── Nanyx.Compiler.Cli/        # The `nanyx` executable (C#, Consolo)
 ├── Nyx.Compiler.slnx          # Solution covering all projects
 └── README.md
@@ -95,28 +96,40 @@ git push origin compiler/0.1.0
 The workflow checks that the tag matches the project version and attaches the binaries to a
 GitHub release. (The VS Code extension is released the same way with `extension/<version>` tags.)
 
-## Running the Parser
+## Running programs
 
-The parser and WASM backend are libraries; the `nanyx` CLI is the only executable. To dump
-the AST for a file:
+The parser, type checker, WASM backend and runtime are libraries; the `nanyx` CLI is the only
+executable. It takes a target and a `.nyx` file:
+
+| Target  | What it does                                                                 |
+| ------- | ---------------------------------------------------------------------------- |
+| `run`   | Compiles the file and runs it on the embedded Wasmtime engine                |
+| `wasm`  | Emits WebAssembly text (`.wat`) next to the file, or to `--out <path>`       |
+| `check` | Type-checks the file and prints the inferred types                           |
+| `parse` | Prints the AST                                                               |
+
+The hello world from the docs works as written:
+
+```nanyx
+import nanyx/console
+
+println("Hello, Nanyx!")
+```
 
 ```powershell
-dotnet run --project compiler/Nanyx.Compiler.Cli/NanyxCompiler.Cli.csproj -- parse sample.nyx
+dotnet run --project compiler/Nanyx.Compiler.Cli/NanyxCompiler.Cli.csproj -- run hello.nyx
+# Hello, Nanyx!
 ```
+
+`run` keeps its own output off stdout: only the program writes there, diagnostics go to stderr, and
+the exit code is 0 on success, 1 when the program fails to compile or traps, and 2 for a usage error.
+The project form (`module main` with `@entry def main = { ... }`) runs the same way: `@entry` marks the
+definition the program starts at.
+
+The standard library does not exist yet. `import nanyx/console` is accepted and does nothing, and
+`println` (`string -> unit`) is built in, unless the module declares a context member of that name.
 
 ## WebAssembly (MVP)
-
-You can now emit WebAssembly text format (`.wat`) directly from the compiler CLI:
-
-```powershell
-dotnet run --project compiler/Nanyx.Compiler.Cli/NanyxCompiler.Cli.csproj -- sample.nyx --target wasm
-```
-
-Optional output path:
-
-```powershell
-dotnet run --project compiler/Nanyx.Compiler.Cli/NanyxCompiler.Cli.csproj -- sample.nyx --target wasm --out sample.wat
-```
 
 Current WASM backend support is intentionally minimal and focused on bootstrapping:
 
@@ -127,7 +140,9 @@ Current WASM backend support is intentionally minimal and focused on bootstrappi
 - bare tag literals (`#ok`, `#error`, etc.) lowered to deterministic `i32` discriminants
 - function calls to known module defs
 - simple expression blocks with local `def` assignments (`local.set`/`local.get`)
-- magic `dbg(...)` support via wasm host import: `(import "env" "dbg" (func $dbg (param i32)))`
+- top-level expressions (and the `@entry` definition) run from a WebAssembly start function
+- `println(...)` and `dbg(...)` of integers and strings write to stdout through WASI `fd_write`
+- `dbg(#tag)` calls a host import `(import "env" "dbg_tag_<tag>" (func))`, which the runtime provides
 
 Other language constructs will currently fail fast with an explicit "Unsupported ... for WASM MVP backend" message.
 

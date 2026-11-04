@@ -122,6 +122,8 @@ type TopLevelItem =
     | Def of Definition
     | Import of ImportItem list
     | Expr of Expression
+    /// An `@name` attribute line; it applies to the top-level item that follows it (e.g. `@entry`).
+    | Attribute of Identifier
 
 type Module = TopLevelItem list
 
@@ -1230,9 +1232,15 @@ let topLevelExpr: Parser<TopLevelItem, unit> =
     exprWithoutCrossingNewlines |>> Expr
     <?> "top-level expression"
 
+// Parser for an attribute line such as `@entry`; it annotates the next top-level item
+let attributeItem: Parser<TopLevelItem, unit> =
+    pchar '@' >>. identifierNoWs |>> Attribute
+    <?> "attribute"
+
 let private moduleBlockItem: Parser<TopLevelItem, unit> =
     choice [
         (attempt (pstring "import" >>. wsNoNl() >>. importItems) |>> Import)
+        attributeItem
         attempt typeDef
         valueDef
         topLevelExpr
@@ -1278,6 +1286,7 @@ let topLevelItem: Parser<TopLevelItem, unit> =
         attempt moduleBlockDecl
         moduleDecl
         (attempt (pstring "import" >>. wsNoNl() >>. importItems) |>> Import)
+        attributeItem
         attempt typeDef
         valueDef
         topLevelExpr
@@ -1439,6 +1448,7 @@ let rec private expandModuleBlock (prefix: string) (items: TopLevelItem list) : 
             let nestedPrefix = qualifyModuleName prefix name
             ModuleDecl nestedPrefix :: expandModuleBlock nestedPrefix nested
         | Import imports -> [ Import imports ]
+        | Attribute name -> [ Attribute name ]
         | Expr expr -> [ Expr (rewriteExpressionInModule valueMap typeMap expr) ]
         | Def (ValueDef(isExport, name, typeOpt, expr)) ->
             [ Def (ValueDef(isExport, qualifyDefName name, typeOpt |> Option.map (rewriteTypeExprInModule typeMap), rewriteExpressionInModule valueMap typeMap expr)) ]

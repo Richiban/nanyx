@@ -1,0 +1,64 @@
+namespace Nanyx.Runtime
+
+open System
+open Wasmtime
+
+type RunError =
+    /// The WebAssembly text could not be parsed or validated.
+    | InvalidModule of string
+    /// The program trapped (for example `unreachable` from a match with no matching arm) or failed to instantiate.
+    | Trapped of string
+
+/// Runs WebAssembly text emitted by the Nanyx backend on an embedded Wasmtime engine.
+///
+/// The backend turns top-level expressions into a WebAssembly start function, so instantiating the module
+/// runs the program. The program's output goes to this process's stdout: through WASI `fd_write` for
+/// `println` and `dbg` of strings and integers, and through host functions for the `env.dbg_tag_*`
+/// imports that `dbg(#tag)` emits.
+module WasmRunner =
+    let private stripImportPrefix (prefix: string) (name: string) = name.Substring prefix.Length
+
+    let private writeLine (line: string) =
+        // Match WASI's output byte for byte: a bare "\n", never the platform newline.
+        Console.Out.Write(line + "\n")
+        Console.Out.Flush()
+
+    /// Defines a host function for each `env` import the module declares.
+    let private defineHostImports (linker: Linker) (module': Module) =
+        for import in module'.Imports do
+            match import with
+            | :? FunctionImport as fn when fn.ModuleName = "env" ->
+                let name = fn.Name
+                if name.StartsWith "dbg_tag_payload_" then
+                    let tag = stripImportPrefix "dbg_tag_payload_" name
+                    linker.DefineFunction(fn.ModuleName, name, Action<int>(fun payload -> writeLine $"dbg: #{tag}({payload})"))
+                elif name.StartsWith "dbg_tag_" then
+                    let tag = stripImportPrefix "dbg_tag_" name
+                    linker.DefineFunction(fn.ModuleName, name, Action(fun () -> writeLine $"dbg: #{tag}"))
+                else
+                    failwith $"The program imports an unknown host function: env.{name}"
+            | _ -> ()
+
+    /// Instantiates (and therefore runs) the module described by `wat`.
+    let run (wat: string) : Result<unit, RunError> =
+        use engine = new Engine()
+        let moduleResult =
+            try Ok (Module.FromText(engine, "nanyx", wat))
+            with :? WasmtimeException as ex -> Error (InvalidModule ex.Message)
+        match moduleResult with
+        | Error err -> Error err
+        | Ok module' ->
+            use module' = module'
+            use linker = new Linker(engine)
+            use store = new Store(engine)
+            linker.DefineWasi()
+            store.SetWasiConfiguration(
+                WasiConfiguration()
+                    .WithInheritedStandardInput()
+                    .WithInheritedStandardOutput()
+                    .WithInheritedStandardError())
+            try
+                defineHostImports linker module'
+                linker.Instantiate(store, module') |> ignore
+                Ok ()
+            with :? WasmtimeException as ex -> Error (Trapped ex.Message)

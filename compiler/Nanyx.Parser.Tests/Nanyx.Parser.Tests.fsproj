@@ -11,6 +11,7 @@
   <ItemGroup>
     <Compile Include="TestHelpers.fs" />
     <Compile Include="ParserTests.fs" />
+    <Compile Include="Features\Attributes\AttributeTests.fs" />
     <Compile Include="Features\Blocks\BlockTests.fs" />
     <Compile Include="Features\Bindings\BindingTests.fs" />
     <Compile Include="Features\FieldAccess\FieldAccessTests.fs" />
