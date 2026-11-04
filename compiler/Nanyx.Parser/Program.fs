@@ -476,21 +476,27 @@ let listPattern =
 
 // Range pattern: 1..10
 // Must use attempt to ensure proper backtracking if ".." is not found
-// Guard pattern: > 10, < 5, >= 10, <= 5, == 5, != 5
+// Guard pattern: `{ < 0 }`, `{ >= limit }` (the pattern-matching page writes a guard as a predicate in the
+// shorthand-lambda style). The value may be any expression. The older bare form `> 5` is still accepted.
 let guardPattern =
-    attempt (
-        let guardOp = 
-            choice [
-                pstring ">="
-                pstring "<="
-                pstring "=="
-                pstring "!="
-                pstring ">"
-                pstring "<"
-            ]
-        guardOp .>>. (ws >>. (literalNoWs |>> LiteralExpr))
-        |>> fun (op, value) -> GuardPattern(op, value)
-    )
+    let guardOp =
+        choice [
+            pstring ">="
+            pstring "<="
+            pstring "=="
+            pstring "!="
+            pstring ">"
+            pstring "<"
+        ]
+    let braced =
+        attempt (
+            between (pstring "{" .>> ws) (pstring "}") (guardOp .>>. (ws >>. expression .>> ws))
+            |>> fun (op, value) -> GuardPattern(op, value))
+    let bare =
+        attempt (
+            guardOp .>>. (ws >>. (literalNoWs |>> LiteralExpr))
+            |>> fun (op, value) -> GuardPattern(op, value))
+    braced <|> bare
 
 // Tag pattern: #nil or #some(x) or #error data
 // Tag pattern: #tagName or #tagName(pattern) or #tagName(p1, p2, ...)

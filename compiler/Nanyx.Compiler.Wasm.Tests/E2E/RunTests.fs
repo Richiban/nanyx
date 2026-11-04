@@ -594,6 +594,31 @@ let ``Run - if-matching`` () =
         "  println(describe(get(5)) ++ \" \" ++ describe(nothing(5)))\n" +
         "}\n"
     runSource source |> assertRan "got 3\ngot 5 nothing\n"
+[<Fact>]
+let ``Run - guard patterns in the documented form`` () =
+    // Regression: the docs write guards as `| { < 0 } -> ...`; the parser only knew `| < 0 ->` (#46).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def describe: int -> string = { n ->\n" +
+        "  match n\n" +
+        "    | { < 0 } -> \"negative\"\n" +
+        "    | 0 -> \"zero\"\n" +
+        "    | _ -> \"positive\"\n" +
+        "}\n" +
+        "def limit = 10\n" +
+        "def size: int -> string = { n ->\n" +
+        "  match n\n" +
+        "    | { >= limit * 2 } -> \"huge\"\n" +
+        "    | { >= limit } -> \"big\"\n" +
+        "    | else -> \"small\"\n" +
+        "}\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  println(describe(-1) ++ \" \" ++ describe(0) ++ \" \" ++ describe(5))\n" +
+        "  println(size(25) ++ \" \" ++ size(10) ++ \" \" ++ size(3))\n" +
+        "}\n"
+    runSource source |> assertRan "negative zero positive\nhuge big small\n"
 
 [<Fact>]
 let ``Run - or-patterns in match arms`` () =
