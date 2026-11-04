@@ -24,7 +24,7 @@ internal static class CliCommands
         string inputFile,
         [Consolo("out", Alias = "o")] string? outputPath = null)
     {
-        Environment.ExitCode = Execute(inputFile, Target.Parse, outputPath);
+        ExitWith(Execute(inputFile, Target.Parse, outputPath));
     }
 
     /// <summary>
@@ -37,7 +37,7 @@ internal static class CliCommands
         string inputFile,
         [Consolo("out", Alias = "o")] string? outputPath = null)
     {
-        Environment.ExitCode = Execute(inputFile, Target.Check, outputPath);
+        ExitWith(Execute(inputFile, Target.Check, outputPath));
     }
 
     /// <summary>
@@ -50,7 +50,7 @@ internal static class CliCommands
         string inputFile,
         [Consolo("out", Alias = "o")] string? outputPath = null)
     {
-        Environment.ExitCode = Execute(inputFile, Target.Wasm, outputPath);
+        ExitWith(Execute(inputFile, Target.Wasm, outputPath));
     }
 
     /// <summary>
@@ -63,7 +63,22 @@ internal static class CliCommands
         string inputFile,
         [Consolo("out", Alias = "o")] string? outputPath = null)
     {
-        Environment.ExitCode = Execute(inputFile, Target.Run, outputPath);
+        ExitWith(Execute(inputFile, Target.Run, outputPath));
+    }
+
+    /// <summary>
+    /// Ends the process with <paramref name="code"/> when it is not zero. Consolo's generated entry point
+    /// returns its own exit code after a command runs, ignoring both the command's return value and
+    /// <see cref="Environment.ExitCode"/>, so a failing command has to exit itself.
+    /// </summary>
+    private static void ExitWith(int code)
+    {
+        if (code != 0)
+        {
+            Console.Out.Flush();
+            Console.Error.Flush();
+            Environment.Exit(code);
+        }
     }
 
     /// <summary>
