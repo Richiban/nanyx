@@ -251,6 +251,33 @@ let ``Run - a function annotated as returning a function is reported as unsuppor
     Assert.DoesNotContain("non-negative", outcome.StandardError)
 
 [<Fact>]
+let ``Run - interpolating variables bound by match patterns`` () =
+    // Regression: the backend did not know the type of a pattern-bound name, so `"{n}"` inside a
+    // match arm failed with "Unable to determine interpolated value type" (#35).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def describe: #some(int) | #none -> string = { v ->\n" +
+        "  match v\n" +
+        "    | #some(n) -> \"some {n}\"\n" +
+        "    | #none -> \"none\"\n" +
+        "}\n" +
+        "def greet: #named(string) | #anon -> string = { v ->\n" +
+        "  match v\n" +
+        "    | #named(name) -> \"hello {name}\"\n" +
+        "    | #anon -> \"hello stranger\"\n" +
+        "}\n" +
+        "def first: list(int) -> string = { xs ->\n" +
+        "  match xs\n" +
+        "    | [] -> \"empty\"\n" +
+        "    | [x, ...rest] -> \"first {x}\"\n" +
+        "}\n" +
+        "println(describe(#some(3)) ++ \", \" ++ describe(#none))\n" +
+        "println(greet(#named(\"Ada\")) ++ \", \" ++ greet(#anon))\n" +
+        "println(first([7, 8]) ++ \", \" ++ first([]))\n"
+    runSource source |> assertRan "some 3, none\nhello Ada, hello stranger\nfirst 7, empty\n"
+
+[<Fact>]
 let ``Run - importing an unknown standard library module is a diagnostic`` () =
     let outcome = runSource "import nanyx/sockets\n\ndbg(1)\n"
     Assert.Equal(1, outcome.ExitCode)
