@@ -88,6 +88,37 @@ let ``Match rejects non-exhaustive tag unions`` () =
     Assert.Contains("Non-exhaustive match", message)
 
 [<Fact>]
+let ``Match checks exhaustiveness when the scrutinee is a call result or a local bound to one`` () =
+    // #61: the scrutinee's type was still an unsolved variable when the check ran, so it passed silently.
+    let direct =
+        Compiler.compile (
+            "def getMessage: () -> #some(string) | #noMessage = { #some(\"hi\") }\n" +
+            "def partial = {\n" +
+            "  match getMessage()\n" +
+            "    | #some(_) -> \"message\"\n" +
+            "}\n")
+    Assert.False(direct.Diagnostics.IsEmpty, "a match on an annotated call result must be checked")
+    Assert.Contains("missing tags: noMessage", (direct.Diagnostics |> List.head).Message)
+    let viaLocal =
+        Compiler.compile (
+            "def getMessage: () -> #some(string) | #noMessage = { #some(\"hi\") }\n" +
+            "def partial = {\n" +
+            "  def m = getMessage()\n" +
+            "  match m\n" +
+            "    | #some(_) -> \"message\"\n" +
+            "}\n")
+    Assert.False(viaLocal.Diagnostics.IsEmpty, "a match on a local bound to a call result must be checked")
+    let complete =
+        Compiler.compile (
+            "def getMessage: () -> #some(string) | #noMessage = { #some(\"hi\") }\n" +
+            "def total = {\n" +
+            "  match getMessage()\n" +
+            "    | #some(_) -> \"message\"\n" +
+            "    | #noMessage -> \"none\"\n" +
+            "}\n")
+    Assert.True(complete.Diagnostics.IsEmpty, sprintf "%A" complete.Diagnostics)
+
+[<Fact>]
 let ``Match accepts exhaustive tag unions`` () =
     let source =
         "def value: #some(int) | #none = #none\n" +

@@ -438,7 +438,6 @@ let private recordFieldsSoFar (state: InferState) (ty: Ty) : Map<string, Ty> opt
     | TyRecord fields
     | TyNominal(_, TyRecord fields, _) -> Some fields
     | _ -> None
-
 /// `ty` as far as the constraints gathered so far determine it; a type variable stays one when nothing does.
 let private resolveSoFar (state: InferState) (ty: Ty) : Ty =
     match ty with
@@ -456,7 +455,6 @@ let private numericOperandType (state: InferState) (leftTy: Ty) (rightTy: Ty) =
         | TyPrimitive "float" -> true
         | _ -> false
     if isFloat leftTy || isFloat rightTy then TyPrimitive "float" else numericType
-
 let private argTypesFromExpected (state: InferState) (args: (Identifier * TypeExpr option) list) (expectedInput: Ty) =
     let mutable current = state
     let argTys =
@@ -1086,6 +1084,19 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                 arms
                 |> List.choose (fun (patterns, _) ->
                     if index < patterns.Length then Some patterns.[index] else None)
+            // A scrutinee's type may still be a variable here (a call's result, a local bound to one). For the
+            // exhaustiveness check it is resolved against the constraints gathered so far, and before the arms
+            // add theirs: a lone `#some(_)` arm would otherwise narrow the variable to that tag first and the
+            // check would pass silently (#61).
+            let resolvedScrutineeTypes =
+                let resolve (ty: Ty) =
+                    match ty with
+                    | TyVar _ ->
+                        match Unifier.unify current.Constraints with
+                        | Ok subst -> Unifier.apply subst ty
+                        | Error _ -> ty
+                    | _ -> ty
+                scrutineeTypes |> List.map resolve
             let mutable scrutineeOverrides: Map<int, Ty> = Map.empty
             for (index, scrutineeTy) in scrutineeTypes |> List.indexed do
                 let patternsAtPos = patternsForIndex index
@@ -1126,7 +1137,7 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                         scrutineeOverrides <- scrutineeOverrides |> Map.add index unionTy
                         current <- addConstraint scrutineeTy unionTy stateForUnion
             let exhaustivenessDiagnostics () =
-                scrutineeTypes
+                resolvedScrutineeTypes
                 |> List.mapi (fun index scrutineeTy ->
                     let patternsAtPos = patternsForIndex index
                     let hasCatchAll = patternsAtPos |> List.exists isCatchAllPattern
@@ -1389,7 +1400,10 @@ and inferBlock (env: TypeEnv) (state: InferState) (statements: Statement list) :
                                         if preboundFresh then addConstraint preboundTy typedExpr.Type next else next
                                     typedExpr.Type, updatedState
                             current <- finalState
-                            let scheme = TypeEnv.generalize env' declaredTy
+                            // A local bound to a call's result has a type variable here; generalising that as
+                            // it is would make every later use a fresh, unrelated variable (and let a match
+                            // on it skip the exhaustiveness check, #61). Resolve it first.
+                            let scheme = TypeEnv.generalize env' (resolveSoFar current declaredTy)
                             env' <- TypeEnv.extend name scheme env'
                             typedStatements <- typedStatements @ [ TypedDefStatement(isExport, name, typeOpt, typedExpr) ]
                             lastExpr <- typedExpr
