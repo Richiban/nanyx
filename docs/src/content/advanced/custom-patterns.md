@@ -112,10 +112,15 @@ match "hello,world"
 You can also compose patterns to handle more sophisticated matching:
 
 ```nanyx
-pattern int -> #PositiveInt | _ = { > 0 }
+pattern int -> int -> #DivisibleBy | _ = { divisor -> 
+  { n -> 
+    if n % divisor == 0 then #DivisibleBy else _   
+  }
+}
 
-match value
-  | #PositiveInt & { < 1000 } -> "small positive"
-  | #PositiveInt -> "large positive"
-  | _ -> "non-positive"
+match n
+  | #DivisibleBy(3) & #DivisibleBy(5) -> "fizzbuzz"
+  | #DivisibleBy(3) -> "fizz"
+  | #DivisibleBy(5) -> "buzz"
+  | _ -> n \toString
 ```

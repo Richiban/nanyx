@@ -18,15 +18,52 @@ internal static class CliCommands
     /// Compile a Nanyx source file.
     /// </summary>
     /// <param name="inputFile">The path to the .nyx file to compile.</param>
-    /// <param name="target">The compilation target: parse (print the AST), check, wasm (emit WebAssembly text) or run (compile and execute).</param>
     /// <param name="outputPath">Optional output path for generated artifacts.</param>
-    [Consolo("")]
-    public static void Run(
-        Target target,
+    [Consolo("parse")]
+    public static void Parse(
         string inputFile,
         [Consolo("out", Alias = "o")] string? outputPath = null)
     {
-        Environment.ExitCode = Execute(inputFile, target, outputPath);
+        Environment.ExitCode = Execute(inputFile, Target.Parse, outputPath);
+    }
+
+    /// <summary>
+    /// Compile a Nanyx source file.
+    /// </summary>
+    /// <param name="inputFile">The path to the .nyx file to compile.</param>
+    /// <param name="outputPath">Optional output path for generated artifacts.</param>
+    [Consolo("check")]
+    public static void Check(
+        string inputFile,
+        [Consolo("out", Alias = "o")] string? outputPath = null)
+    {
+        Environment.ExitCode = Execute(inputFile, Target.Check, outputPath);
+    }
+
+    /// <summary>
+    /// Compile a Nanyx source file.
+    /// </summary>
+    /// <param name="inputFile">The path to the .nyx file to compile.</param>
+    /// <param name="outputPath">Optional output path for generated artifacts.</param>
+    [Consolo("wasm")]
+    public static void Wasm(
+        string inputFile,
+        [Consolo("out", Alias = "o")] string? outputPath = null)
+    {
+        Environment.ExitCode = Execute(inputFile, Target.Wasm, outputPath);
+    }
+
+    /// <summary>
+    /// Compile a Nanyx source file.
+    /// </summary>
+    /// <param name="inputFile">The path to the .nyx file to compile.</param>
+    /// <param name="outputPath">Optional output path for generated artifacts.</param>
+    [Consolo("run")]
+    public static void Run(
+        string inputFile,
+        [Consolo("out", Alias = "o")] string? outputPath = null)
+    {
+        Environment.ExitCode = Execute(inputFile, Target.Run, outputPath);
     }
 
     /// <summary>
