@@ -483,12 +483,10 @@ let ``Run - tuple destructuring with def`` () =
         "  println(name ++ \" {age}\")\n" +
         "}\n"
     runSource source |> assertRan "10,20\n1+2=3\nAda 36\n"
+
 [<Fact>]
 let ``Run - with record update`` () =
     // Regression: `alice with age = 31` was a parse error (#40).
-[<Fact>]
-let ``Run - member access on the result of a call`` () =
-    // Regression: `shift(...)` returned a Point but `q.x` on it was "Record 'q' has no member 'x'" (#60).
     let source =
         "import nanyx/console\n" +
         "\n" +
@@ -503,7 +501,14 @@ let ``Run - member access on the result of a call`` () =
         "  println(\"{shiftedX(Point(x = 3, y = 4))}\")\n" +
         "}\n"
     runSource source |> assertRan "31 30 Alice 32\n4\n"
+
 [<Fact>]
+let ``Run - member access on the result of a call`` () =
+    // Regression: `shift(...)` returned a Point but `q.x` on it was "Record 'q' has no member 'x'" (#60).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "type Point = (x: int, y: int)\n" +
         "def shift: Point -> Point = { q -> Point(x = q.x + 1, y = q.y + 1) }\n" +
         "def pair: (string, string) -> (first: string, second: string) = { a, b -> (first = a, second = b) }\n" +
         "@entry\n" +
