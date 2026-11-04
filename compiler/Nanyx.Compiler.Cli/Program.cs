@@ -29,6 +29,15 @@ internal static class CliCommands
         Environment.ExitCode = Execute(inputFile, target, outputPath);
     }
 
+    /// <summary>
+    /// Run the Nanyx language server over standard input and output (for editors; see compiler/README.md).
+    /// </summary>
+    [Consolo("lsp")]
+    public static void Lsp()
+    {
+        Nanyx.LanguageServer.NanyxLanguageServer.RunStdioAsync().GetAwaiter().GetResult();
+    }
+
     private static int Execute(string inputFile, Target target, string? outputPath)
     {
         if (string.IsNullOrWhiteSpace(inputFile))

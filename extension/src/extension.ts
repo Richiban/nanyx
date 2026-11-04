@@ -1,49 +1,125 @@
-import * as path from "path";
 import * as vscode from "vscode";
 import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind } from "vscode-languageclient/node";
+import { downloadCompiler, locateCompiler, readSettings } from "./compiler";
 
-const COMMAND_TYPECHECK = "nanyx.typecheckFile";
+const COMMAND_DOWNLOAD = "nanyx.downloadCompiler";
+const COMMAND_RESTART = "nanyx.restartServer";
 
 let client: LanguageClient | undefined;
+let outputChannel: vscode.OutputChannel;
+let declinedDownload = false;
 
 export async function activate(context: vscode.ExtensionContext) {
-  const serverModule = context.asAbsolutePath(path.join("dist", "server", "server.js"));
+  outputChannel = vscode.window.createOutputChannel("Nanyx");
+  context.subscriptions.push(outputChannel);
 
-  const serverOptions: ServerOptions = {
-    run: { module: serverModule, transport: TransportKind.stdio },
-    debug: {
-      module: serverModule,
-      transport: TransportKind.stdio,
-      options: { execArgv: ["--nolazy", "--inspect=6009"] }
-    }
-  };
+  context.subscriptions.push(
+    vscode.commands.registerCommand(COMMAND_DOWNLOAD, async () => {
+      declinedDownload = false;
+      const executable = await promptAndDownload(context);
+      if (executable) {
+        await restartClient(context, executable);
+      }
+    }),
+    vscode.commands.registerCommand(COMMAND_RESTART, () => startOrRestart(context)),
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration("nanyx.path") || event.affectsConfiguration("nanyx.compilerVersion") || event.affectsConfiguration("nanyx.downloadUrl")) {
+        void startOrRestart(context);
+      }
+    })
+  );
 
-  const clientOptions: LanguageClientOptions = {
-    documentSelector: [{ scheme: "file", language: "nanyx" }],
-    synchronize: {
-      configurationSection: "nanyx"
-    }
-  };
-
-  client = new LanguageClient("nanyx", "Nanyx Language Server", serverOptions, clientOptions);
-  context.subscriptions.push(client);
-  await client.start();
-
-  const typecheckCommand = vscode.commands.registerCommand(COMMAND_TYPECHECK, async () => {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor) {
-      vscode.window.showInformationMessage("No active editor to typecheck.");
-      return;
-    }
-
-    await client?.sendNotification("nanyx/typecheck", { uri: editor.document.uri.toString() });
-  });
-
-  context.subscriptions.push(typecheckCommand);
+  await startOrRestart(context);
 }
 
 export async function deactivate() {
-  if (client) {
-    await client.stop();
+  await stopClient();
+}
+
+/** Starts the language server with whatever `nanyx` can be found, downloading one if the user agrees. */
+async function startOrRestart(context: vscode.ExtensionContext): Promise<void> {
+  let executable: string | undefined;
+  try {
+    executable = locateCompiler(context, readSettings());
+  } catch (error) {
+    void vscode.window.showErrorMessage(`Nanyx: ${messageOf(error)}`);
+    return;
   }
+
+  if (!executable) {
+    executable = await promptAndDownload(context);
+  }
+
+  if (executable) {
+    await restartClient(context, executable);
+  }
+}
+
+/** Offers to download the compiler once per session; returns the executable if the user agreed and it worked. */
+async function promptAndDownload(context: vscode.ExtensionContext): Promise<string | undefined> {
+  if (declinedDownload) {
+    return undefined;
+  }
+
+  const settings = readSettings();
+  const download = "Download";
+  const choice = await vscode.window.showInformationMessage(
+    `The Nanyx compiler was not found on PATH. Download nanyx ${settings.version} for this platform? ` +
+      "(It is kept in the extension's storage; set nanyx.path to use your own build instead.)",
+    download,
+    "Not now"
+  );
+
+  if (choice !== download) {
+    declinedDownload = true;
+    return undefined;
+  }
+
+  try {
+    return await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: `Downloading nanyx ${settings.version}`, cancellable: true },
+      (progress, token) => downloadCompiler(context, settings, progress, token)
+    );
+  } catch (error) {
+    outputChannel.appendLine(`Download failed: ${messageOf(error)}`);
+    void vscode.window.showErrorMessage(`Nanyx: ${messageOf(error)}`);
+    return undefined;
+  }
+}
+
+async function restartClient(context: vscode.ExtensionContext, executable: string): Promise<void> {
+  await stopClient();
+
+  const serverOptions: ServerOptions = {
+    run: { command: executable, args: ["lsp"], transport: TransportKind.stdio },
+    debug: { command: executable, args: ["lsp"], transport: TransportKind.stdio }
+  };
+
+  const clientOptions: LanguageClientOptions = {
+    documentSelector: [{ language: "nanyx" }],
+    outputChannel
+  };
+
+  outputChannel.appendLine(`Starting the Nanyx language server: ${executable} lsp`);
+  client = new LanguageClient("nanyx", "Nanyx Language Server", serverOptions, clientOptions);
+
+  try {
+    await client.start();
+  } catch (error) {
+    void vscode.window.showErrorMessage(`Nanyx: the language server failed to start (${messageOf(error)}). See the Nanyx output channel.`);
+    client = undefined;
+  }
+}
+
+async function stopClient(): Promise<void> {
+  if (client) {
+    const stopping = client;
+    client = undefined;
+    await stopping.stop().catch(() => undefined);
+    await stopping.dispose();
+  }
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

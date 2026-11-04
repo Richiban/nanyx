@@ -1,24 +1,76 @@
 # Nanyx VS Code Extension
 
-This extension provides editor support for the Nanyx language, including syntax highlighting and compiler-driven diagnostics via a language server.
+Editor support for the Nanyx language: syntax highlighting for `.nyx` files and compiler diagnostics
+from the Nanyx language server.
 
 ## Features
 
 - Syntax highlighting for `.nyx` files.
-- Typechecking diagnostics via the Nanyx language server (powered by `Nanyx.Compiler.Cli`).
-- Command palette action: **Nanyx: Typecheck Current File**.
+- Diagnostics as you type, from the Nanyx compiler running as a language server (`nanyx lsp`).
+- Commands: **Nanyx: Download the compiler** and **Nanyx: Restart the language server**.
+
+## How the extension finds `nanyx`
+
+The language server is built into the `nanyx` compiler binary, which is not bundled in the extension.
+When a `.nyx` file is opened the extension looks for it in this order:
+
+1. The `nanyx.path` setting, if set. It must point at the executable itself (`nanyx` or `nanyx.exe`).
+2. A `nanyx` on your `PATH`.
+3. A copy the extension downloaded earlier into its global storage directory.
+
+If none is found it offers, once per session, to download the compiler release the extension was
+built for (`nanyx-<version>-<rid>.zip` or `.tar.gz` from the
+[GitHub releases](https://github.com/Richiban/nanyx/releases) tagged `compiler/<version>`) for the
+current platform (`win-x64`, `linux-x64`, `linux-arm64`, `osx-x64` or `osx-arm64`). The archive is
+unpacked with the platform's `tar` into the extension's storage, so nothing else on the machine is
+touched. If you are offline, or the release does not exist, the extension says so and you can run
+**Nanyx: Download the compiler** later or set `nanyx.path`.
 
 ## Settings
 
-- `nanyx.typecheckOnSave`: Run the compiler on save/open to surface diagnostics (default: `true`).
-- `nanyx.compilerProject`: Path (relative to workspace root) to `Nanyx.Compiler.Cli.fsproj`.
-- `nanyx.compilerDotnetPath`: Path to the `dotnet` executable (default: `dotnet`).
+- `nanyx.path`: path to the `nanyx` executable. Empty (the default) means search `PATH`, then the
+  downloaded copy.
+- `nanyx.compilerVersion`: the compiler release to download. Empty means the version this extension
+  was built for.
+- `nanyx.downloadUrl`: a URL template to download from, with `${version}`, `${rid}` and `${ext}`
+  (`zip` on Windows, `tar.gz` elsewhere) substituted. Empty means the GitHub releases of
+  `Richiban/nanyx`. Point it somewhere else to install from a mirror, or at a release that has not
+  been published on GitHub yet.
 
-## How it works
+Changing any of these restarts the language server.
 
-The language server executes `dotnet run --project <Nanyx.Compiler.Cli.fsproj> -- <file>` and parses `[error]` and `[warning]` lines from stdout to populate VS Code diagnostics.
+## Using a local build of the compiler
+
+While developing the compiler, publish it and point the extension at the result:
+
+```bash
+dotnet publish compiler/Nanyx.Compiler.Cli/NanyxCompiler.Cli.csproj -c Release -o /tmp/nanyx
+```
+
+then set `nanyx.path` to `/tmp/nanyx/nanyx` (or `...\nanyx.exe` on Windows). A plain
+`dotnet build` output works too: `compiler/Nanyx.Compiler.Cli/bin/Debug/net10.0/nanyx.exe`.
+
+## Developing the extension
+
+```bash
+cd extension
+npm install
+npm run compile
+```
+
+Press F5 in VS Code with the `extension` folder open to launch an Extension Development Host, or
+package it with `npx @vscode/vsce package` and install the `.vsix`. The server's log, and anything the
+extension does to find or download it, is in the **Nanyx** output channel.
 
 ## Troubleshooting
 
-- If you see **"Nanyx compiler project not found"**, update `nanyx.compilerProject` to match your workspace layout.
-- If `dotnet` is not on your PATH, set `nanyx.compilerDotnetPath` to the full path.
+- **"nanyx.path is set to ..., but no file exists there"**: fix the path, or clear the setting to
+  go back to `PATH` and the downloaded copy.
+- **"Could not reach github.com to download the Nanyx compiler"**: you are offline, or a proxy is in
+  the way. Connect and run **Nanyx: Download the compiler**, or build the compiler yourself and set
+  `nanyx.path`.
+- **"No compiler release was found at ..."**: no GitHub release exists for that version yet. Set
+  `nanyx.compilerVersion` to one that does, `nanyx.downloadUrl` to where it is, or `nanyx.path` to a
+  local build.
+- **No diagnostics appear**: check the **Nanyx** output channel for the server's start-up line and
+  any errors, then run **Nanyx: Restart the language server**.
