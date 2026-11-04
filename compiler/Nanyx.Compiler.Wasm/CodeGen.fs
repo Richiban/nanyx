@@ -1882,6 +1882,14 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                     |> List.fold (fun acc ident ->
                         let localName = $"__payload_{ident}"
                         { acc with Locals = acc.Locals |> Map.add ident localName }) envForNested
+                // A bare identifier pattern (`| n -> ...`, `| 0, y -> ...`) needs no local of its own: it
+                // is an alias for the scrutinee temp it was matched against.
+                let envWithPayloadLocals =
+                    List.zip patterns matchTempNames
+                    |> List.fold (fun acc (pat, temp) ->
+                        match pat with
+                        | IdentifierPattern ident -> { acc with Locals = acc.Locals |> Map.add ident temp }
+                        | _ -> acc) envWithPayloadLocals
                 let payloadLocal ident =
                     match envWithPayloadLocals.Locals |> Map.tryFind ident with
                     | Some localName -> localName
