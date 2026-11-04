@@ -74,7 +74,7 @@ scoop install nanyx
 
 `scoop update nanyx` picks up new compiler releases.
 
-Otherwise, download the release for your platform from the [releases page](https://github.com/Richiban/nanyx/releases): Windows (x64), Linux (x64, arm64) or macOS (x64, Apple Silicon). The executable is self-contained and needs no .NET runtime. Unzip it, on Linux and macOS run `chmod +x nanyx`, and put it on your `PATH`.
+Otherwise, download the release for your platform from the [releases page](https://github.com/nanyx-lang/nanyx/releases): Windows (x64), Linux (x64, arm64) or macOS (x64, Apple Silicon). The executable is self-contained and needs no .NET runtime. Unzip it, on Linux and macOS run `chmod +x nanyx`, and put it on your `PATH`.
 
 If you would rather build it yourself, follow [Working on the language](#working-on-the-language) below; the result is the same binary.
 

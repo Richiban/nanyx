@@ -460,6 +460,49 @@ let ``Run - or-patterns in match arms`` () =
         "println(size(1) ++ \" \" ++ size(2) ++ \" \" ++ size(9))\n" +
         "println(axis(0, 5) ++ \" \" ++ axis(5, 0) ++ \" \" ++ axis(3, 3))\n"
     runSource source |> assertRan "weekend weekend weekday\nsmall small big\naxis axis plane\n"
+[<Fact>]
+let ``Run - functions as values and higher-order calls`` () =
+    // #28: a parameter holding a function can be called; a named function or a lambda can be passed.
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def apply: ((int -> int), int) -> int = { f, x -> f(x) }\n" +
+        "def twice: ((int -> int), int) -> int = { f, x -> f(f(x)) }\n" +
+        "def double: int -> int = { x -> x * 2 }\n" +
+        "def map: (list(int), (int -> int)) -> list(int) = { xs, f ->\n" +
+        "  match xs\n" +
+        "    | [] -> []\n" +
+        "    | [head, ...tail] -> [f(head)] ++ map(tail, f)\n" +
+        "}\n" +
+        "def sum: list(int) -> int = { xs ->\n" +
+        "  match xs\n" +
+        "    | [] -> 0\n" +
+        "    | [head, ...tail] -> head + sum(tail)\n" +
+        "}\n" +
+        "def main = {\n" +
+        "  def square = { x -> x * x }\n" +
+        "  dbg(apply(double, 21))\n" +
+        "  dbg(apply({ x -> x + 1 }, 41))\n" +
+        "  dbg(apply({ * 3 }, 14))\n" +
+        "  dbg(twice(double, 10))\n" +
+        "  dbg(square(6))\n" +
+        "  dbg(sum(map([1, 2, 3], double)))\n" +
+        "  dbg(sum([1, 2, 3] \\map { * 10 }))\n" +
+        "}\n" +
+        "main()\n"
+    runSource source |> assertRan "dbg: 42\ndbg: 42\ndbg: 42\ndbg: 40\ndbg: 36\ndbg: 12\ndbg: 60\n"
+
+[<Fact>]
+let ``Run - a capturing lambda is still reported as unsupported`` () =
+    let source =
+        "def apply = { f, x -> f(x) }\n" +
+        "def main = { n ->\n" +
+        "  apply({ x -> x + n }, 1)\n" +
+        "}\n" +
+        "dbg(main(2))\n"
+    let outcome = runSource source
+    Assert.Equal(1, outcome.ExitCode)
+    Assert.Contains("Unsupported", outcome.StandardError)
 
 [<Fact>]
 let ``Run - a match with no matching arm exits 1 with a runtime error`` () =

@@ -54,7 +54,7 @@ exports.DEFAULT_COMPILER_VERSION = "0.2.0";
  * Where a release lives. `${version}`, `${rid}` and `${ext}` are substituted; this is what the
  * `nanyx.downloadUrl` setting overrides.
  */
-exports.DEFAULT_DOWNLOAD_URL = "https://github.com/Richiban/nanyx/releases/download/compiler/${version}/nanyx-${version}-${rid}.${ext}";
+exports.DEFAULT_DOWNLOAD_URL = "https://github.com/nanyx-lang/nanyx/releases/download/compiler/${version}/nanyx-${version}-${rid}.${ext}";
 const EXECUTABLE = process.platform === "win32" ? "nanyx.exe" : "nanyx";
 function readSettings() {
     const config = vscode.workspace.getConfiguration("nanyx");
