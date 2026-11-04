@@ -990,3 +990,42 @@ let ``Unifier matches unions by set and width`` () =
     match resultWidth with
     | Ok _ -> Assert.True(true)
     | Error message -> Assert.True(false, message)
+
+[<Fact>]
+let ``Typecheck allows mutual recursion between annotated top-level defs`` () =
+    let source =
+        "def isEven: int -> bool = { n -> if n == 0 then true else isOdd(n - 1) }\n" +
+        "def isOdd: int -> bool = { n -> if n == 0 then false else isEven(n - 1) }\n" +
+        "def result = isEven(10)"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    Assert.Equal(TyPrimitive "bool", result.Typed.Value.Types.["result"])
+
+[<Fact>]
+let ``Typecheck allows a forward reference to an unannotated def`` () =
+    let source =
+        "def result = addOne(41)\n" +
+        "def addOne = { x -> x + 1 }"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    Assert.Equal(TyPrimitive "int", result.Typed.Value.Types.["result"])
+    Assert.Equal(TyFunc(TyPrimitive "int", TyPrimitive "int"), result.Typed.Value.Types.["addOne"])
+
+[<Fact>]
+let ``Typecheck lets an annotation name a type declared later`` () =
+    let source =
+        "def favourite: Color = #green\n" +
+        "type Color = #red | #green | #blue"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+
+[<Fact>]
+let ``Typecheck still generalizes a def used after its definition`` () =
+    let source =
+        "def id = { x -> x }\n" +
+        "def a = id(1)\n" +
+        "def b = id(\"s\")"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    Assert.Equal(TyPrimitive "int", result.Typed.Value.Types.["a"])
+    Assert.Equal(TyPrimitive "string", result.Typed.Value.Types.["b"])

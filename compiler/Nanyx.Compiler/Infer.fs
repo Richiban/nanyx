@@ -1344,6 +1344,30 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
     let mutable items: TypedTopLevelItem list = []
     let mutable errors: Diagnostic list = []
 
+    // Pre-bind every top-level value before inferring any body, so a definition can refer to one
+    // declared later in the module (forward references, mutual recursion). An annotated def is bound
+    // at its declared type; an unannotated one at a fresh variable that its inferred type is unified
+    // with once its body has been checked. Type definitions are registered in the same pass, so an
+    // annotation can name a type declared further down.
+    let mutable preboundFreshVars: Map<string, Ty> = Map.empty
+    for item in module' do
+        match item with
+        | Def (TypeDef(name, modifiers, parameters, body)) ->
+            state <- registerTypeDef state name modifiers parameters body
+        | Def (ValueDef(_, name, typeOpt, _)) ->
+            let _, declaredTypeExprOpt = extractContextFromTypeExpr typeOpt
+            match declaredTypeExprOpt with
+            | Some declaredExpr ->
+                let ty, st = typeExprToTy state declaredExpr
+                state <- st
+                env <- TypeEnv.extend name (TypeEnv.generalize env ty) env
+            | None ->
+                let ty, st = freshVar state
+                state <- st
+                preboundFreshVars <- preboundFreshVars |> Map.add name ty
+                env <- TypeEnv.extend name (TypeEnv.mono ty) env
+        | _ -> ()
+
     for item in module' do
         match item with
         | Def (ValueDef(isExport, name, typeOpt, expr)) when errors.IsEmpty ->
@@ -1368,16 +1392,17 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
                     | Some _ -> expectedInputOpt
                     | None when expectedDeclaredOpt.IsNone -> tryInferAttachedLambdaInput nextState2 name expr
                     | None -> None
-                let preboundTy, preboundState, envWithRec, preboundFresh =
+                // The name is already in `env` from the pre-binding pass: at its declared type, or at the
+                // fresh variable recorded in `preboundFreshVars`. Self-recursion sees the declared type as a
+                // monomorphic binding while the body is checked, as before.
+                let envWithRec =
                     match expectedDeclaredOpt with
-                    | Some declaredTy -> declaredTy, nextState2, TypeEnv.extend name (TypeEnv.mono declaredTy) envWithCtx, false
-                    | None ->
-                        let ty, st = freshVar nextState2
-                        ty, st, TypeEnv.extend name (TypeEnv.mono ty) envWithCtx, true
+                    | Some declaredTy -> TypeEnv.extend name (TypeEnv.mono declaredTy) envWithCtx
+                    | None -> envWithCtx
                 let nextStateWithReq =
                     match contextOpt with
-                    | Some contexts -> registerContextRequirement preboundState name contexts
-                    | None -> preboundState
+                    | Some contexts -> registerContextRequirement nextState2 name contexts
+                    | None -> nextState2
                 let inferResult =
                     match expr with
                     | Lambda(args, body) when effectiveExpectedInputOpt.IsSome || expectedReturnOpt.IsSome ->
@@ -1401,10 +1426,14 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
                                 declaredTy, updatedState
                         | None ->
                             let updatedState =
-                                if preboundFresh then addConstraint preboundTy typedExpr.Type next else next
+                                match preboundFreshVars |> Map.tryFind name with
+                                | Some preboundTy -> addConstraint preboundTy typedExpr.Type next
+                                | None -> next
                             typedExpr.Type, updatedState
                     state <- finalState
-                    let scheme = TypeEnv.generalize env declaredTy
+                    // Generalize against an env without this def's own pre-binding, so the fresh
+                    // variable it was pre-bound at does not stop its type being generalized.
+                    let scheme = TypeEnv.generalize (env |> Map.remove name) declaredTy
                     env <- TypeEnv.extend name scheme env
                     types <- types |> Map.add name declaredTy
                     items <- items @ [ TypedDef (TypedValueDef(isExport, name, typeOpt, typedExpr)) ]
@@ -1424,7 +1453,7 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
         // Attributes are resolved by the compiler front end before inference (see Compiler.applyAttributes).
         | Attribute _ -> ()
         | Def (TypeDef(name, modifiers, parameters, body)) ->
-            state <- registerTypeDef state name modifiers parameters body
+            // Registered in the pre-binding pass above.
             items <- items @ [ TypedDef (TypedTypeDef(name, modifiers, parameters, body)) ]
         | Def (ValueDef _) -> ()
 
