@@ -86,7 +86,7 @@ function exampleMarkdown(file: string, source: string): string {
 function overviewMarkdown(): string {
   const lines = [
     "Each page in this section is a complete program from the `examples` directory of the",
-    "[Nanyx repository](https://github.com/Richiban/nanyx/tree/main/examples), shown as it is",
+    "[Nanyx repository](https://github.com/nanyx-lang/nanyx/tree/main/examples), shown as it is",
     "there. They are meant to be read for the shape of idiomatic Nanyx, or copied as a starting",
     "point. For step-by-step walkthroughs with a goal in mind, see the Cookbook instead.",
     "",

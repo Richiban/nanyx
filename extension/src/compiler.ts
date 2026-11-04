@@ -16,7 +16,7 @@ export const DEFAULT_COMPILER_VERSION = "0.2.0";
  * `nanyx.downloadUrl` setting overrides.
  */
 export const DEFAULT_DOWNLOAD_URL =
-  "https://github.com/Richiban/nanyx/releases/download/compiler/${version}/nanyx-${version}-${rid}.${ext}";
+  "https://github.com/nanyx-lang/nanyx/releases/download/compiler/${version}/nanyx-${version}-${rid}.${ext}";
 
 const EXECUTABLE = process.platform === "win32" ? "nanyx.exe" : "nanyx";
 
