@@ -3,10 +3,17 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { EXAMPLES_OVERVIEW_SLUG } from "./examples.mjs";
 
 export const DOCS_BASE = "/docs";
 
-/** @type {{ title: string; dir: string; icon: string }[]} */
+/**
+ * A section's pages are the markdown files in its `dir` under `src/content`,
+ * unless it names a `firstPage`, in which case its pages are generated (see
+ * `src/content.config.ts`) and that is the slug its root redirects to.
+ *
+ * @type {{ title: string; dir: string; icon: string; firstPage?: string }[]}
+ */
 export const sections = [
   { title: "Overview", dir: "overview", icon: "View" },
   { title: "Getting Started", dir: "getting-started", icon: "Rocket" },
@@ -17,6 +24,7 @@ export const sections = [
   { title: "Standard tools", dir: "standard-tools", icon: "Wrench" },
   { title: "Meta", dir: "foundations", icon: "Fingerprint" },
   { title: "Cookbook", dir: "cookbook", icon: "BookOpen" },
+  { title: "Examples", dir: "examples", icon: "Code", firstPage: EXAMPLES_OVERVIEW_SLUG },
   { title: "Work in progress", dir: "work-in-progress", icon: "Construction" },
 ];
 
@@ -45,7 +53,7 @@ export function firstPageSlug(dir) {
 export function sectionRedirects() {
   const redirects = {};
   for (const section of sections) {
-    const slug = firstPageSlug(section.dir);
+    const slug = section.firstPage ?? firstPageSlug(section.dir);
     if (slug) {
       redirects[`${DOCS_BASE}/${section.dir}`] = `${DOCS_BASE}/${section.dir}/${slug}`;
     }
