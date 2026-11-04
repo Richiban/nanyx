@@ -68,7 +68,7 @@ Nanyx is young: the compiler runs a small subset of the language the docs descri
 On Windows, install it with [Scoop](https://scoop.sh):
 
 ```powershell
-scoop bucket add nanyx https://github.com/Richiban/scoop-nanyx
+scoop bucket add nanyx https://github.com/nanyx-lang/scoop-nanyx
 scoop install nanyx
 ```
 
