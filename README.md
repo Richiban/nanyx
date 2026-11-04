@@ -184,7 +184,6 @@ Nanyx aims to feel small: few rules, few exceptions, and features that compose r
 | `docs/` | The documentation site |
 | `examples/` | Example Nanyx programs |
 | `extension/` | VS Code extension |
-| `llm/` | Design notes and specification drafts |
 
 ### Building from source
 
