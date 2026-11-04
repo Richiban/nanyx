@@ -398,6 +398,24 @@ let ``Run - mutually recursive top-level functions`` () =
         "def later = { x -> x * 21 }\n"
     runSource source |> assertRan "yes\nyes\nno\ndbg: 42\n"
 [<Fact>]
+let ``Run - tuple destructuring with def`` () =
+    // Regression: `def (x, y) = point` was a parse error (#41).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def (a, b) = (1, 2)\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  def point = (10, 20)\n" +
+        "  def (x, y) = point\n" +
+        "  def (_, (name, age)) = (0, (\"Ada\", 36))\n" +
+        "  println(\"{x},{y}\")\n" +
+        "  println(\"{a}+{b}={a + b}\")\n" +
+        "  println(name ++ \" {age}\")\n" +
+        "}\n"
+    runSource source |> assertRan "10,20\n1+2=3\nAda 36\n"
+
+[<Fact>]
 let ``Run - nested record field access`` () =
     // Regression: `line.start.x` failed with "cannot determine layout for .x" (#30).
     let source =

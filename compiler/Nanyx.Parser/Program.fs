@@ -306,6 +306,9 @@ let lambda, lambdaRef = createParserForwardedToRef<Expression, unit>()
 let functionCall, functionCallRef = createParserForwardedToRef<Expression, unit>()
 let matchExpr, matchExprRef = createParserForwardedToRef<Expression, unit>()
 let statement, statementRef = createParserForwardedToRef<Statement, unit>()
+/// One line of a block as the statements it stands for: a single statement, or the several a
+/// destructuring `def (x, y) = ...` desugars into.
+let statementItems, statementItemsRef = createParserForwardedToRef<Statement list, unit>()
 let typeExpr, typeExprRef = createParserForwardedToRef<TypeExpr, unit>()
 
 // Pattern parsers
@@ -362,6 +365,41 @@ let tuplePattern =
         match patterns with
         | [single] -> single  // Single pattern in parens is just that pattern, not a tuple
         | multiple -> TuplePattern multiple
+
+// `def (x, y) = value` binds each element of a tuple. It is desugared in the parser into a binding of the
+// whole value plus one `def` per element (`def x = __tuple.0`), so the rest of the compiler only ever sees
+// plain defs. Only names, `_` and nested tuples may appear in the pattern.
+let private destructuringBindings (position: Position) (pattern: Pattern) (value: Expression) : (Identifier * Expression) list option =
+    let temp = $"__tuple_{position.Line}_{position.Column}"
+    let rec bind (pattern: Pattern) (source: Expression) =
+        match pattern with
+        | IdentifierPattern name -> Some [ name, source ]
+        | WildcardPattern -> Some []
+        | TuplePattern elements ->
+            elements
+            |> List.mapi (fun index element -> bind element (MemberAccess(source, string index, None)))
+            |> List.fold (fun acc next ->
+                match acc, next with
+                | Some bound, Some more -> Some (bound @ more)
+                | _ -> None) (Some [])
+        | _ -> None
+    bind pattern (IdentifierExpr(temp, None))
+    |> Option.map (fun bindings -> (temp, value) :: bindings)
+
+/// `[export] def (pattern) = value`, as the export flag and the bindings it stands for.
+let destructuringDefWith (lineStartCol: int64) (exprParser: Parser<Expression, unit>) : Parser<bool * (Identifier * Expression) list, unit> =
+    pipe3
+        (opt (attempt (pstring "export" >>. ws)))
+        (getPosition .>>. (pstring "def" >>. ws >>. tuplePattern .>> wsNoNl()))
+        (defEqualsContinuation lineStartCol >>. pstring "=" >>. wsNoNl() >>. exprParser)
+        (fun exportOpt (position, pattern) value -> exportOpt.IsSome, position, pattern, value)
+    >>= fun (isExport, position, pattern, value) ->
+        match pattern with
+        | TuplePattern _ ->
+            match destructuringBindings position pattern value with
+            | Some bindings -> preturn (isExport, bindings)
+            | None -> fail "only names, `_` and nested tuples can be destructured by a def"
+        | _ -> fail "a destructuring def needs a tuple pattern"
 
 // Record pattern by position: TypeName(pat1, pat2, ...)
 let recordPatternByPosition =
@@ -671,12 +709,12 @@ let blockExpr() : Parser<Expression, unit> =
         let indentLevel = indentChars.Length
         if indentLevel > 0 then
             let statementAtIndent =
-                attempt (manyMinMaxSatisfy indentLevel indentLevel (fun c -> c = ' ' || c = '\t') >>. statement)
+                attempt (manyMinMaxSatisfy indentLevel indentLevel (fun c -> c = ' ' || c = '\t') >>. statementItems)
 
             pipe2
-                statement
+                statementItems
                 (many (attempt (newline >>. statementAtIndent)))
-                (fun first rest -> Block (first :: rest))
+                (fun first rest -> Block (List.concat (first :: rest)))
         else
             pzero
 
@@ -1060,18 +1098,18 @@ do
     
     // Lambda body: allow multi-line statement blocks or a single expression
     let blockBody =
-        let matchStatement = wsInline >>. matchExpr |>> ExprStatement
+        let matchStatement = wsInline >>. matchExpr |>> ExprStatement |>> List.singleton
         let statementLine =
             attempt (
                 ws >>.
-                (attempt matchStatement <|> statement)
+                (attempt matchStatement <|> statementItems)
             )
         let multiLine =
             attempt (
                 skipMany (skipAnyOf " \t\r") >>. newline >>.
                 ws >>.
                 (many1 statementLine .>> ws)
-                |>> Block
+                |>> (List.concat >> Block)
             )
 
         let singleLine =
@@ -1200,19 +1238,25 @@ do
                 TypeDefStatement(name, modifiers, typeParams, typeValue)
             | _ -> failwith "Expected type definition"
 
-    let defStatement = 
-        let exprParser =
-            attempt (blockExpr()) <|> (sepBy1 expression (pstring "," .>> ws) |>> fun exprs ->
-                match exprs with
-                | [single] -> single
-                | multiple -> TupleExpr multiple)
+    let defExprParser =
+        attempt (blockExpr()) <|> (sepBy1 expression (pstring "," .>> ws) |>> fun exprs ->
+            match exprs with
+            | [single] -> single
+            | multiple -> TupleExpr multiple)
 
+    let defStatement =
         getPosition >>= fun lineStart ->
             pipe2
                 (opt (attempt (pstring "export" >>. ws)))
-                (parseDefWith lineStart.Column typedQualifiedIdentifier exprParser)
+                (parseDefWith lineStart.Column typedQualifiedIdentifier defExprParser)
                 (fun exportOpt (name, typeOpt, expr) -> DefStatement(exportOpt.IsSome, name, typeOpt, expr))
-    
+
+    let destructuringDefStatement =
+        getPosition >>= fun lineStart ->
+            destructuringDefWith lineStart.Column defExprParser
+            |>> fun (isExport, bindings) ->
+                bindings |> List.mapi (fun index (name, value) -> DefStatement(isExport && index > 0, name, None, value))
+
     let exprStatement =
         wsNoNl()
         >>. exprWithoutCrossingNewlines
@@ -1220,25 +1264,34 @@ do
         |>> ExprStatement  // Consume trailing inline comments without consuming newlines
     
     statementRef := (attempt importStatement <|> attempt typeDefStatement <|> attempt defStatement <|> attempt useStatement <|> exprStatement) <?> "statement"
+    statementItemsRef := (attempt destructuringDefStatement <|> (statement |>> List.singleton)) <?> "statement"
 
 // Parser for module declaration
 let moduleDecl: Parser<TopLevelItem, unit> =
     pstring "module" >>. ws >>. identifier |>> ModuleDecl
     <?> "module declaration"
 
+let private valueDefExprParser =
+    attempt (blockExpr()) <|> (wsInline >>. (sepBy1 expression (pstring "," .>> ws) |>> fun exprs ->
+        match exprs with
+        | [single] -> single
+        | multiple -> TupleExpr multiple))
+
 // Parser for value definition (top-level)
 let valueDef: Parser<TopLevelItem, unit> =
-    let exprParser =
-        attempt (blockExpr()) <|> (wsInline >>. (sepBy1 expression (pstring "," .>> ws) |>> fun exprs ->
-            match exprs with
-            | [single] -> single
-            | multiple -> TupleExpr multiple))
-
     getPosition >>= fun lineStart ->
         pipe2
             (opt (attempt (pstring "export" >>. ws)))
-            (parseDefWith lineStart.Column typedQualifiedIdentifier exprParser)
+            (parseDefWith lineStart.Column typedQualifiedIdentifier valueDefExprParser)
             (fun exportOpt (name, typeOpt, expr) -> Def(ValueDef(exportOpt.IsSome, name, typeOpt, expr)))
+    <?> "value definition"
+
+// Top-level `def (x, y) = ...`, as the defs it desugars into (see `destructuringBindings`).
+let valueDestructuringDef: Parser<TopLevelItem list, unit> =
+    getPosition >>= fun lineStart ->
+        destructuringDefWith lineStart.Column valueDefExprParser
+        |>> fun (isExport, bindings) ->
+            bindings |> List.mapi (fun index (name, value) -> Def(ValueDef(isExport && index > 0, name, None, value)))
     <?> "value definition"
 
 // Parser for type definition (top-level)
@@ -1311,9 +1364,12 @@ let topLevelItem: Parser<TopLevelItem, unit> =
     ] .>> ws
     <?> "top-level item"
 
+let private topLevelItems: Parser<TopLevelItem list, unit> =
+    attempt (ws >>. valueDestructuringDef .>> ws) <|> (topLevelItem |>> List.singleton)
+
 // Parser for a complete module
 let moduleParser: Parser<Module, unit> =
-    ws >>. many topLevelItem .>> ws .>> eof
+    ws >>. many topLevelItems .>> ws .>> eof |>> List.concat
     <?> "module"
 
 let private qualifyModuleName (prefix: string) (name: string) =
