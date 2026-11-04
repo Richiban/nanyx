@@ -212,6 +212,45 @@ let ``Run - ++ joins lists`` () =
     runSource source |> assertRan "a-b-c\na-b\ndbg: 5\n"
 
 [<Fact>]
+let ``Run - an annotated zero-parameter function returning a tag union`` () =
+    // The `() -> ...` annotation names a unit input for a lambda with no parameters; the backend used to
+    // crash with a negative padding count instead of compiling it.
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def getMessage: () -> #some(string) | #noMessage = {\n" +
+        "  def message = \"Hello, from Nanyx!\"\n" +
+        "  #some(message)\n" +
+        "}\n" +
+        "\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  match getMessage()\n" +
+        "    | #some(_) -> println(\"There was a message\")\n" +
+        "    | #noMessage -> println(\"No message available\")\n" +
+        "}\n"
+    runSource source |> assertRan "There was a message\n"
+
+[<Fact>]
+let ``Run - a function annotated as returning a function is reported as unsupported, not a crash`` () =
+    // `int -> (int -> int)` is one parameter returning a function. Closures are not supported yet, so this
+    // must fail with the backend's own diagnostic rather than the negative-count exception it used to throw.
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def makeAdder: int -> (int -> int) = { x -> { y -> x + y } }\n" +
+        "\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  def add5 = makeAdder(5)\n" +
+        "  dbg(add5(10))\n" +
+        "}\n"
+    let outcome = runSource source
+    Assert.Equal(1, outcome.ExitCode)
+    Assert.Contains("Unsupported", outcome.StandardError)
+    Assert.DoesNotContain("non-negative", outcome.StandardError)
+
+[<Fact>]
 let ``Run - importing an unknown standard library module is a diagnostic`` () =
     let outcome = runSource "import nanyx/sockets\n\ndbg(1)\n"
     Assert.Equal(1, outcome.ExitCode)
