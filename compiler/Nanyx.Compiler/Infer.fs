@@ -605,14 +605,19 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
             | Error err -> Error err
             | Ok (rightExpr, nextState) ->
                 let constrained = addConstraint leftExpr.Type rightExpr.Type nextState
-                let isStringType ty =
-                    match ty with
-                    | TyPrimitive "string" -> true
-                    | _ -> false
                 match expr with
-                | BinaryOp("+", _, _) when isStringType leftExpr.Type || isStringType rightExpr.Type ->
-                    // `+` concatenates strings. (An operand whose type is still unknown here is taken to be numeric.)
-                    Ok (mkTypedExpr expr (TyPrimitive "string") None None None, constrained)
+                | BinaryOp("++", _, _) ->
+                    // `++` concatenates two strings or two lists; both sides have the same type, which is the result.
+                    // When neither side's type is known yet the result is simply that shared type.
+                    let concatenable =
+                        [ leftExpr.Type; rightExpr.Type ]
+                        |> List.tryPick (fun ty ->
+                            match ty with
+                            | TyPrimitive "string" -> Some ty
+                            | TyApply("list", _) -> Some ty
+                            | _ -> None)
+                    let resultTy = concatenable |> Option.defaultValue leftExpr.Type
+                    Ok (mkTypedExpr expr resultTy None None None, constrained)
                 | BinaryOp(op, _, _) when ["+"; "-"; "*"; "/"] |> List.contains op ->
                     let numericConstrained =
                         constrained

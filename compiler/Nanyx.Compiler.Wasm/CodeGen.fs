@@ -42,6 +42,7 @@ module private Helpers =
     let stringConcat = "__nanyx_string_concat"
     let stringEquals = "__nanyx_string_equals"
     let listLength = "__nanyx_list_length"
+    let listConcat = "__nanyx_list_concat"
     let writeStdout = NyxCompiler.Intrinsics.writeStdout
     let stringLength = NyxCompiler.Intrinsics.stringLength
     let stringByteAt = NyxCompiler.Intrinsics.stringByteAt
@@ -358,6 +359,26 @@ let private runtimeHelpers : Map<string, string> =
             "    end"
             "  end"
             "  local.get $count"
+            ")" ]
+      // a ++ b copies the cells of a in front of b (b itself is shared, lists being immutable).
+      Helpers.listConcat,
+      lines
+          [ $"(func ${Helpers.listConcat} (param $a i32) (param $b i32) (result i32)"
+            "  local.get $a"
+            "  i32.eqz"
+            "  if (result i32)"
+            "    local.get $b"
+            "  else"
+            "    local.get $a"
+            "    i32.load"
+            "    local.get $a"
+            "    i32.const 4"
+            "    i32.add"
+            "    i32.load"
+            "    local.get $b"
+            $"    call ${Helpers.listConcat}"
+            $"    call ${Helpers.listCons}"
+            "  end"
             ")" ] ]
     |> Map.ofList
 
@@ -616,6 +637,7 @@ let private trySimpleTypeName (ty: Ty) =
     | TyPrimitive "string" -> Some "string"
     | TyPrimitive "int" -> Some "int"
     | TyPrimitive "bool" -> Some "bool"
+    | TyApply("list", _) -> Some "list"
     | _ -> None
 
 /// The simple types inference found for a function's parameters and the locals of its body.
@@ -679,11 +701,8 @@ let rec private tryGetExprTypeName (env: TranspileEnv) (expr: Expression) =
         | None -> None
     | BinaryOp(op, _, _) when [ "=="; "!="; "<"; "<="; ">"; ">="; "&&"; "||" ] |> List.contains op -> Some "bool"
     | BinaryOp(_, left, right) ->
-        match tryGetExprTypeName env left, tryGetExprTypeName env right with
-        | Some "string", _
-        | _, Some "string" -> Some "string"
-        | Some leftName, _ -> Some leftName
-        | None, rightName -> rightName
+        tryGetExprTypeName env left |> Option.orElseWith (fun () -> tryGetExprTypeName env right)
+    | ListExpr _ -> Some "list"
     | FunctionCall(name, _, _)
     | Pipe(_, name, _, _) -> env.FunctionReturnTypes |> Map.tryFind name
     | IfExpr(_, thenExpr, elseExpr) ->
@@ -1448,15 +1467,26 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
             | None -> failwith $"Internal error: missing tag discriminant for #{name}"
         let payloadCode = transpileExpression env payloadExpr
         $"{payloadCode}\n    i32.const {tagPayloadMask}\n    i32.and\n    i32.const {tagBase}\n    i32.or"
-    | BinaryOp(op, left, right) when (op = "+" || op = "==" || op = "!=") && (isStringExpr env left || isStringExpr env right) ->
-        // Strings are pointers, so these operators call into the runtime helpers instead of comparing or
-        // adding the pointers themselves.
+    | BinaryOp("++", left, right) ->
+        // Concatenation: the backend has to know whether it is joining strings or lists.
+        let leftCode = transpileExpression env left
+        let rightCode = transpileExpression env right
+        let operandType =
+            tryGetExprTypeName env left |> Option.orElseWith (fun () -> tryGetExprTypeName env right)
+        match operandType with
+        | Some "string" ->
+            env.UsedHelpers.Add Helpers.stringConcat |> ignore
+            $"{leftCode}\n    {rightCode}\n    call ${Helpers.stringConcat}"
+        | Some "list" ->
+            env.UsedHelpers.Add Helpers.listConcat |> ignore
+            $"{leftCode}\n    {rightCode}\n    call ${Helpers.listConcat}"
+        | Some other -> failwith $"Unsupported operand type for ++ in WASM MVP backend: {other}"
+        | None -> failwith $"Unable to tell whether ++ joins strings or lists for WASM MVP backend: {expr}"
+    | BinaryOp(op, left, right) when (op = "==" || op = "!=") && (isStringExpr env left || isStringExpr env right) ->
+        // Strings are pointers, so equality calls into the runtime helper instead of comparing the pointers.
         let leftCode = transpileExpression env left
         let rightCode = transpileExpression env right
         match op with
-        | "+" ->
-            env.UsedHelpers.Add Helpers.stringConcat |> ignore
-            $"{leftCode}\n    {rightCode}\n    call ${Helpers.stringConcat}"
         | "==" ->
             env.UsedHelpers.Add Helpers.stringEquals |> ignore
             $"{leftCode}\n    {rightCode}\n    call ${Helpers.stringEquals}"
@@ -2222,6 +2252,7 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                 | Some (TypeFunc(_, TypeName "string")) -> Some (name, "string")
                 | Some (TypeFunc(_, TypeName "int")) -> Some (name, "int")
                 | Some (TypeFunc(_, TypeName "bool")) -> Some (name, "bool")
+                | Some (TypeFunc(_, TypeApply("list", _))) -> Some (name, "list")
                 | _ -> None)
             |> Map.ofList
         let fromIntrinsics =
@@ -2407,6 +2438,7 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                 | TypeName "string" -> Some "string"
                 | TypeName "int" -> Some "int"
                 | TypeName "bool" -> Some "bool"
+                | TypeApply("list", _) -> Some "list"
                 | TypeTuple _ -> Some "tuple"
                 | TypeRecord _ -> Some "record"
                 | TypeFunc _ -> Some "func"
@@ -2640,7 +2672,8 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
           Helpers.stringEquals, [ Helpers.stringLength ]
           Helpers.writeStdout, [ Helpers.stringLength ]
           Helpers.listCons, [ Helpers.alloc ]
-          Helpers.listLength, [] ]
+          Helpers.listLength, []
+          Helpers.listConcat, [ Helpers.listCons ] ]
     let rec closeHelpers (acc: Set<string>) (pending: string list) =
         match pending with
         | [] -> acc

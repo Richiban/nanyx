@@ -25,7 +25,7 @@ Currently supports parsing:
   - Simple: `x \f` → `f(x)`
   - With arguments: `x \f(y, z)` → `f(x, y, z)`
   - Chaining: `x \f \g \h` → `h(g(f(x)))`
-- **Binary operators**: `+`, `-`, `*`, `/`, `<`, `>`, `<=`, `>=`, `==`, `!=`
+- **Binary operators**: `++` (concatenation), `+`, `-`, `*`, `/`, `<`, `>`, `<=`, `>=`, `==`, `!=`
   - With correct precedence (multiplication/division before addition/subtraction)
 - **Parenthesized expressions**: `(1 + 2) * 3`
 - **Whitespace handling**: Flexible whitespace and newlines
@@ -172,7 +172,7 @@ onto helper functions it emits with the module (`runtimeHelpers` in `Nanyx.Compi
 Their names all start with `__nanyx_`.
 
 Strings are UTF-8 and this first slice of `nanyx/text` works byte by byte: `length` counts bytes,
-`toUpper`/`toLower` only change ASCII letters and `trim` only strips ASCII whitespace. `+` and `==`
+`toUpper`/`toLower` only change ASCII letters and `trim` only strips ASCII whitespace. `++` (concatenation) and `==`
 on strings are language operators, lowered by the backend. (The language docs describe this module as
 `string` with `uppercase`/`lowercase`; the module is called `text` and the functions `toUpper`/`toLower`.)
 
@@ -194,8 +194,8 @@ Current WASM backend support is intentionally minimal and focused on bootstrappi
 - function calls to known module defs
 - simple expression blocks with local `def` assignments (`local.set`/`local.get`)
 - top-level expressions (and the `@entry` definition) run from a WebAssembly start function
-- strings are pointers to length-prefixed UTF-8 bytes; `+` and `==` on strings call emitted helpers
-- list literals and list patterns (`[]`, `[x, ...rest]`, `[1, y]`) over cons cells on a bump-allocated heap
+- strings are pointers to length-prefixed UTF-8 bytes; `++` and `==` on strings call emitted helpers
+- list literals, `++` on lists, and list patterns (`[]`, `[x, ...rest]`, `[1, y]`) over cons cells on a bump-allocated heap
 - `dbg(...)` of integers and strings, and `nanyx/console`, write to stdout through WASI `fd_write`
 - `dbg(#tag)` calls a host import `(import "env" "dbg_tag_<tag>" (func))`, which the runtime provides
 - a function that requires a context (`[Console]`) takes its members as function-table slots; a

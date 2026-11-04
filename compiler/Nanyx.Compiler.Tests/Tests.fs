@@ -921,6 +921,29 @@ let ``Typecheck infers operator results`` () =
     Assert.Equal(TyPrimitive "bool", typed.Types.["eq"])
 
 [<Fact>]
+let ``Typecheck ++ concatenates strings and lists`` () =
+    let source =
+        "def greeting = \"Hello, \" ++ \"World\"\n" +
+        "def numbers = [1, 2] ++ [3]\n" +
+        "def shout: string -> string = { s -> s ++ \"!\" }\n" +
+        "def twice: list(int) -> list(int) = { xs -> xs ++ xs }"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    let typed = result.Typed.Value
+    Assert.Equal(TyPrimitive "string", typed.Types.["greeting"])
+    Assert.Equal(TyApply("list", [ TyPrimitive "int" ]), typed.Types.["numbers"])
+
+[<Fact>]
+let ``Typecheck rejects ++ between a string and an int`` () =
+    let result = Compiler.compile "def bad = \"a\" ++ 1"
+    Assert.False(result.Diagnostics.IsEmpty)
+
+[<Fact>]
+let ``Typecheck rejects + on strings`` () =
+    let result = Compiler.compile "def bad = \"a\" + \"b\""
+    Assert.False(result.Diagnostics.IsEmpty)
+
+[<Fact>]
 let ``Compile reports diagnostics on parse error`` () =
     let source = "def message = "
     let result = Compiler.compile source

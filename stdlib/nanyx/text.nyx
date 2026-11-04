@@ -8,7 +8,7 @@ module text
 --
 -- Everything here is written over four compiler intrinsics: `__nanyx_string_length`,
 -- `__nanyx_string_byte_at`, `__nanyx_string_slice` and `__nanyx_string_from_byte`; `split` also
--- builds its result with `__nanyx_list_cons`. `+` and `==` on strings are language operators.
+-- builds its result with `__nanyx_list_cons`. `++` (concatenation) and `==` on strings are language operators.
 
 -- The number of bytes in `s`.
 export def length: string -> int = { s -> __nanyx_string_length(s) }
@@ -52,13 +52,13 @@ def lowerByte: int -> int = { b -> if b >= 65 then (if b <= 90 then b + 32 else 
 def toUpperFrom: (string, int, string) -> string = { s, i, acc ->
   if i >= length(s)
   then acc
-  else toUpperFrom(s, i + 1, acc + __nanyx_string_from_byte(upperByte(__nanyx_string_byte_at(s, i))))
+  else toUpperFrom(s, i + 1, acc ++ __nanyx_string_from_byte(upperByte(__nanyx_string_byte_at(s, i))))
 }
 
 def toLowerFrom: (string, int, string) -> string = { s, i, acc ->
   if i >= length(s)
   then acc
-  else toLowerFrom(s, i + 1, acc + __nanyx_string_from_byte(lowerByte(__nanyx_string_byte_at(s, i))))
+  else toLowerFrom(s, i + 1, acc ++ __nanyx_string_from_byte(lowerByte(__nanyx_string_byte_at(s, i))))
 }
 
 -- `s` with every ASCII letter upper-cased.
@@ -93,7 +93,7 @@ export def trim: string -> string = { s ->
 
 -- `s` repeated `times` times (the empty string when `times` is zero or negative).
 export def repeat: (string, int) -> string = { s, times ->
-  if times <= 0 then "" else s + repeat(s, times - 1)
+  if times <= 0 then "" else s ++ repeat(s, times - 1)
 }
 
 def splitFrom: (string, string, int) -> list(string) = { s, separator, from ->
@@ -111,7 +111,7 @@ export def split: (string, string) -> list(string) = { s, separator ->
 def joinRest: (list(string), string, string) -> string = { pieces, separator, acc ->
   match pieces
   | [] -> acc
-  | [piece, ...rest] -> joinRest(rest, separator, (acc + separator) + piece)
+  | [piece, ...rest] -> joinRest(rest, separator, (acc ++ separator) ++ piece)
 }
 
 -- The `pieces` concatenated with `separator` between each pair.

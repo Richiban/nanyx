@@ -301,10 +301,10 @@
     local.set $yString
     i32.const 260
     local.get $xString
-    call $__nanyx_string_concat
     i32.const 274
-    call $__nanyx_string_concat
     local.get $yString
+    call $__nanyx_string_concat
+    call $__nanyx_string_concat
     call $__nanyx_string_concat
     local.tee $__dbg_tmp
     call $dbg_str
