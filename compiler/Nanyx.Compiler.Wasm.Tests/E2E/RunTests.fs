@@ -433,6 +433,33 @@ let ``Run - boolean keywords not, and, or`` () =
         "show(not (1 > 2) and between(5, 1, 10))\n" +
         "show(not between(50, 1, 10) or false)\n"
     runSource source |> assertRan "no\nyes\nno\nyes\nyes\nyes\n"
+[<Fact>]
+let ``Run - or-patterns in match arms`` () =
+    // #43: `| a | b -> ...` is one arm matching either alternative.
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "type Day = #mon | #tue | #wed | #thu | #fri | #sat | #sun\n" +
+        "def kind: Day -> string = { day ->\n" +
+        "  match day\n" +
+        "    | #sat | #sun -> \"weekend\"\n" +
+        "    | _ -> \"weekday\"\n" +
+        "}\n" +
+        "def size: int -> string = { n ->\n" +
+        "  match n\n" +
+        "    | 0\n" +
+        "    | 1\n" +
+        "    | 2 -> \"small\"\n" +
+        "    | _ -> \"big\"\n" +
+        "}\n" +
+        "def axis: (int, int) -> string = {\n" +
+        "  | 0, _ | _, 0 -> \"axis\"\n" +
+        "  | _, _ -> \"plane\"\n" +
+        "}\n" +
+        "println(kind(#sat) ++ \" \" ++ kind(#sun) ++ \" \" ++ kind(#wed))\n" +
+        "println(size(1) ++ \" \" ++ size(2) ++ \" \" ++ size(9))\n" +
+        "println(axis(0, 5) ++ \" \" ++ axis(5, 0) ++ \" \" ++ axis(3, 3))\n"
+    runSource source |> assertRan "weekend weekend weekday\nsmall small big\naxis axis plane\n"
 
 [<Fact>]
 let ``Run - a match with no matching arm exits 1 with a runtime error`` () =

@@ -751,19 +751,28 @@ let valueDefCore: Parser<Definition, unit> =
             (fun exportOpt (name, typeOpt, expr) -> ValueDef(exportOpt.IsSome, name, typeOpt, expr))
     <?> "value definition"
 
+// A match arm: `| patterns -> body`. An arm may list several alternatives (an or-pattern), written
+// `| p1 | p2 -> body` on one line or with each `|` on its own line; every arm ends in `->`, so a `|` that is
+// not preceded by `->` continues the current arm rather than starting a new one. The arm is desugared into one
+// arm per alternative, all sharing the body, so the rest of the compiler only ever sees plain arms.
+let matchArmAlternatives : Parser<(Pattern list * Expression) list, unit> =
+    let alternative = sepBy1 pattern (pstring "," .>> ws)
+    pipe2
+        (pstring "|" >>. ws >>. sepBy1 alternative (attempt (ws >>. pstring "|" >>. ws)))
+        (pstring "->" >>. matchArmBody)
+        (fun alternatives body -> alternatives |> List.map (fun patterns -> patterns, body))
+    <?> "match arm"
+
+/// One or more arms, each possibly an or-pattern, flattened into plain arms.
+let matchArms : Parser<(Pattern list * Expression) list, unit> =
+    many1 (attempt (ws >>. matchArmAlternatives)) |>> List.concat
+
 // Match expression parser
 do
-    let matchArm =
-        pstring "|" >>. ws >>. sepBy1 pattern (pstring "," .>> ws) .>>. (pstring "->" >>. matchArmBody)
-        <?> "match arm"
-    
-    let matchArmWithLeadingWs =
-        attempt (ws >>. matchArm)
-
     matchExprRef :=
         pipe2
             (pstring "match" >>. ws >>. sepBy1 simpleExpression (pstring "," .>> ws))  // Multiple expressions
-            (many1 matchArmWithLeadingWs)
+            matchArms
             (fun scrutinees arms -> Match(scrutinees, arms))
         .>> skipMany (skipAnyOf " \t\r\n")
         <?> "match expression"
@@ -1105,9 +1114,6 @@ do
 
     // Shorthand match lambda: { | pat -> expr ... }
     let shorthandMatchLambda =
-        let matchArm =
-            pstring "|" >>. ws >>. sepBy1 pattern (pstring "," .>> ws) .>>. (pstring "->" >>. matchArmBody)
-        let matchArms = many1 (attempt (ws >>. matchArm))
         matchArms |>> (fun arms ->
             let maxArity =
                 arms
