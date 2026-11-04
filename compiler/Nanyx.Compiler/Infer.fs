@@ -457,6 +457,38 @@ let private joinBranchTypes (state: InferState) (branchTypes: Ty list) : Ty * In
 let private mkTypedExpr expr ty body statements matchArms : TypedExpr =
     { Expr = expr; Type = ty; Body = body; Statements = statements; MatchArms = matchArms }
 
+/// The fields of a record type, looking through a nominal wrapper. Member access and `with` need a record's
+/// fields while inference is still running, so a type that is still a variable here (a call's result, or a
+/// local bound to one) is first resolved against the constraints gathered so far.
+let private recordFieldsSoFar (state: InferState) (ty: Ty) : Map<string, Ty> option =
+    let resolved =
+        match ty with
+        | TyVar _ ->
+            match Unifier.unify state.Constraints with
+            | Ok subst -> Unifier.apply subst ty
+            | Error _ -> ty
+        | _ -> ty
+    match resolved with
+    | TyRecord fields
+    | TyNominal(_, TyRecord fields, _) -> Some fields
+    | _ -> None
+/// `ty` as far as the constraints gathered so far determine it; a type variable stays one when nothing does.
+let private resolveSoFar (state: InferState) (ty: Ty) : Ty =
+    match ty with
+    | TyVar _ ->
+        match Unifier.unify state.Constraints with
+        | Ok subst -> Unifier.apply subst ty
+        | Error _ -> ty
+    | _ -> ty
+
+/// Arithmetic and ordering work on `int` and `float`. Without numeric type classes yet, an operation is on
+/// floats when either operand is already known to be one, and defaults to `int` otherwise.
+let private numericOperandType (state: InferState) (leftTy: Ty) (rightTy: Ty) =
+    let isFloat ty =
+        match resolveSoFar state ty with
+        | TyPrimitive "float" -> true
+        | _ -> false
+    if isFloat leftTy || isFloat rightTy then TyPrimitive "float" else numericType
 let private argTypesFromExpected (state: InferState) (args: (Identifier * TypeExpr option) list) (expectedInput: Ty) =
     let mutable current = state
     let argTys =
@@ -525,6 +557,82 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                 match rangeOpt with
                 | Some (line, col) -> Error [ Diagnostics.errorAt "dbg expects a single argument" (line, col) ]
                 | None -> Error [ Diagnostics.error "dbg expects a single argument" ]
+        elif name = "not" then
+            // The `not` keyword: the parser represents `not x` as a call to "not" with one argument.
+            match args with
+            | [single] ->
+                match inferExpr env state single with
+                | Ok (typedArg, next) ->
+                    let constrained = addConstraint typedArg.Type (TyPrimitive "bool") next
+                    Ok (mkTypedExpr expr (TyPrimitive "bool") None None None, constrained)
+                | Error err -> Error err
+            | _ -> Error [ Diagnostics.error "not expects a single operand" ]
+        elif name = "__with" then
+            // `record with f = v, ...`: the parser represents a record update as a call to "__with" with the
+            // record and a record of the updated fields. The result has the record's type; every updated
+            // field must exist on it, at the field's type.
+            match args with
+            | [ baseExpr; RecordExpr updates ] ->
+                match inferExpr env state baseExpr with
+                | Error err -> Error err
+                | Ok (typedBase, afterBase) ->
+                    let fieldsOpt =
+                        match typedBase.Type with
+                        | TyRecord fields
+                        | TyNominal(_, TyRecord fields, _) -> Some fields
+                        | _ -> None
+                    match fieldsOpt with
+                    | None -> Error [ Diagnostics.error "`with` needs a record whose fields are known here" ]
+                    | Some fields ->
+                        let mutable current = afterBase
+                        let mutable errors: Diagnostic list = []
+                        for update in updates do
+                            match update with
+                            | NamedField(fieldName, valueExpr) ->
+                                match fields |> Map.tryFind fieldName with
+                                | None -> errors <- errors @ [ Diagnostics.error $"Record has no member '{fieldName}' to update" ]
+                                | Some fieldTy ->
+                                    match inferExpr env current valueExpr with
+                                    | Ok (typedValue, next) -> current <- addConstraint typedValue.Type fieldTy next
+                                    | Error err -> errors <- errors @ err
+                            | PositionalField _ -> errors <- errors @ [ Diagnostics.error "`with` updates fields by name" ]
+                        if errors.IsEmpty then Ok (mkTypedExpr expr typedBase.Type None None None, current)
+                        else Error errors
+            | _ -> Error [ Diagnostics.error "`with` expects a record and the fields to update" ]
+
+        elif name = "__range" then
+            // `a..b`: a bounded range of ints, a `seq(int)` (see the ranges page).
+            let mutable current = state
+            let mutable errors: Diagnostic list = []
+            for arg in args do
+                match inferExpr env current arg with
+                | Ok (typedArg, next) -> current <- addConstraint typedArg.Type (TyPrimitive "int") next
+                | Error err -> errors <- errors @ err
+            if errors.IsEmpty then Ok (mkTypedExpr expr (TyApply("seq", [ TyPrimitive "int" ])) None None None, current)
+            else Error errors
+        elif name = "__rec" then
+            // `rec name = value`: the value of a self-referencing local def; the block already binds the name.
+            match args with
+            | [ inner ] -> inferExpr env state inner
+            | _ -> Error [ Diagnostics.error "rec expects a single definition" ]
+        elif name = "__for" then
+            // `for iterable | arms`: the parser passes the iterable and a one-parameter lambda. The lambda's
+            // parameter is an element of the iterable (a `list(a)` or a `seq(a)`), and the loop is unit.
+            match args with
+            | [ iterable; Lambda(lambdaArgs, lambdaBody) ] ->
+                match inferExpr env state iterable with
+                | Error err -> Error err
+                | Ok (typedIterable, afterIterable) ->
+                    let elementTy, constrained =
+                        match resolveSoFar afterIterable typedIterable.Type with
+                        | TyApply(("seq" | "list"), [ elementTy ]) -> elementTy, afterIterable
+                        | _ ->
+                            let elementTy, next = freshVar afterIterable
+                            elementTy, addConstraint typedIterable.Type (listType elementTy) next
+                    match inferLambdaWithExpected env constrained lambdaArgs lambdaBody (Some elementTy) None with
+                    | Ok (_, next) -> Ok (mkTypedExpr expr (TyPrimitive "unit") None None None, next)
+                    | Error err -> Error err
+            | _ -> Error [ Diagnostics.error "for expects an iterable and a loop body" ]
         else
         let contextCheck =
             match state.ContextRequirements |> Map.tryFind name with
@@ -593,7 +701,13 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                         let argTys =
                             argResults
                             |> List.choose (function Ok typedExpr -> Some typedExpr.Type | _ -> None)
-                        let retTy, nextState = freshVar current
+                        // When the callee's type is already a function (an annotated or already-inferred
+                        // def), its return type is the call's type directly, so a member access or match on
+                        // the result can see it without waiting for the constraint below to be solved.
+                        let retTy, nextState =
+                            match funcTy with
+                            | TyFunc(_, declaredRet) -> declaredRet, current
+                            | _ -> freshVar current
                         let expectedInput, nextState2 = freshVar nextState
                         let inputTy = inputTypeFromArgs argTys
                         let withFuncConstraint = addConstraint funcTy (TyFunc(expectedInput, retTy)) nextState2
@@ -655,15 +769,19 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                 | BinaryOp(op, _, _) when ["+"; "-"; "*"; "/"] |> List.contains op ->
                     let numericConstrained =
                         constrained
-                        |> addConstraint leftExpr.Type numericType
+                        |> addConstraint leftExpr.Type (numericOperandType constrained leftExpr.Type rightExpr.Type)
                     Ok (mkTypedExpr expr leftExpr.Type None None None, numericConstrained)
                 | BinaryOp(op, _, _) when ["<"; ">"; "<="; ">="] |> List.contains op ->
                     let numericConstrained =
                         constrained
-                        |> addConstraint leftExpr.Type numericType
+                        |> addConstraint leftExpr.Type (numericOperandType constrained leftExpr.Type rightExpr.Type)
                     Ok (mkTypedExpr expr (TyPrimitive "bool") None None None, numericConstrained)
                 | BinaryOp(op, _, _) when ["=="; "!="] |> List.contains op ->
                     Ok (mkTypedExpr expr (TyPrimitive "bool") None None None, constrained)
+                | BinaryOp(op, _, _) when ["and"; "or"] |> List.contains op ->
+                    // Both operands are already unified with each other; pin them to bool.
+                    let boolConstrained = constrained |> addConstraint leftExpr.Type (TyPrimitive "bool")
+                    Ok (mkTypedExpr expr (TyPrimitive "bool") None None None, boolConstrained)
                 | _ -> Ok (mkTypedExpr expr leftExpr.Type None None None, constrained)
     | Pipe(value, name, rangeOpt, args) ->
         match inferExpr env state value with
@@ -978,11 +1096,13 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
             let mutable armExprs: TypedExpr list = []
             let mutable typedArms: TypedMatchArm list = []
             let mutable errors: Diagnostic list = []
-            let isCatchAllPattern pattern =
+            let rec isCatchAllPattern pattern =
                 match pattern with
                 | WildcardPattern
                 | ElsePattern
                 | IdentifierPattern _ -> true
+                // `(a, _)` matches every tuple: a tuple pattern is irrefutable when each element is.
+                | TuplePattern elements -> elements |> List.forall isCatchAllPattern
                 | _ -> false
             let tryGetTagName pattern =
                 match pattern with
@@ -1032,9 +1152,23 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                 arms
                 |> List.choose (fun (patterns, _) ->
                     if index < patterns.Length then Some patterns.[index] else None)
+            // A scrutinee's type may still be a variable here (a call's result, a local bound to one). For the
+            // exhaustiveness check it is resolved against the constraints gathered so far, and before the arms
+            // add theirs: a lone `#some(_)` arm would otherwise narrow the variable to that tag first and the
+            // check would pass silently (#61).
+            let resolvedScrutineeTypes =
+                let resolve (ty: Ty) =
+                    match ty with
+                    | TyVar _ ->
+                        match Unifier.unify current.Constraints with
+                        | Ok subst -> Unifier.apply subst ty
+                        | Error _ -> ty
+                    | _ -> ty
+                scrutineeTypes |> List.map resolve
             let mutable scrutineeOverrides: Map<int, Ty> = Map.empty
             for (index, scrutineeTy) in scrutineeTypes |> List.indexed do
                 let patternsAtPos = patternsForIndex index
+                let hasCatchAll = patternsAtPos |> List.exists isCatchAllPattern
                 let nonCatchAll = patternsAtPos |> List.filter (fun pat -> not (isCatchAllPattern pat))
                 let allTagPatterns =
                     not nonCatchAll.IsEmpty
@@ -1045,7 +1179,10 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                         |> List.choose (function TagPattern(tagName, payloadOpt) -> Some (tagName, payloadOpt) | _ -> None)
                         |> List.groupBy fst
                         |> List.sortBy fst
-                    if tagInfos.Length > 1 then
+                    // The arms describe the scrutinee's union. With a catch-all arm they need not name every
+                    // tag, so the union is left open with a rest variable for the tags the arms do not name
+                    // (`if #some(v) = get(n) then ...` must accept a `#some(int) | #none`).
+                    if tagInfos.Length > 1 || hasCatchAll then
                         let mutable stateForUnion = current
                         let unionItems =
                             tagInfos
@@ -1057,11 +1194,18 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                                     TyTag(tagName, Some payloadTy)
                                 else
                                     TyTag(tagName, None))
+                        let unionItems =
+                            if hasCatchAll then
+                                let restTy, nextState = freshVar stateForUnion
+                                stateForUnion <- nextState
+                                unionItems @ [ restTy ]
+                            else
+                                unionItems
                         let unionTy = TyUnion unionItems
                         scrutineeOverrides <- scrutineeOverrides |> Map.add index unionTy
                         current <- addConstraint scrutineeTy unionTy stateForUnion
             let exhaustivenessDiagnostics () =
-                scrutineeTypes
+                resolvedScrutineeTypes
                 |> List.mapi (fun index scrutineeTy ->
                     let patternsAtPos = patternsForIndex index
                     let hasCatchAll = patternsAtPos |> List.exists isCatchAllPattern
@@ -1168,14 +1312,7 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                 match inferExpr env state baseExpr with
                 | Error err -> Error err
                 | Ok (typedBase, next) ->
-                    let fieldTypeOpt =
-                        match typedBase.Type with
-                        | TyRecord fields -> fields |> Map.tryFind memberName
-                        | TyNominal(_, underlying, _) ->
-                            match underlying with
-                            | TyRecord fields -> fields |> Map.tryFind memberName
-                            | _ -> None
-                        | _ -> None
+                    let fieldTypeOpt = recordFieldsSoFar next typedBase.Type |> Option.bind (Map.tryFind memberName)
                     match fieldTypeOpt with
                     | Some fieldTy -> Ok (mkTypedExpr expr fieldTy None None None, next)
                     | None ->
@@ -1186,14 +1323,7 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
             match inferExpr env state baseExpr with
             | Error err -> Error err
             | Ok (typedBase, next) ->
-                let fieldTypeOpt =
-                    match typedBase.Type with
-                    | TyRecord fields -> fields |> Map.tryFind memberName
-                    | TyNominal(_, underlying, _) ->
-                        match underlying with
-                        | TyRecord fields -> fields |> Map.tryFind memberName
-                        | _ -> None
-                    | _ -> None
+                let fieldTypeOpt = recordFieldsSoFar next typedBase.Type |> Option.bind (Map.tryFind memberName)
                 match fieldTypeOpt with
                 | Some fieldTy -> Ok (mkTypedExpr expr fieldTy None None None, next)
                 | None ->
@@ -1336,7 +1466,10 @@ and inferBlock (env: TypeEnv) (state: InferState) (statements: Statement list) :
                                         if preboundFresh then addConstraint preboundTy typedExpr.Type next else next
                                     typedExpr.Type, updatedState
                             current <- finalState
-                            let scheme = TypeEnv.generalize env' declaredTy
+                            // A local bound to a call's result has a type variable here; generalising that as
+                            // it is would make every later use a fresh, unrelated variable (and let a match
+                            // on it skip the exhaustiveness check, #61). Resolve it first.
+                            let scheme = TypeEnv.generalize env' (resolveSoFar current declaredTy)
                             env' <- TypeEnv.extend name scheme env'
                             typedStatements <- typedStatements @ [ TypedDefStatement(isExport, name, typeOpt, typedExpr) ]
                             lastExpr <- typedExpr
@@ -1376,6 +1509,30 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
     let mutable items: TypedTopLevelItem list = []
     let mutable errors: Diagnostic list = []
 
+    // Pre-bind every top-level value before inferring any body, so a definition can refer to one
+    // declared later in the module (forward references, mutual recursion). An annotated def is bound
+    // at its declared type; an unannotated one at a fresh variable that its inferred type is unified
+    // with once its body has been checked. Type definitions are registered in the same pass, so an
+    // annotation can name a type declared further down.
+    let mutable preboundFreshVars: Map<string, Ty> = Map.empty
+    for item in module' do
+        match item with
+        | Def (TypeDef(name, modifiers, parameters, body)) ->
+            state <- registerTypeDef state name modifiers parameters body
+        | Def (ValueDef(_, name, typeOpt, _)) ->
+            let _, declaredTypeExprOpt = extractContextFromTypeExpr typeOpt
+            match declaredTypeExprOpt with
+            | Some declaredExpr ->
+                let ty, st = typeExprToTy state declaredExpr
+                state <- st
+                env <- TypeEnv.extend name (TypeEnv.generalize env ty) env
+            | None ->
+                let ty, st = freshVar state
+                state <- st
+                preboundFreshVars <- preboundFreshVars |> Map.add name ty
+                env <- TypeEnv.extend name (TypeEnv.mono ty) env
+        | _ -> ()
+
     for item in module' do
         match item with
         | Def (ValueDef(isExport, name, typeOpt, expr)) when errors.IsEmpty ->
@@ -1400,16 +1557,17 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
                     | Some _ -> expectedInputOpt
                     | None when expectedDeclaredOpt.IsNone -> tryInferAttachedLambdaInput nextState2 name expr
                     | None -> None
-                let preboundTy, preboundState, envWithRec, preboundFresh =
+                // The name is already in `env` from the pre-binding pass: at its declared type, or at the
+                // fresh variable recorded in `preboundFreshVars`. Self-recursion sees the declared type as a
+                // monomorphic binding while the body is checked, as before.
+                let envWithRec =
                     match expectedDeclaredOpt with
-                    | Some declaredTy -> declaredTy, nextState2, TypeEnv.extend name (TypeEnv.mono declaredTy) envWithCtx, false
-                    | None ->
-                        let ty, st = freshVar nextState2
-                        ty, st, TypeEnv.extend name (TypeEnv.mono ty) envWithCtx, true
+                    | Some declaredTy -> TypeEnv.extend name (TypeEnv.mono declaredTy) envWithCtx
+                    | None -> envWithCtx
                 let nextStateWithReq =
                     match contextOpt with
-                    | Some contexts -> registerContextRequirement preboundState name contexts
-                    | None -> preboundState
+                    | Some contexts -> registerContextRequirement nextState2 name contexts
+                    | None -> nextState2
                 let inferResult =
                     match expr with
                     | Lambda(args, body) when effectiveExpectedInputOpt.IsSome || expectedReturnOpt.IsSome ->
@@ -1433,10 +1591,14 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
                                 declaredTy, updatedState
                         | None ->
                             let updatedState =
-                                if preboundFresh then addConstraint preboundTy typedExpr.Type next else next
+                                match preboundFreshVars |> Map.tryFind name with
+                                | Some preboundTy -> addConstraint preboundTy typedExpr.Type next
+                                | None -> next
                             typedExpr.Type, updatedState
                     state <- finalState
-                    let scheme = TypeEnv.generalize env declaredTy
+                    // Generalize against an env without this def's own pre-binding, so the fresh
+                    // variable it was pre-bound at does not stop its type being generalized.
+                    let scheme = TypeEnv.generalize (env |> Map.remove name) declaredTy
                     env <- TypeEnv.extend name scheme env
                     types <- types |> Map.add name declaredTy
                     items <- items @ [ TypedDef (TypedValueDef(isExport, name, typeOpt, typedExpr)) ]
@@ -1456,7 +1618,7 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
         // Attributes are resolved by the compiler front end before inference (see Compiler.applyAttributes).
         | Attribute _ -> ()
         | Def (TypeDef(name, modifiers, parameters, body)) ->
-            state <- registerTypeDef state name modifiers parameters body
+            // Registered in the pre-binding pass above.
             items <- items @ [ TypedDef (TypedTypeDef(name, modifiers, parameters, body)) ]
         | Def (ValueDef _) -> ()
 

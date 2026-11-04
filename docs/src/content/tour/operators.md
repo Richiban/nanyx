@@ -71,7 +71,7 @@ An operator name is any sequence of one or more of the following characters: `+`
 
 The characters `|`, `&`, `?`, `#`, `@`, `$`, `:` and `\` are not operator characters; they are syntax (see below).
 
-Boolean operations are the keywords `and`, `or` and `not`, not operators.
+Boolean operations are the keywords `and`, `or` and `not`, not operators. Likewise, testing a value against a pattern in an `if` condition uses the keyword `is` (`if x is #some(v) then ...`), not an operator.
 
 ## Reserved spellings
 
@@ -81,7 +81,7 @@ Some sequences built from operator characters are syntax, not operators, and can
 |---|---|
 | `--`, `---` | Line and block comments |
 | `->` | Lambda, match arm, function type |
-| `=` | Definition, named field, pattern test in `if` |
+| `=` | Definition, named field |
 | `\` | Pipe |
 | `..` | Range |
 | `...` | Spread and rest |

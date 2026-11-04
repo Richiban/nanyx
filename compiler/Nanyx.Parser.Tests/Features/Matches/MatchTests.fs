@@ -2,8 +2,22 @@ module ParserTests.Features.Matches
 
 open Xunit
 open FsUnit.Xunit
+open Parser.Program
 open ParserTestHelpers
 open System.IO
+
+[<Fact>]
+let ``a braced guard pattern takes any expression and the bare form still parses`` () =
+    match parseModule "def f = { | { < 0 } -> 1 | { >= limit * 2 } -> 2 | > 5 -> 3 | _ -> 4 }" with
+    | Result.Ok [ Def (ValueDef (_, "f", _, Lambda (_, Match (_, arms)))) ] ->
+        match arms |> List.map fst with
+        | [ [ GuardPattern ("<", LiteralExpr (IntLit 0)) ]
+            [ GuardPattern (">=", BinaryOp ("*", IdentifierExpr ("limit", _), _)) ]
+            [ GuardPattern (">", LiteralExpr (IntLit 5)) ]
+            [ WildcardPattern ] ] -> ()
+        | other -> failwith $"Unexpected arms: %A{other}"
+    | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
+    | Result.Error err -> failwith $"Parse failed: {err}"
 
 [<Fact>]
 let ``Parse match feature files`` () =
@@ -16,3 +30,47 @@ let ``Parse match feature files`` () =
         | Result.Ok _ -> ()
         | Result.Error err -> failwith $"Parse failed for {filePath}: {err}"
     )
+
+open Parser.Program
+
+[<Fact>]
+let ``An or-pattern arm becomes one arm per alternative`` () =
+    let source =
+        "def f = { day ->\n" +
+        "  match day\n" +
+        "    | \"Sat\" | \"Sun\" -> \"weekend\"\n" +
+        "    | _ -> \"weekday\"\n" +
+        "}"
+    match parseModule source with
+    | Result.Ok [ Def (ValueDef (_, "f", _, Lambda (_, Block [ ExprStatement (Match (_, arms)) ]))) ] ->
+        let patterns = arms |> List.map fst
+        patterns |> should equal [ [ LiteralPattern (StringLit "Sat") ]; [ LiteralPattern (StringLit "Sun") ]; [ WildcardPattern ] ]
+        // Both alternatives share the same body.
+        snd arms.[0] |> should equal (snd arms.[1])
+    | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
+    | Result.Error err -> failwith $"Parse failed: {err}"
+
+[<Fact>]
+let ``An or-pattern may put each alternative on its own line`` () =
+    let source =
+        "def f = { day ->\n" +
+        "  match day\n" +
+        "    | #sat\n" +
+        "    | #sun -> 1\n" +
+        "    | _ -> 0\n" +
+        "}"
+    match parseModule source with
+    | Result.Ok [ Def (ValueDef (_, "f", _, Lambda (_, Block [ ExprStatement (Match (_, arms)) ]))) ] ->
+        arms |> List.map fst |> should equal [ [ TagPattern ("sat", None) ]; [ TagPattern ("sun", None) ]; [ WildcardPattern ] ]
+    | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
+    | Result.Error err -> failwith $"Parse failed: {err}"
+
+[<Fact>]
+let ``Or-patterns work in pattern lambdas and with several scrutinees`` () =
+    match parseModule "def f = { | 0, _ | _, 0 -> \"axis\" | _, _ -> \"plane\" }" with
+    | Result.Ok [ Def (ValueDef (_, "f", _, Lambda (args, Match (_, arms)))) ] ->
+        args |> List.length |> should equal 2
+        arms |> List.length |> should equal 3
+        arms |> List.map (fst >> List.length) |> should equal [ 2; 2; 2 ]
+    | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
+    | Result.Error err -> failwith $"Parse failed: {err}"

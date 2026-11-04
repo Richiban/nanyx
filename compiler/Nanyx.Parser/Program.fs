@@ -1,4 +1,4 @@
-﻿module Parser.Program
+module Parser.Program
 
 open System
 open FParsec
@@ -306,6 +306,9 @@ let lambda, lambdaRef = createParserForwardedToRef<Expression, unit>()
 let functionCall, functionCallRef = createParserForwardedToRef<Expression, unit>()
 let matchExpr, matchExprRef = createParserForwardedToRef<Expression, unit>()
 let statement, statementRef = createParserForwardedToRef<Statement, unit>()
+/// One line of a block as the statements it stands for: a single statement, or the several a
+/// destructuring `def (x, y) = ...` desugars into.
+let statementItems, statementItemsRef = createParserForwardedToRef<Statement list, unit>()
 let typeExpr, typeExprRef = createParserForwardedToRef<TypeExpr, unit>()
 
 // Pattern parsers
@@ -362,6 +365,41 @@ let tuplePattern =
         match patterns with
         | [single] -> single  // Single pattern in parens is just that pattern, not a tuple
         | multiple -> TuplePattern multiple
+
+// `def (x, y) = value` binds each element of a tuple. It is desugared in the parser into a binding of the
+// whole value plus one `def` per element (`def x = __tuple.0`), so the rest of the compiler only ever sees
+// plain defs. Only names, `_` and nested tuples may appear in the pattern.
+let private destructuringBindings (position: Position) (pattern: Pattern) (value: Expression) : (Identifier * Expression) list option =
+    let temp = $"__tuple_{position.Line}_{position.Column}"
+    let rec bind (pattern: Pattern) (source: Expression) =
+        match pattern with
+        | IdentifierPattern name -> Some [ name, source ]
+        | WildcardPattern -> Some []
+        | TuplePattern elements ->
+            elements
+            |> List.mapi (fun index element -> bind element (MemberAccess(source, string index, None)))
+            |> List.fold (fun acc next ->
+                match acc, next with
+                | Some bound, Some more -> Some (bound @ more)
+                | _ -> None) (Some [])
+        | _ -> None
+    bind pattern (IdentifierExpr(temp, None))
+    |> Option.map (fun bindings -> (temp, value) :: bindings)
+
+/// `[export] def (pattern) = value`, as the export flag and the bindings it stands for.
+let destructuringDefWith (lineStartCol: int64) (exprParser: Parser<Expression, unit>) : Parser<bool * (Identifier * Expression) list, unit> =
+    pipe3
+        (opt (attempt (pstring "export" >>. ws)))
+        (getPosition .>>. (pstring "def" >>. ws >>. tuplePattern .>> wsNoNl()))
+        (defEqualsContinuation lineStartCol >>. pstring "=" >>. wsNoNl() >>. exprParser)
+        (fun exportOpt (position, pattern) value -> exportOpt.IsSome, position, pattern, value)
+    >>= fun (isExport, position, pattern, value) ->
+        match pattern with
+        | TuplePattern _ ->
+            match destructuringBindings position pattern value with
+            | Some bindings -> preturn (isExport, bindings)
+            | None -> fail "only names, `_` and nested tuples can be destructured by a def"
+        | _ -> fail "a destructuring def needs a tuple pattern"
 
 // Record pattern by position: TypeName(pat1, pat2, ...)
 let recordPatternByPosition =
@@ -438,21 +476,27 @@ let listPattern =
 
 // Range pattern: 1..10
 // Must use attempt to ensure proper backtracking if ".." is not found
-// Guard pattern: > 10, < 5, >= 10, <= 5, == 5, != 5
+// Guard pattern: `{ < 0 }`, `{ >= limit }` (the pattern-matching page writes a guard as a predicate in the
+// shorthand-lambda style). The value may be any expression. The older bare form `> 5` is still accepted.
 let guardPattern =
-    attempt (
-        let guardOp = 
-            choice [
-                pstring ">="
-                pstring "<="
-                pstring "=="
-                pstring "!="
-                pstring ">"
-                pstring "<"
-            ]
-        guardOp .>>. (ws >>. (literalNoWs |>> LiteralExpr))
-        |>> fun (op, value) -> GuardPattern(op, value)
-    )
+    let guardOp =
+        choice [
+            pstring ">="
+            pstring "<="
+            pstring "=="
+            pstring "!="
+            pstring ">"
+            pstring "<"
+        ]
+    let braced =
+        attempt (
+            between (pstring "{" .>> ws) (pstring "}") (guardOp .>>. (ws >>. expression .>> ws))
+            |>> fun (op, value) -> GuardPattern(op, value))
+    let bare =
+        attempt (
+            guardOp .>>. (ws >>. (literalNoWs |>> LiteralExpr))
+            |>> fun (op, value) -> GuardPattern(op, value))
+    braced <|> bare
 
 // Tag pattern: #nil or #some(x) or #error data
 // Tag pattern: #tagName or #tagName(pattern) or #tagName(p1, p2, ...)
@@ -671,12 +715,12 @@ let blockExpr() : Parser<Expression, unit> =
         let indentLevel = indentChars.Length
         if indentLevel > 0 then
             let statementAtIndent =
-                attempt (manyMinMaxSatisfy indentLevel indentLevel (fun c -> c = ' ' || c = '\t') >>. statement)
+                attempt (manyMinMaxSatisfy indentLevel indentLevel (fun c -> c = ' ' || c = '\t') >>. statementItems)
 
             pipe2
-                statement
+                statementItems
                 (many (attempt (newline >>. statementAtIndent)))
-                (fun first rest -> Block (first :: rest))
+                (fun first rest -> Block (List.concat (first :: rest)))
         else
             pzero
 
@@ -751,19 +795,45 @@ let valueDefCore: Parser<Definition, unit> =
             (fun exportOpt (name, typeOpt, expr) -> ValueDef(exportOpt.IsSome, name, typeOpt, expr))
     <?> "value definition"
 
+// A match arm: `| patterns -> body`. An arm may list several alternatives (an or-pattern), written
+// `| p1 | p2 -> body` on one line or with each `|` on its own line; every arm ends in `->`, so a `|` that is
+// not preceded by `->` continues the current arm rather than starting a new one. The arm is desugared into one
+// arm per alternative, all sharing the body, so the rest of the compiler only ever sees plain arms.
+let matchArmAlternatives : Parser<(Pattern list * Expression) list, unit> =
+    let alternative = sepBy1 pattern (pstring "," .>> ws)
+    pipe2
+        (pstring "|" >>. ws >>. sepBy1 alternative (attempt (ws >>. pstring "|" >>. ws)))
+        (pstring "->" >>. matchArmBody)
+        (fun alternatives body -> alternatives |> List.map (fun patterns -> patterns, body))
+    <?> "match arm"
+
+/// One or more arms, each possibly an or-pattern, flattened into plain arms.
+let matchArms : Parser<(Pattern list * Expression) list, unit> =
+    many1 (attempt (ws >>. matchArmAlternatives)) |>> List.concat
+
+// `for iterable | arms` runs the arms' bodies for each element (the element is matched against the arms, as
+// the loops page shows with `| { < 5 } -> ... | _ -> ...`), and `for iterable -> body` ignores the element.
+// Both are represented as a call to the built-in "__for" with the iterable and a one-parameter lambda,
+// which the type checker and backend handle as a loop.
+let forExpr : Parser<Expression, unit> =
+    let keywordEnd = notFollowedBy (satisfy (fun c -> Char.IsLetterOrDigit c || c = '_'))
+    let elementName = "__for_element"
+    let withArms =
+        matchArms |>> fun arms -> Lambda([ (elementName, None) ], Match([ IdentifierExpr(elementName, None) ], arms))
+    let withoutElement =
+        ws >>. pstring "->" >>. matchArmBody |>> fun body -> Lambda([ (elementName, None) ], body)
+    pipe2
+        (pstring "for" >>. keywordEnd >>. ws >>. expression)
+        (attempt withArms <|> withoutElement)
+        (fun iterable body -> FunctionCall("__for", None, [ iterable; body ]))
+    <?> "for loop"
+
 // Match expression parser
 do
-    let matchArm =
-        pstring "|" >>. ws >>. sepBy1 pattern (pstring "," .>> ws) .>>. (pstring "->" >>. matchArmBody)
-        <?> "match arm"
-    
-    let matchArmWithLeadingWs =
-        attempt (ws >>. matchArm)
-
     matchExprRef :=
         pipe2
             (pstring "match" >>. ws >>. sepBy1 simpleExpression (pstring "," .>> ws))  // Multiple expressions
-            (many1 matchArmWithLeadingWs)
+            matchArms
             (fun scrutinees arms -> Match(scrutinees, arms))
         .>> skipMany (skipAnyOf " \t\r\n")
         <?> "match expression"
@@ -807,13 +877,28 @@ let tupleOrParenExpr =
                 RecordExpr fields)
     <?> "tuple or record"
 
-// List expression parser
+// List expression parser. `...expr` splices a list in place: `[a, ...xs, b]` is desugared to
+// `[a] ++ xs ++ [b]`, so the rest of the compiler only ever sees list literals and concatenation.
 let listExpr =
+    let item =
+        (pstring "..." >>. ws >>. expression |>> Choice2Of2)
+        <|> (expression |>> Choice1Of2)
     between
         (pstring "[")
         (pstring "]")
-        (sepBy (ws >>. expression) (pstring "," .>> ws))
-    |>> ListExpr
+        (sepBy (ws >>. item) (pstring "," .>> ws))
+    |>> fun items ->
+        let segments =
+            items
+            |> List.fold (fun segments item ->
+                match item, segments with
+                | Choice1Of2 element, ListExpr elements :: rest -> ListExpr (elements @ [ element ]) :: rest
+                | Choice1Of2 element, _ -> ListExpr [ element ] :: segments
+                | Choice2Of2 spread, _ -> spread :: segments) []
+            |> List.rev
+        match segments with
+        | [] -> ListExpr []
+        | _ -> segments |> List.reduceBack (fun left right -> BinaryOp("++", left, right))
 
 // Tag expression parser: #tagName or #tagName(expr)
 // The payload can be a tuple-like expression with comma-separated values
@@ -829,12 +914,29 @@ let tagExpr =
     | Some multiple -> preturn (TagExpr(tagName, Some (TupleExpr multiple)))  // Multiple values as tuple
 
 // If-expression parser: if condition then trueExpr else falseExpr
+// `if cond then a else b`, or if-matching: `if value is pattern then body [else other]` (see the
+// pattern-matching page), which is desugared to `match value | pattern -> body | _ -> other`, with `()` as
+// the other arm when there is no `else`. `is` makes it plain that the pattern binds its names rather than
+// comparing against existing ones.
+// Either branch may be an indented block on the following lines, and the `else` may be left out when the
+// `then` branch is unit (`if i > 0 then` followed by `println(...)` on the functions page); a missing
+// `else` is `()`.
 let ifExpr =
+    let keywordEnd = notFollowedBy (satisfy (fun c -> Char.IsLetterOrDigit c || c = '_'))
+    let branch = attempt (blockExpr()) <|> (ws >>. expression)
+    let patternBinding =
+        attempt (expression .>> ws .>> pstring "is" .>> keywordEnd .>> ws) .>>. pattern
+        |>> fun (value, pat) -> Choice2Of2 (pat, value)
+    let condition = expression |>> Choice1Of2
     pipe3
-        (pstring "if" >>. ws >>. expression)
-        (ws >>. pstring "then" >>. ws >>. expression)
-        (ws >>. pstring "else" >>. ws >>. expression)
-        (fun cond thenExpr elseExpr -> IfExpr(cond, thenExpr, elseExpr))
+        (pstring "if" >>. keywordEnd >>. ws >>. (patternBinding <|> condition))
+        (ws >>. pstring "then" >>. keywordEnd >>. branch)
+        (opt (attempt (ws >>. pstring "else" >>. keywordEnd >>. branch)))
+        (fun head thenExpr elseOpt ->
+            match head with
+            | Choice1Of2 cond -> IfExpr(cond, thenExpr, defaultArg elseOpt UnitExpr)
+            | Choice2Of2 (pat, value) ->
+                Match([ value ], [ [ pat ], thenExpr; [ WildcardPattern ], defaultArg elseOpt UnitExpr ]))
     <?> "if expression"
 
 let workflowBindExpr =
@@ -882,12 +984,16 @@ let useInExpr =
 // Version without trailing whitespace consumption (for use in block contexts)
 
 // Context member access: C(T).field or C(T).field(args) - qualified access to context functions
-// ONLY matches when type parameters are present (parens required)
+// ONLY matches when type parameters are present (parens required). Context names are capitalised, which is
+// what tells `ToString(a).toString(x)` apart from a member of a call's result such as `openFile(path).contents`.
 let contextMemberAccess =
+    let contextName =
+        identifierNoWs >>= fun name ->
+            if Char.IsUpper name.[0] then preturn name else fail "context name (capitalised)"
     // Parse a context type application with required type args: C(T)
-    let contextTypeApply = 
+    let contextTypeApply =
         pipe2
-            identifierNoWs
+            contextName
             (between (pstring "(") (pstring ")") (sepBy1 (ws >>. typeExpr) (pstring "," .>> ws)))
             (fun name args -> TypeApply(name, args))
     // Parse args as tuple-like: (expr, expr, ...)
@@ -912,6 +1018,7 @@ let primaryExprNoWs =
         attempt useInExpr
         attempt unitExpr
         attempt ifExpr  // if-then-else must be early to avoid partial matches
+        attempt forExpr
         attempt matchExpr
         attempt lambda
         attempt contextMemberAccess  // C(T).field - must come before functionCall
@@ -929,10 +1036,23 @@ do simpleExpressionRef := primaryExprNoWs
 let memberAccessChain =
     let tupleIndex = many1Satisfy isDigit
     let fieldOrIndex = identifierNoWs <|> tupleIndex
-    let dotField = pstring "." >>. (getPosition .>>. fieldOrIndex |>> fun (pos, field) -> field, Some (posToRange pos))
+    // `record with field = value, ...` copies a record with some fields replaced. The parser represents it
+    // as a call to "__with" with the record and a record of the updated fields, which the type checker and
+    // backend handle as a built-in (the same way `not` is a call to "not").
+    let withClause =
+        let keywordEnd = notFollowedBy (satisfy (fun c -> Char.IsLetterOrDigit c || c = '_'))
+        let update =
+            (identifierNoWs .>> wsInline .>> pstring "=" .>> ws) .>>. expression
+            |>> fun (field, value) -> NamedField(field, value)
+        attempt (wsInline >>. pstring "with" >>. keywordEnd >>. ws >>. sepBy1 update (pstring "," .>> ws))
+    // `..` is the range operator, not a member access.
+    let dotField = attempt (pstring "." >>. notFollowedBy (pchar '.') >>. (getPosition .>>. fieldOrIndex |>> fun (pos, field) -> field, Some (posToRange pos)))
     primaryExprNoWs >>= fun baseExpr ->
-        many dotField |>> fun fields ->
-            List.fold (fun expr (field, range) -> MemberAccess(expr, field, range)) baseExpr fields
+        many dotField >>= fun fields ->
+            let accessed = List.fold (fun expr (field, range) -> MemberAccess(expr, field, range)) baseExpr fields
+            opt withClause |>> function
+                | Some updates -> FunctionCall("__with", None, [ accessed; RecordExpr updates ])
+                | None -> accessed
 
 let primaryExpr = memberAccessChain .>> wsInline  // Consume trailing inline ws for operator parsing
 
@@ -946,7 +1066,8 @@ opp.AddOperator(InfixOperator("%", ws, 7, Associativity.Left, fun x y -> BinaryO
 
 // Additive operators
 opp.AddOperator(InfixOperator("+", ws, 6, Associativity.Left, fun x y -> BinaryOp("+", x, y)))
-opp.AddOperator(InfixOperator("-", ws, 6, Associativity.Left, fun x y -> BinaryOp("-", x, y)))
+// `-` must not take the start of a `->` (as in `for 1..2 -> ...`).
+opp.AddOperator(InfixOperator("-", notFollowedBy (pchar '>') >>. ws, 6, Associativity.Left, fun x y -> BinaryOp("-", x, y)))
 
 // Concatenation (strings, lists): binds looser than arithmetic, tighter than comparison
 opp.AddOperator(InfixOperator("++", ws, 5, Associativity.Right, fun x y -> BinaryOp("++", x, y)))
@@ -958,12 +1079,22 @@ opp.AddOperator(InfixOperator("<=", ws, 4, Associativity.Left, fun x y -> Binary
 opp.AddOperator(InfixOperator(">=", ws, 4, Associativity.Left, fun x y -> BinaryOp(">=", x, y)))
 
 // Equality operators 
+// A bounded range `a..b` (see the ranges page) is represented as a call to the built-in "__range". It binds
+// looser than arithmetic, so `n - 1..n + 1` is `(n - 1)..(n + 1)`. `...` is list spread, not a range.
+opp.AddOperator(InfixOperator("..", notFollowedBy (pchar '.') >>. ws, 4, Associativity.Left, fun x y -> FunctionCall("__range", None, [ x; y ])))
 opp.AddOperator(InfixOperator("==", ws, 3, Associativity.Left, fun x y -> BinaryOp("==", x, y)))
 opp.AddOperator(InfixOperator("!=", ws, 3, Associativity.Left, fun x y -> BinaryOp("!=", x, y)))
 
-// Logical operators (lowest precedence)
-opp.AddOperator(InfixOperator("&&", ws, 2, Associativity.Left, fun x y -> BinaryOp("&&", x, y)))
-opp.AddOperator(InfixOperator("||", ws, 1, Associativity.Left, fun x y -> BinaryOp("||", x, y)))
+// Boolean operations are the keywords `not`, `and` and `or` (lowest precedence; see the operators page of
+// the docs). A keyword operator must not swallow the start of an identifier such as `order` or `android`.
+// `not` binds tighter than every infix operator, so `not a == b` is `(not a) == b`, as `!` does elsewhere.
+// The symbolic `&&` and `||` predate the keywords and are kept as aliases that build the same tree.
+let private keywordOperatorEnd = notFollowedBy (satisfy (fun c -> Char.IsLetterOrDigit c || c = '_')) >>. ws
+opp.AddOperator(PrefixOperator("not", keywordOperatorEnd, 8, true, fun x -> FunctionCall("not", None, [ x ])))
+opp.AddOperator(InfixOperator("and", keywordOperatorEnd, 2, Associativity.Left, fun x y -> BinaryOp("and", x, y)))
+opp.AddOperator(InfixOperator("or", keywordOperatorEnd, 1, Associativity.Left, fun x y -> BinaryOp("or", x, y)))
+opp.AddOperator(InfixOperator("&&", ws, 2, Associativity.Left, fun x y -> BinaryOp("and", x, y)))
+opp.AddOperator(InfixOperator("||", ws, 1, Associativity.Left, fun x y -> BinaryOp("or", x, y)))
 
 // Note: Comma is NOT an operator in the OPP
 // Commas are handled explicitly in tuple/record literals and function calls
@@ -1044,18 +1175,18 @@ do
     
     // Lambda body: allow multi-line statement blocks or a single expression
     let blockBody =
-        let matchStatement = wsInline >>. matchExpr |>> ExprStatement
+        let matchStatement = wsInline >>. matchExpr |>> ExprStatement |>> List.singleton
         let statementLine =
             attempt (
                 ws >>.
-                (attempt matchStatement <|> statement)
+                (attempt matchStatement <|> statementItems)
             )
         let multiLine =
             attempt (
                 skipMany (skipAnyOf " \t\r") >>. newline >>.
                 ws >>.
                 (many1 statementLine .>> ws)
-                |>> Block
+                |>> (List.concat >> Block)
             )
 
         let singleLine =
@@ -1098,9 +1229,6 @@ do
 
     // Shorthand match lambda: { | pat -> expr ... }
     let shorthandMatchLambda =
-        let matchArm =
-            pstring "|" >>. ws >>. sepBy1 pattern (pstring "," .>> ws) .>>. (pstring "->" >>. matchArmBody)
-        let matchArms = many1 (attempt (ws >>. matchArm))
         matchArms |>> (fun arms ->
             let maxArity =
                 arms
@@ -1187,19 +1315,35 @@ do
                 TypeDefStatement(name, modifiers, typeParams, typeValue)
             | _ -> failwith "Expected type definition"
 
-    let defStatement = 
-        let exprParser =
-            attempt (blockExpr()) <|> (sepBy1 expression (pstring "," .>> ws) |>> fun exprs ->
-                match exprs with
-                | [single] -> single
-                | multiple -> TupleExpr multiple)
+    let defExprParser =
+        attempt (blockExpr()) <|> (sepBy1 expression (pstring "," .>> ws) |>> fun exprs ->
+            match exprs with
+            | [single] -> single
+            | multiple -> TupleExpr multiple)
 
+    let defStatement =
         getPosition >>= fun lineStart ->
             pipe2
                 (opt (attempt (pstring "export" >>. ws)))
-                (parseDefWith lineStart.Column typedQualifiedIdentifier exprParser)
+                (parseDefWith lineStart.Column typedQualifiedIdentifier defExprParser)
                 (fun exportOpt (name, typeOpt, expr) -> DefStatement(exportOpt.IsSome, name, typeOpt, expr))
-    
+
+    let destructuringDefStatement =
+        getPosition >>= fun lineStart ->
+            destructuringDefWith lineStart.Column defExprParser
+            |>> fun (isExport, bindings) ->
+                bindings |> List.mapi (fun index (name, value) -> DefStatement(isExport && index > 0, name, None, value))
+    // `rec name = { ... }` is a local definition that can refer to itself (see the functions page). It is a
+    // def whose value is wrapped in a call to the built-in "__rec", which tells the backend to compile the
+    // lambda as a function that may call itself.
+    let recStatement =
+        let keywordEnd = notFollowedBy (satisfy (fun c -> Char.IsLetterOrDigit c || c = '_'))
+        getPosition >>= fun lineStart ->
+            (pstring "rec" >>. keywordEnd >>. ws >>. typedQualifiedIdentifier .>> wsNoNl())
+            >>= fun (name, typeOpt) ->
+                defEqualsContinuation lineStart.Column >>. pstring "=" >>. wsNoNl() >>. defExprParser
+                |>> fun expr -> DefStatement(false, name, typeOpt, FunctionCall("__rec", None, [ expr ]))
+
     let exprStatement =
         wsNoNl()
         >>. exprWithoutCrossingNewlines
@@ -1207,25 +1351,35 @@ do
         |>> ExprStatement  // Consume trailing inline comments without consuming newlines
     
     statementRef := (attempt importStatement <|> attempt typeDefStatement <|> attempt defStatement <|> attempt useStatement <|> exprStatement) <?> "statement"
+    statementItemsRef := (attempt destructuringDefStatement <|> (statement |>> List.singleton)) <?> "statement"
+    statementRef := (attempt importStatement <|> attempt typeDefStatement <|> attempt defStatement <|> attempt recStatement <|> attempt useStatement <|> exprStatement) <?> "statement"
 
 // Parser for module declaration
 let moduleDecl: Parser<TopLevelItem, unit> =
     pstring "module" >>. ws >>. identifier |>> ModuleDecl
     <?> "module declaration"
 
+let private valueDefExprParser =
+    attempt (blockExpr()) <|> (wsInline >>. (sepBy1 expression (pstring "," .>> ws) |>> fun exprs ->
+        match exprs with
+        | [single] -> single
+        | multiple -> TupleExpr multiple))
+
 // Parser for value definition (top-level)
 let valueDef: Parser<TopLevelItem, unit> =
-    let exprParser =
-        attempt (blockExpr()) <|> (wsInline >>. (sepBy1 expression (pstring "," .>> ws) |>> fun exprs ->
-            match exprs with
-            | [single] -> single
-            | multiple -> TupleExpr multiple))
-
     getPosition >>= fun lineStart ->
         pipe2
             (opt (attempt (pstring "export" >>. ws)))
-            (parseDefWith lineStart.Column typedQualifiedIdentifier exprParser)
+            (parseDefWith lineStart.Column typedQualifiedIdentifier valueDefExprParser)
             (fun exportOpt (name, typeOpt, expr) -> Def(ValueDef(exportOpt.IsSome, name, typeOpt, expr)))
+    <?> "value definition"
+
+// Top-level `def (x, y) = ...`, as the defs it desugars into (see `destructuringBindings`).
+let valueDestructuringDef: Parser<TopLevelItem list, unit> =
+    getPosition >>= fun lineStart ->
+        destructuringDefWith lineStart.Column valueDefExprParser
+        |>> fun (isExport, bindings) ->
+            bindings |> List.mapi (fun index (name, value) -> Def(ValueDef(isExport && index > 0, name, None, value)))
     <?> "value definition"
 
 // Parser for type definition (top-level)
@@ -1298,9 +1452,12 @@ let topLevelItem: Parser<TopLevelItem, unit> =
     ] .>> ws
     <?> "top-level item"
 
+let private topLevelItems: Parser<TopLevelItem list, unit> =
+    attempt (ws >>. valueDestructuringDef .>> ws) <|> (topLevelItem |>> List.singleton)
+
 // Parser for a complete module
 let moduleParser: Parser<Module, unit> =
-    ws >>. many topLevelItem .>> ws .>> eof
+    ws >>. many topLevelItems .>> ws .>> eof |>> List.concat
     <?> "module"
 
 let private qualifyModuleName (prefix: string) (name: string) =

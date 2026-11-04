@@ -200,6 +200,46 @@ let ``Run - list literals and patterns`` () =
     runSource source |> assertRan "empty\none\none then another\nmany\ndbg: 10\n"
 
 [<Fact>]
+let ``Run - list spread in expressions`` () =
+    // Regression: `[1, ...rest]` worked as a pattern but not as an expression (#44).
+    let source =
+        "import nanyx/console\n" +
+        "import nanyx/text\n" +
+        "\n" +
+        "def sum: list(int) -> int = {\n" +
+        "  | [] -> 0\n" +
+        "  | [head, ...tail] -> head + sum(tail)\n" +
+        "}\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  def xs = [1, ...[2, 3]]\n" +
+        "  println(\"{sum(xs)}\")\n" +
+        "  def names = [\"b\"]\n" +
+        "  println(join([\"a\", ...names, \"c\", ...[], ...[\"d\"]], \"-\"))\n" +
+        "}\n"
+    runSource source |> assertRan "6\na-b-c-d\n"
+
+[<Fact>]
+let ``Run - multi-argument pattern lambdas`` () =
+    // The two-parameter `{ | [], _ -> ... | [head, ...tail], f -> ... }` form from the pattern-matching page (#45).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def map: (list(int), (int -> int)) -> list(int) = {\n" +
+        "  | [], _ -> []\n" +
+        "  | [head, ...tail], f -> [f(head), ...map(tail, f)]\n" +
+        "}\n" +
+        "def sum: list(int) -> int = {\n" +
+        "  | [] -> 0\n" +
+        "  | [head, ...tail] -> head + sum(tail)\n" +
+        "}\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  println(\"{sum(map([1, 2, 3], { * 10 }))}\")\n" +
+        "}\n"
+    runSource source |> assertRan "60\n"
+
+[<Fact>]
 let ``Run - ++ joins lists`` () =
     let source =
         "import nanyx/console\n" +
@@ -232,9 +272,9 @@ let ``Run - an annotated zero-parameter function returning a tag union`` () =
     runSource source |> assertRan "There was a message\n"
 
 [<Fact>]
-let ``Run - a function annotated as returning a function is reported as unsupported, not a crash`` () =
-    // `int -> (int -> int)` is one parameter returning a function. Closures are not supported yet, so this
-    // must fail with the backend's own diagnostic rather than the negative-count exception it used to throw.
+let ``Run - a function annotated as returning a function returns a closure`` () =
+    // `int -> (int -> int)` is one parameter returning a function; the backend used to crash with a
+    // negative padding count on the annotation, then reported closures as unsupported (#29).
     let source =
         "import nanyx/console\n" +
         "\n" +
@@ -245,10 +285,75 @@ let ``Run - a function annotated as returning a function is reported as unsuppor
         "  def add5 = makeAdder(5)\n" +
         "  dbg(add5(10))\n" +
         "}\n"
-    let outcome = runSource source
-    Assert.Equal(1, outcome.ExitCode)
-    Assert.Contains("Unsupported", outcome.StandardError)
-    Assert.DoesNotContain("non-negative", outcome.StandardError)
+    runSource source |> assertRan "dbg: 15\n"
+
+[<Fact>]
+let ``Run - interpolating variables bound by match patterns`` () =
+    // Regression: the backend did not know the type of a pattern-bound name, so `"{n}"` inside a
+    // match arm failed with "Unable to determine interpolated value type" (#35).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def describe: #some(int) | #none -> string = { v ->\n" +
+        "  match v\n" +
+        "    | #some(n) -> \"some {n}\"\n" +
+        "    | #none -> \"none\"\n" +
+        "}\n" +
+        "def greet: #named(string) | #anon -> string = { v ->\n" +
+        "  match v\n" +
+        "    | #named(name) -> \"hello {name}\"\n" +
+        "    | #anon -> \"hello stranger\"\n" +
+        "}\n" +
+        "def first: list(int) -> string = { xs ->\n" +
+        "  match xs\n" +
+        "    | [] -> \"empty\"\n" +
+        "    | [x, ...rest] -> \"first {x}\"\n" +
+        "}\n" +
+        "println(describe(#some(3)) ++ \", \" ++ describe(#none))\n" +
+        "println(greet(#named(\"Ada\")) ++ \", \" ++ greet(#anon))\n" +
+        "println(first([7, 8]) ++ \", \" ++ first([]))\n"
+    runSource source |> assertRan "some 3, none\nhello Ada, hello stranger\nfirst 7, empty\n"
+[<Fact>]
+let ``Run - interpolation at the top level of a script`` () =
+    // Regression: the script start function used to omit the interpolation scratch locals (#48).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def x = 1 + 1\n" +
+        "println(\"script {x}\")\n" +
+        "println(\"{x * 10} again\")\n"
+    runSource source |> assertRan "script 2\n20 again\n"
+
+[<Fact>]
+let ``Run - string literals inside interpolation holes`` () =
+    // Regression: literals nested in `{...}` were not collected into the data section (#49).
+    let source =
+        "import nanyx/console\n" +
+        "import nanyx/text\n" +
+        "\n" +
+        "def main = {\n" +
+        "  println(\"len {length(\"abc\")} and {toUpper(\"x\")}\")\n" +
+        "}\n" +
+        "\n" +
+        "main()\n"
+    runSource source |> assertRan "len 3 and X\n"
+
+[<Fact>]
+let ``Run - interpolation holes that allocate or have effects run once`` () =
+    // Regression: holes used to be evaluated twice, and an allocating hole in the second pass
+    // overwrote the output buffer, so `"a {s ++ "!"} c"` printed just `b!`.
+    let source =
+        "import nanyx/console\n" +
+        "import nanyx/text\n" +
+        "\n" +
+        "def s = \"b\"\n" +
+        "def shout: string -> string = { v ->\n" +
+        "  println(\"shouting \" ++ v)\n" +
+        "  toUpper(v)\n" +
+        "}\n" +
+        "println(\"a {s ++ \"!\"} c {toUpper(s)} d\")\n" +
+        "println(\"[{shout(\"x\")}]\")\n"
+    runSource source |> assertRan "a b! c B d\nshouting x\n[X]\n"
 
 [<Fact>]
 let ``Run - an unannotated function whose branches return different tags`` () =
@@ -285,6 +390,396 @@ let ``Run - a compile error exits 1 with the diagnostic on stderr`` () =
     Assert.Equal("", outcome.StandardOutput)
     Assert.Contains("[error]", outcome.StandardError)
     Assert.Contains("Type mismatch", outcome.StandardError)
+
+[<Fact>]
+let ``Run - matching on string literals`` () =
+    // Regression: `| "Sat" -> ...` failed with "Unsupported match pattern" (#32).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def kind: string -> string = { day ->\n" +
+        "  match day\n" +
+        "    | \"Sat\" -> \"weekend\"\n" +
+        "    | \"Sun\" -> \"weekend\"\n" +
+        "    | _ -> \"weekday\"\n" +
+        "}\n" +
+        "def greet: #name(string) | #anon -> string = { who ->\n" +
+        "  match who\n" +
+        "    | #name(\"Ada\") -> \"hello, Ada!\"\n" +
+        "    | #name(_) -> \"hello, someone\"\n" +
+        "    | #anon -> \"hello, stranger\"\n" +
+        "}\n" +
+        "def suffix = \"t\"\n" +
+        "println(kind(\"Sat\") ++ \" \" ++ kind(\"Sun\") ++ \" \" ++ kind(\"Mon\"))\n" +
+        "println(kind(\"Sa\" ++ suffix))\n" +
+        "println(greet(#name(\"Ada\")) ++ \" / \" ++ greet(#name(\"Bob\")) ++ \" / \" ++ greet(#anon))\n"
+    runSource source |> assertRan "weekend weekend weekday\nweekend\nhello, Ada! / hello, someone / hello, stranger\n"
+[<Fact>]
+let ``Run - tuple patterns in match arms`` () =
+    // Regression: `| (0, _) -> ...` failed with "Unsupported match pattern" (#33).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def describe: (int, int) -> string = { p ->\n" +
+        "  match p\n" +
+        "    | (0, _) -> \"x zero\"\n" +
+        "    | (_, 0) -> \"y zero\"\n" +
+        "    | _ -> \"other\"\n" +
+        "}\n" +
+        "def swapped: (int, int) -> string = { p ->\n" +
+        "  match p\n" +
+        "    | (a, b) -> \"{b} {a}\"\n" +
+        "}\n" +
+        "def firstName: list((string, int)) -> string = { people ->\n" +
+        "  match people\n" +
+        "    | [(name, _), ...rest] -> name\n" +
+        "    | [] -> \"nobody\"\n" +
+        "}\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  println(describe((0, 1)) ++ \" \" ++ describe((1, 0)) ++ \" \" ++ describe((1, 1)))\n" +
+        "  println(swapped((1, 2)))\n" +
+        "  println(firstName([(\"Ada\", 36), (\"Grace\", 45)]) ++ \" \" ++ firstName([]))\n" +
+        "}\n"
+    runSource source |> assertRan "x zero y zero other\n2 1\nAda nobody\n"
+
+[<Fact>]
+let ``Run - identifier patterns bind the scrutinee`` () =
+    // Regression: `| n -> ...` and `| 0, y -> ...` failed with "Unsupported identifier" (#34).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def echo: int -> int = { v ->\n" +
+        "  match v\n" +
+        "    | 0 -> 100\n" +
+        "    | n -> n + 1\n" +
+        "}\n" +
+        "def pick: (int, int) -> int = { a, b ->\n" +
+        "  match a, b\n" +
+        "    | 0, y -> y\n" +
+        "    | x, _ -> x\n" +
+        "}\n" +
+        "def label: string -> string = { s ->\n" +
+        "  match s\n" +
+        "    | text -> \"<\" ++ text ++ \">\"\n" +
+        "}\n" +
+        "dbg(echo(0))\n" +
+        "dbg(echo(41))\n" +
+        "dbg(pick(0, 5))\n" +
+        "dbg(pick(7, 5))\n" +
+        "println(label(\"x\"))\n"
+    runSource source |> assertRan "dbg: 100\ndbg: 42\ndbg: 5\ndbg: 7\n<x>\n"
+[<Fact>]
+let ``Run - mutually recursive top-level functions`` () =
+    // Regression: a def could not call one declared later in the file (#47).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def isEven: int -> bool = { n -> if n == 0 then true else isOdd(n - 1) }\n" +
+        "def isOdd: int -> bool = { n -> if n == 0 then false else isEven(n - 1) }\n" +
+        "def show: bool -> () = { b -> println(if b then \"yes\" else \"no\") }\n" +
+        "show(isEven(10))\n" +
+        "show(isOdd(7))\n" +
+        "show(isEven(7))\n" +
+        "dbg(later(2))\n" +
+        "def later = { x -> x * 21 }\n"
+    runSource source |> assertRan "yes\nyes\nno\ndbg: 42\n"
+[<Fact>]
+let ``Run - tuple destructuring with def`` () =
+    // Regression: `def (x, y) = point` was a parse error (#41).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def (a, b) = (1, 2)\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  def point = (10, 20)\n" +
+        "  def (x, y) = point\n" +
+        "  def (_, (name, age)) = (0, (\"Ada\", 36))\n" +
+        "  println(\"{x},{y}\")\n" +
+        "  println(\"{a}+{b}={a + b}\")\n" +
+        "  println(name ++ \" {age}\")\n" +
+        "}\n"
+    runSource source |> assertRan "10,20\n1+2=3\nAda 36\n"
+
+[<Fact>]
+let ``Run - with record update`` () =
+    // Regression: `alice with age = 31` was a parse error (#40).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "type Point = (x: int, y: int)\n" +
+        "def shiftedX: Point -> int = { p -> (p with x = p.x + 1).x }\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  def alice = (name = \"Alice\", age = 30)\n" +
+        "  def older = alice with age = 31\n" +
+        "  def renamed = older with name = \"Al\" ++ \"ice\", age = older.age + 1\n" +
+        "  println(\"{older.age} {alice.age} {renamed.name} {renamed.age}\")\n" +
+        "  println(\"{shiftedX(Point(x = 3, y = 4))}\")\n" +
+        "}\n"
+    runSource source |> assertRan "31 30 Alice 32\n4\n"
+
+[<Fact>]
+let ``Run - member access on the result of a call`` () =
+    // Regression: `shift(...)` returned a Point but `q.x` on it was "Record 'q' has no member 'x'" (#60).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "type Point = (x: int, y: int)\n" +
+        "def shift: Point -> Point = { q -> Point(x = q.x + 1, y = q.y + 1) }\n" +
+        "def pair: (string, string) -> (first: string, second: string) = { a, b -> (first = a, second = b) }\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  def q = shift(Point(x = 3, y = 4))\n" +
+        "  println(\"{q.x} {q.y} {shift(q).x}\")\n" +
+        "  def r = shift(shift(q))\n" +
+        "  println(\"{r.x} {r.y}\")\n" +
+        "  println(pair(\"a\", \"b\").second ++ pair(\"c\", \"d\").first)\n" +
+        "}\n"
+    runSource source |> assertRan "4 5 5\n6 7\nbc\n"
+
+[<Fact>]
+let ``Run - nested record field access`` () =
+    // Regression: `line.start.x` failed with "cannot determine layout for .x" (#30).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "type Point = (x: int, y: int)\n" +
+        "def origin = (x = 0, y = 0)\n" +
+        "def unit = Point(x = 1, y = 1)\n" +
+        "def main = {\n" +
+        "  def line = (start = (x = 1, y = 2), finish = (x = 4, y = 6))\n" +
+        "  def deep = (outer = (inner = (label = \"deep\")))\n" +
+        "  dbg(line.finish.x - line.start.x)\n" +
+        "  dbg(line.finish.y - line.start.y)\n" +
+        "  println(deep.outer.inner.label)\n" +
+        "  dbg(origin.x + origin.y)\n" +
+        "  dbg(unit.x + unit.y)\n" +
+        "}\n" +
+        "main()\n"
+    // The last line covers #31: a record built through a type constructor at the top level.
+    runSource source |> assertRan "dbg: 3\ndbg: 4\ndeep\ndbg: 0\ndbg: 2\n"
+[<Fact>]
+let ``Run - float arithmetic and printing`` () =
+    // Regression: float literals parsed but `pi * 2.0` was "Type mismatch: float vs int" and the backend had
+    // no f64 support at all (#36). Floats are boxed f64 values.
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def half: float -> float = { x -> x / 2.0 }\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  def pi = 3.14\n" +
+        "  def d = pi * 2.0\n" +
+        "  println(\"{d}\")\n" +
+        "  println(\"{2.0 * 2.0} {0.0 - 1.5} {1.0 / 3.0} {half(5.0)} {1234567.25 + 0.0}\")\n" +
+        "  println(if 2.5 > 1.0 and 1.5 <= 1.5 and 0.1 + 0.2 != 0.3 then \"cmp ok\" else \"cmp wrong\")\n" +
+        "  dbg(1.5 + 2.25)\n" +
+        "}\n"
+    runSource source |> assertRan "6.28\n4.0 -1.5 0.333333 2.5 1234567.25\ncmp ok\ndbg: 3.75\n"
+[<Fact>]
+let ``Run - for loops over ranges and lists`` () =
+    // Regression: `for 1..3 | i -> println("{i}")` was a parse error (#37).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def shout: list(string) -> () = { names ->\n" +
+        "  for names | name -> println(name ++ \"!\")\n" +
+        "}\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  for 1..3 | i -> println(\"{i}\")\n" +
+        "  for [\"a\", \"b\"] | item -> println(item)\n" +
+        "  for 1..5 | 5 -> println(\"Go!\")\n" +
+        "           | _ -> println(\"Ready...\")\n" +
+        "  for 1..2 -> println(\"tick\")\n" +
+        "  def n = 2\n" +
+        "  for 1..n | i ->\n" +
+        "    for 1..n | j -> println(\"{i},{j}\")\n" +
+        "  shout([\"hey\"])\n" +
+        "}\n"
+    runSource source |> assertRan "1\n2\n3\na\nb\nReady...\nReady...\nReady...\nReady...\nGo!\ntick\ntick\n1,1\n1,2\n2,1\n2,2\nhey!\n"
+
+[<Fact>]
+let ``Run - rec local loops`` () =
+    // Regression: `rec loop = { ... }` was a parse error (#38).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def countdown: int -> int = { n ->\n" +
+        "  rec loop = { i, acc -> if i > 0 then loop(i - 1, acc + i) else acc }\n" +
+        "  loop(n, 0)\n" +
+        "}\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  println(\"{countdown(10)}\")\n" +
+        "  rec say = { i ->\n" +
+        "    if i > 0 then\n" +
+        "      println(\"{i}\")\n" +
+        "      say(i - 1)\n" +
+        "  }\n" +
+        "  say(2)\n" +
+        "}\n"
+    runSource source |> assertRan "55\n2\n1\n"
+
+[<Fact>]
+let ``Run - boolean keywords not, and, or`` () =
+    // #39: the docs make boolean operations keywords; `not` had no spelling at all.
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def show: bool -> () = { b -> println(if b then \"yes\" else \"no\") }\n" +
+        "def between: (int, int, int) -> bool = { x, lo, hi -> x >= lo and x <= hi }\n" +
+        "show(not true)\n" +
+        "show(not false)\n" +
+        "show(true and false)\n" +
+        "show(true or false)\n" +
+        "show(not (1 > 2) and between(5, 1, 10))\n" +
+        "show(not between(50, 1, 10) or false)\n"
+    runSource source |> assertRan "no\nyes\nno\nyes\nyes\nyes\n"
+[<Fact>]
+let ``Run - if-matching`` () =
+    // Regression: `if get(3) is #some(v) then ...` was a parse error (#42).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def get: int -> #some(int) | #none = { n -> #some(n) }\n" +
+        "def nothing: int -> #some(int) | #none = { n -> #none }\n" +
+        "def describe: #some(int) | #none -> string = { r ->\n" +
+        "  if r is #some(v) then \"got {v}\" else \"nothing\"\n" +
+        "}\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  if get(3) is #some(v) then println(\"got {v}\")\n" +
+        "  if nothing(0) is #some(v) then println(\"unexpected {v}\")\n" +
+        "  println(describe(get(5)) ++ \" \" ++ describe(nothing(5)))\n" +
+        "}\n"
+    runSource source |> assertRan "got 3\ngot 5 nothing\n"
+[<Fact>]
+let ``Run - guard patterns in the documented form`` () =
+    // Regression: the docs write guards as `| { < 0 } -> ...`; the parser only knew `| < 0 ->` (#46).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def describe: int -> string = { n ->\n" +
+        "  match n\n" +
+        "    | { < 0 } -> \"negative\"\n" +
+        "    | 0 -> \"zero\"\n" +
+        "    | _ -> \"positive\"\n" +
+        "}\n" +
+        "def limit = 10\n" +
+        "def size: int -> string = { n ->\n" +
+        "  match n\n" +
+        "    | { >= limit * 2 } -> \"huge\"\n" +
+        "    | { >= limit } -> \"big\"\n" +
+        "    | else -> \"small\"\n" +
+        "}\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  println(describe(-1) ++ \" \" ++ describe(0) ++ \" \" ++ describe(5))\n" +
+        "  println(size(25) ++ \" \" ++ size(10) ++ \" \" ++ size(3))\n" +
+        "}\n"
+    runSource source |> assertRan "negative zero positive\nhuge big small\n"
+
+[<Fact>]
+let ``Run - or-patterns in match arms`` () =
+    // #43: `| a | b -> ...` is one arm matching either alternative.
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "type Day = #mon | #tue | #wed | #thu | #fri | #sat | #sun\n" +
+        "def kind: Day -> string = { day ->\n" +
+        "  match day\n" +
+        "    | #sat | #sun -> \"weekend\"\n" +
+        "    | _ -> \"weekday\"\n" +
+        "}\n" +
+        "def size: int -> string = { n ->\n" +
+        "  match n\n" +
+        "    | 0\n" +
+        "    | 1\n" +
+        "    | 2 -> \"small\"\n" +
+        "    | _ -> \"big\"\n" +
+        "}\n" +
+        "def axis: (int, int) -> string = {\n" +
+        "  | 0, _ | _, 0 -> \"axis\"\n" +
+        "  | _, _ -> \"plane\"\n" +
+        "}\n" +
+        "println(kind(#sat) ++ \" \" ++ kind(#sun) ++ \" \" ++ kind(#wed))\n" +
+        "println(size(1) ++ \" \" ++ size(2) ++ \" \" ++ size(9))\n" +
+        "println(axis(0, 5) ++ \" \" ++ axis(5, 0) ++ \" \" ++ axis(3, 3))\n"
+    runSource source |> assertRan "weekend weekend weekday\nsmall small big\naxis axis plane\n"
+[<Fact>]
+let ``Run - functions as values and higher-order calls`` () =
+    // #28: a parameter holding a function can be called; a named function or a lambda can be passed.
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def apply: ((int -> int), int) -> int = { f, x -> f(x) }\n" +
+        "def twice: ((int -> int), int) -> int = { f, x -> f(f(x)) }\n" +
+        "def double: int -> int = { x -> x * 2 }\n" +
+        "def map: (list(int), (int -> int)) -> list(int) = { xs, f ->\n" +
+        "  match xs\n" +
+        "    | [] -> []\n" +
+        "    | [head, ...tail] -> [f(head)] ++ map(tail, f)\n" +
+        "}\n" +
+        "def sum: list(int) -> int = { xs ->\n" +
+        "  match xs\n" +
+        "    | [] -> 0\n" +
+        "    | [head, ...tail] -> head + sum(tail)\n" +
+        "}\n" +
+        "def main = {\n" +
+        "  def square = { x -> x * x }\n" +
+        "  dbg(apply(double, 21))\n" +
+        "  dbg(apply({ x -> x + 1 }, 41))\n" +
+        "  dbg(apply({ * 3 }, 14))\n" +
+        "  dbg(twice(double, 10))\n" +
+        "  dbg(square(6))\n" +
+        "  dbg(sum(map([1, 2, 3], double)))\n" +
+        "  dbg(sum([1, 2, 3] \\map { * 10 }))\n" +
+        "}\n" +
+        "main()\n"
+    runSource source |> assertRan "dbg: 42\ndbg: 42\ndbg: 42\ndbg: 40\ndbg: 36\ndbg: 12\ndbg: 60\n"
+
+[<Fact>]
+let ``Run - a capturing lambda passed to a function`` () =
+    let source =
+        "def apply = { f, x -> f(x) }\n" +
+        "def main = { n ->\n" +
+        "  apply({ x -> x + n }, 1)\n" +
+        "}\n" +
+        "dbg(main(2))\n"
+    runSource source |> assertRan "dbg: 3\n"
+
+[<Fact>]
+let ``Run - closures`` () =
+    // Closures capture locals, parameters and other closures; captured strings and records keep their types.
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def makeAdder: int -> (int -> int) = { x -> { y -> x + y } }\n" +
+        "def twice: ((int -> int), int) -> int = { f, v -> f(f(v)) }\n" +
+        "def greeter: string -> (string -> string) = { greeting -> { name -> greeting ++ \", \" ++ name } }\n" +
+        "type Point = (x: int, y: int)\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  def add5 = makeAdder(5)\n" +
+        "  println(\"{add5(10)} {twice(add5, 1)} {twice(makeAdder(1), 0)}\")\n" +
+        "  def hello = greeter(\"Hello\")\n" +
+        "  println(hello(\"Ada\"))\n" +
+        "  def origin = Point(x = 1, y = 2)\n" +
+        "  def shiftX = { d -> origin.x + d }\n" +
+        "  def compose = { g -> { v -> add5(g(v)) } }\n" +
+        "  def shiftedThenAdd5 = compose(shiftX)\n" +
+        "  def doubledThenAdd5 = compose({ v -> v * 2 })\n" +
+        "  println(\"{shiftX(10)}\")\n" +
+        "  dbg(shiftedThenAdd5(1))\n" +
+        "  dbg(doubledThenAdd5(3))\n" +
+        "  def limit = 3\n" +
+        "  rec countTo = { i -> if i < limit then countTo(i + 1) else i }\n" +
+        "  println(\"{countTo(0)}\")\n" +
+        "}\n"
+    runSource source |> assertRan "15 11 2\nHello, Ada\n11\ndbg: 7\ndbg: 11\n3\n"
 
 [<Fact>]
 let ``Run - a match with no matching arm exits 1 with a runtime error`` () =

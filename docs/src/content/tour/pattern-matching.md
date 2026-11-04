@@ -222,12 +222,14 @@ Bear in mind that patterns used in this way must be _total_, meaning they must m
 
 # If-matching
 
-If the pattern is not total and you only care about a single case, you can use `if` with a pattern instead of a full `match` expression:
+If the pattern is not total and you only care about a single case, you can test a value against a pattern with the `is` keyword instead of writing a full `match` expression:
 
 ```nanyx
-if #some(value) = getResult() then
+if getResult() is #some(value) then
   println("Got a value: {value}")
 ```
+
+The value goes on the left of `is` and the pattern on the right. Any variables the pattern binds (here `value`) are in scope in the `then` branch. The condition is a pattern test, not a comparison: it never reads an existing variable called `value`.
 
 This is equivalent to a `match` expression that only handles one case and ignores everything else:
 
@@ -235,6 +237,14 @@ This is equivalent to a `match` expression that only handles one case and ignore
 match getResult()
   | #some(value) -> println("Got a value: {value}")
   | _ -> ()
+```
+
+`is` also works as a branch condition in the multi-branch form of `if`:
+
+```nanyx
+if | input is #some(n) -> println("Got {n}")
+   | input is #none -> println("Got nothing")
+   | else -> println("Something else")
 ```
 
 # Custom patterns

@@ -10,8 +10,8 @@
     (if (result i32)
       (then
         local.get $__match_tmp_0
-        i32.const 65535
-        i32.and
+      i32.const 65535
+      i32.and
         local.set $__payload_value
     local.get $__payload_value
       )

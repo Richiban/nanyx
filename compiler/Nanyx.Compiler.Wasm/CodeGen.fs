@@ -7,6 +7,17 @@ open Parser.Program
 
 type private ContextFn = string * int * int
 
+/// The module's function table (`$ctx_table`), as far as functions used as values are concerned: a top-level
+/// function referenced without being called, or a lifted lambda, gets a slot here and is called through
+/// `call_indirect`. Shared by every function of a module and read when the table is rendered.
+type private FunctionTable =
+    { /// Function name -> (WebAssembly name, slot, arity).
+      Values: System.Collections.Generic.Dictionary<string, ContextFn>
+      /// The next free slot; starts after the slots the context machinery assigned.
+      mutable NextSlot: int
+      /// The arities of every indirect call made through a local, so a `$ctx_fn_N` type exists for each.
+      IndirectArities: System.Collections.Generic.HashSet<int> }
+
 type private TranspileEnv =
     { KnownFunctions: Set<string>
       FunctionArities: Map<string, int>
@@ -31,8 +42,15 @@ type private TranspileEnv =
       RecordFieldTypes: Map<string, Map<string, string>>
       ParamTypes: Map<string, string>
       ValueTypes: Map<string, string>
+      /// The full inferred types of top-level defs, parameters and locals, when the module was type-checked.
+      /// Record layouts are derived from these, so field access works on any expression whose type is known,
+      /// not only on locals the backend saw being assigned a record literal.
+      ValueTys: Map<string, Ty>
       /// The runtime helpers (see `runtimeHelpers`) the lowered code calls; shared by every function of a module.
-      UsedHelpers: System.Collections.Generic.HashSet<string> }
+      UsedHelpers: System.Collections.Generic.HashSet<string>
+      FunctionTable: FunctionTable
+      /// How many `for` loops enclose the expression being lowered; loop locals are named by this depth.
+      ForDepth: int }
 
 /// The names of the WebAssembly helper functions the backend emits on demand (see `runtimeHelpers`).
 module private Helpers =
@@ -43,6 +61,10 @@ module private Helpers =
     let stringEquals = "__nanyx_string_equals"
     let listLength = "__nanyx_list_length"
     let listConcat = "__nanyx_list_concat"
+    let recordSet = "__nanyx_record_set"
+    let recordCopy = "__nanyx_record_copy"
+    let floatBox = "__nanyx_float_box"
+    let floatToString = "__nanyx_float_to_string"
     let writeStdout = NyxCompiler.Intrinsics.writeStdout
     let stringLength = NyxCompiler.Intrinsics.stringLength
     let stringByteAt = NyxCompiler.Intrinsics.stringByteAt
@@ -320,6 +342,235 @@ let private runtimeHelpers : Map<string, string> =
             "  call $fd_write"
             "  drop"
             ")" ]
+      // Stores one field of a freshly allocated record and hands the record pointer back, so a record
+      // literal is built entirely on the operand stack: `base value offset -> base`. That keeps nested
+      // literals safe, since an inner allocation can never disturb an outer one held on the stack.
+      Helpers.recordSet,
+      lines
+          [ $"(func ${Helpers.recordSet} (param $base i32) (param $value i32) (param $offset i32) (result i32)"
+            "  local.get $base"
+            "  local.get $offset"
+            "  i32.add"
+            "  local.get $value"
+            "  i32.store"
+            "  local.get $base"
+            ")" ]
+      Helpers.recordCopy,
+      lines
+          [ $"(func ${Helpers.recordCopy} (param $src i32) (param $size i32) (result i32)"
+            "  (local $dst i32)"
+            "  local.get $size"
+            $"  call ${Helpers.alloc}"
+            "  local.set $dst"
+            "  local.get $dst"
+            "  local.get $src"
+            "  local.get $size"
+            $"  call ${Helpers.copyBytes}"
+            "  local.get $dst"
+            ")" ]
+      // A float is boxed: an 8-byte block holding the f64, passed around by pointer like every other
+      // value, so locals, record slots and calls stay 32-bit.
+      Helpers.floatBox,
+      lines
+          [ $"(func ${Helpers.floatBox} (param $value f64) (result i32)"
+            "  (local $box i32)"
+            "  i32.const 8"
+            $"  call ${Helpers.alloc}"
+            "  local.set $box"
+            "  local.get $box"
+            "  local.get $value"
+            "  f64.store"
+            "  local.get $box"
+            ")" ]
+      // Formats a boxed float as `-?int.frac` with the fraction rounded to six digits and trailing zeros
+      // dropped (keeping one): 6.28, 4.0, -1.5, 0.333333.
+      Helpers.floatToString,
+      lines
+          [ $"(func ${Helpers.floatToString} (param $box i32) (result i32)"
+            "  (local $x f64)"
+            "  (local $base i32)"
+            "  (local $cursor i32)"
+            "  (local $int i64)"
+            "  (local $frac i64)"
+            "  (local $tmp i64)"
+            "  (local $count i32)"
+            "  (local $pos i32)"
+            "  (local $scale i64)"
+            "  local.get $box"
+            "  f64.load"
+            "  local.set $x"
+            "  ;; 4 length bytes, a sign, up to 20 integer digits, the point, 6 digits and a terminator"
+            "  i32.const 36"
+            $"  call ${Helpers.alloc}"
+            "  local.set $base"
+            "  local.get $base"
+            "  i32.const 4"
+            "  i32.add"
+            "  local.set $cursor"
+            "  local.get $x"
+            "  f64.const 0"
+            "  f64.lt"
+            "  if"
+            "    local.get $cursor"
+            "    i32.const 45"
+            "    i32.store8"
+            "    local.get $cursor"
+            "    i32.const 1"
+            "    i32.add"
+            "    local.set $cursor"
+            "    local.get $x"
+            "    f64.neg"
+            "    local.set $x"
+            "  end"
+            "  local.get $x"
+            "  i64.trunc_sat_f64_u"
+            "  local.set $int"
+            "  local.get $x"
+            "  local.get $int"
+            "  f64.convert_i64_u"
+            "  f64.sub"
+            "  f64.const 1000000"
+            "  f64.mul"
+            "  f64.const 0.5"
+            "  f64.add"
+            "  i64.trunc_sat_f64_u"
+            "  local.set $frac"
+            "  local.get $frac"
+            "  i64.const 1000000"
+            "  i64.ge_u"
+            "  if"
+            "    local.get $int"
+            "    i64.const 1"
+            "    i64.add"
+            "    local.set $int"
+            "    i64.const 0"
+            "    local.set $frac"
+            "  end"
+            "  ;; integer digits: count them, then write them back to front"
+            "  i32.const 0"
+            "  local.set $count"
+            "  local.get $int"
+            "  local.set $tmp"
+            "  loop $count_digits"
+            "    local.get $count"
+            "    i32.const 1"
+            "    i32.add"
+            "    local.set $count"
+            "    local.get $tmp"
+            "    i64.const 10"
+            "    i64.div_u"
+            "    local.set $tmp"
+            "    local.get $tmp"
+            "    i64.const 0"
+            "    i64.ne"
+            "    br_if $count_digits"
+            "  end"
+            "  local.get $cursor"
+            "  local.get $count"
+            "  i32.add"
+            "  i32.const 1"
+            "  i32.sub"
+            "  local.set $pos"
+            "  local.get $int"
+            "  local.set $tmp"
+            "  loop $write_digits"
+            "    local.get $pos"
+            "    local.get $tmp"
+            "    i64.const 10"
+            "    i64.rem_u"
+            "    i32.wrap_i64"
+            "    i32.const 48"
+            "    i32.add"
+            "    i32.store8"
+            "    local.get $pos"
+            "    i32.const 1"
+            "    i32.sub"
+            "    local.set $pos"
+            "    local.get $tmp"
+            "    i64.const 10"
+            "    i64.div_u"
+            "    local.set $tmp"
+            "    local.get $tmp"
+            "    i64.const 0"
+            "    i64.ne"
+            "    br_if $write_digits"
+            "  end"
+            "  local.get $cursor"
+            "  local.get $count"
+            "  i32.add"
+            "  local.set $cursor"
+            "  local.get $cursor"
+            "  i32.const 46"
+            "  i32.store8"
+            "  local.get $cursor"
+            "  i32.const 1"
+            "  i32.add"
+            "  local.set $cursor"
+            "  ;; six fraction digits, most significant first"
+            "  i64.const 100000"
+            "  local.set $scale"
+            "  loop $write_frac"
+            "    local.get $cursor"
+            "    local.get $frac"
+            "    local.get $scale"
+            "    i64.div_u"
+            "    i64.const 10"
+            "    i64.rem_u"
+            "    i32.wrap_i64"
+            "    i32.const 48"
+            "    i32.add"
+            "    i32.store8"
+            "    local.get $cursor"
+            "    i32.const 1"
+            "    i32.add"
+            "    local.set $cursor"
+            "    local.get $scale"
+            "    i64.const 10"
+            "    i64.div_u"
+            "    local.set $scale"
+            "    local.get $scale"
+            "    i64.const 0"
+            "    i64.ne"
+            "    br_if $write_frac"
+            "  end"
+            "  ;; drop trailing zeros, keeping one digit after the point"
+            "  block $trim_done"
+            "    loop $trim"
+            "      local.get $cursor"
+            "      i32.const 1"
+            "      i32.sub"
+            "      i32.load8_u"
+            "      i32.const 48"
+            "      i32.ne"
+            "      br_if $trim_done"
+            "      local.get $cursor"
+            "      i32.const 2"
+            "      i32.sub"
+            "      i32.load8_u"
+            "      i32.const 46"
+            "      i32.eq"
+            "      br_if $trim_done"
+            "      local.get $cursor"
+            "      i32.const 1"
+            "      i32.sub"
+            "      local.set $cursor"
+            "      br $trim"
+            "    end"
+            "  end"
+            "  local.get $base"
+            "  local.get $cursor"
+            "  local.get $base"
+            "  i32.const 4"
+            "  i32.add"
+            "  i32.sub"
+            "  i32.store"
+            "  local.get $cursor"
+            "  i32.const 0"
+            "  i32.store8"
+            "  local.get $base"
+            "  i32.const 4"
+            "  i32.add"
+            ")" ]
       Helpers.listCons,
       lines
           [ $"(func ${Helpers.listCons} (param $head i32) (param $tail i32) (result i32)"
@@ -435,6 +686,27 @@ let private sanitizeIdentifier (name: string) =
     elif Char.IsDigit sanitized.[0] then "_" + sanitized
     else sanitized
 
+/// The f64 instruction for an operator on floats; comparisons leave an i32, arithmetic an f64 to box.
+let private wasmFloatInstruction op =
+    match op with
+    | "+" -> Some "f64.add"
+    | "-" -> Some "f64.sub"
+    | "*" -> Some "f64.mul"
+    | "/" -> Some "f64.div"
+    | "==" -> Some "f64.eq"
+    | "!=" -> Some "f64.ne"
+    | "<" -> Some "f64.lt"
+    | "<=" -> Some "f64.le"
+    | ">" -> Some "f64.gt"
+    | ">=" -> Some "f64.ge"
+    | _ -> None
+
+let private wasmFloatConst (value: float) =
+    if System.Double.IsNaN value then "nan"
+    elif System.Double.IsPositiveInfinity value then "inf"
+    elif System.Double.IsNegativeInfinity value then "-inf"
+    else value.ToString("R", System.Globalization.CultureInfo.InvariantCulture)
+
 let private wasmBinaryInstruction op =
     match op with
     | "+" -> Some "i32.add"
@@ -448,14 +720,24 @@ let private wasmBinaryInstruction op =
     | "<=" -> Some "i32.le_s"
     | ">" -> Some "i32.gt_s"
     | ">=" -> Some "i32.ge_s"
-    | "&&" -> Some "i32.and"
-    | "||" -> Some "i32.or"
+    | "and" -> Some "i32.and"
+    | "or" -> Some "i32.or"
     | _ -> None
 
 let private flattenCallArgs (args: Expression list) =
     match args with
     | [TupleExpr items] -> items
     | _ -> args
+
+/// The function-table slot of a top-level function used as a value, assigning one on first use.
+let private functionValueSlot (env: TranspileEnv) (name: string) (arity: int) : int =
+    match env.FunctionTable.Values.TryGetValue name with
+    | true, ctxFn -> ctxFnSlot ctxFn
+    | _ ->
+        let slot = env.FunctionTable.NextSlot
+        env.FunctionTable.NextSlot <- slot + 1
+        env.FunctionTable.Values.[name] <- (sanitizeIdentifier name, slot, arity)
+        slot
 
 let rec private collectExprLocalNames (expr: Expression) : string list =
     match expr with
@@ -521,23 +803,25 @@ and private collectStatementLocalNames (statements: Statement list) : string lis
 let private collectBlockLocalNames (statements: Statement list) =
     collectStatementLocalNames statements |> List.distinct
 
-/// The identifiers a pattern binds that live in `__payload_<name>` locals: tag payloads, list elements and list
-/// rests. (Plain identifier patterns alias the scrutinee local and need no local of their own.)
+/// Every identifier a pattern binds, however deeply nested.
+let rec private nestedPatternIdentifiers (pattern: Pattern) : string list =
+    match pattern with
+    | IdentifierPattern ident -> [ ident ]
+    | TagPattern(_, Some payload) -> nestedPatternIdentifiers payload
+    | ListPattern(elements, restOpt) ->
+        (elements |> List.collect nestedPatternIdentifiers)
+        @ (restOpt |> Option.map nestedPatternIdentifiers |> Option.defaultValue [])
+    | TuplePattern patterns
+    | RecordPattern(_, patterns) -> patterns |> List.collect nestedPatternIdentifiers
+    | _ -> []
+
+/// The identifiers a pattern binds that live in `__payload_<name>` locals: tag payloads, list elements and
+/// rests, and tuple elements. (A plain identifier pattern at the top of an arm aliases the scrutinee local
+/// and needs no local of its own.)
 let private patternBoundIdentifiers (pattern: Pattern) : string list =
     match pattern with
-    | TagPattern(_, Some (IdentifierPattern ident)) -> [ ident ]
-    | ListPattern(elements, restOpt) ->
-        let elementIdents =
-            elements
-            |> List.choose (function
-                | IdentifierPattern ident -> Some ident
-                | _ -> None)
-        let restIdents =
-            match restOpt with
-            | Some (IdentifierPattern ident) -> [ ident ]
-            | _ -> []
-        elementIdents @ restIdents
-    | _ -> []
+    | IdentifierPattern _ -> []
+    | nested -> nestedPatternIdentifiers nested
 
 let rec private collectPayloadLocalsExpr expr =
     match expr with
@@ -637,8 +921,90 @@ let private trySimpleTypeName (ty: Ty) =
     | TyPrimitive "string" -> Some "string"
     | TyPrimitive "int" -> Some "int"
     | TyPrimitive "bool" -> Some "bool"
+    | TyPrimitive "float" -> Some "float"
     | TyApply("list", _) -> Some "list"
     | _ -> None
+
+/// The payload type of `#tagName(...)` within `ty`, which may be the tag itself, a union containing it, or a
+/// nominal type wrapping either.
+let rec private tryTagPayloadType (tagName: string) (ty: Ty) : Ty option =
+    match ty with
+    | TyTag(name, Some payloadTy) when name = tagName -> Some payloadTy
+    | TyUnion options -> options |> List.tryPick (tryTagPayloadType tagName)
+    | TyNominal(_, underlying, _) -> tryTagPayloadType tagName underlying
+    | _ -> None
+
+let rec private tryListElementType (ty: Ty) : Ty option =
+    match ty with
+    | TyApply("list", [ elementTy ]) -> Some elementTy
+    | TyNominal(_, underlying, _) -> tryListElementType underlying
+    | _ -> None
+
+let rec private tryRecordFieldTys (ty: Ty) : Map<string, Ty> option =
+    match ty with
+    | TyRecord fields -> Some fields
+    | TyNominal(_, underlying, _) -> tryRecordFieldTys underlying
+    | _ -> None
+
+/// The simple types of the identifiers a typed pattern binds: `#some(n)` binds `n` at the tag's payload
+/// type, `[x, ...rest]` binds `x` at the element type and `rest` as a list, and a bare `n` binds at the
+/// scrutinee's type.
+let private patternBoundValueTypes (typedPattern: TypedPattern) : (string * string) list =
+    let rec boundTypes (pattern: Pattern) (ty: Ty) : (string * string) list =
+        let under (tyOpt: Ty option) (inner: Pattern) =
+            tyOpt |> Option.map (boundTypes inner) |> Option.defaultValue []
+        match pattern with
+        | IdentifierPattern ident ->
+            trySimpleTypeName ty |> Option.map (fun tyName -> ident, tyName) |> Option.toList
+        | TagPattern(tagName, Some payload) -> under (tryTagPayloadType tagName ty) payload
+        | ListPattern(elements, restOpt) ->
+            let elementTy = tryListElementType ty
+            let elementBindings = elements |> List.collect (under elementTy)
+            let restBinding =
+                match restOpt with
+                | Some (IdentifierPattern ident) -> [ ident, "list" ]
+                | Some rest -> boundTypes rest ty
+                | None -> []
+            elementBindings @ restBinding
+        | TuplePattern patterns ->
+            let fieldTys = tryRecordFieldTys ty
+            patterns
+            |> List.mapi (fun index element -> under (fieldTys |> Option.bind (Map.tryFind (string index))) element)
+            |> List.concat
+        | _ -> []
+    boundTypes typedPattern.Pattern typedPattern.Type
+
+/// The full inferred types of a function's parameters and the locals defined anywhere in its body.
+let private collectTypedValueTys (typedExpr: TypedExpr) : Map<string, Ty> =
+    let parameterTys =
+        match typedExpr.Expr, typedExpr.Type with
+        | Lambda([ (name, _) ], _), TyFunc(inputTy, _) -> [ name, inputTy ]
+        | Lambda(parameters, _), TyFunc(TyRecord fields, _) ->
+            parameters
+            |> List.mapi (fun index (name, _) -> fields |> Map.tryFind (string index) |> Option.map (fun ty -> name, ty))
+            |> List.choose id
+        | _ -> []
+    let rec collectExpr (acc: Map<string, Ty>) (expr: TypedExpr) =
+        let accWithBody =
+            match expr.Body with
+            | Some body -> collectExpr acc body
+            | None -> acc
+        let accWithStatements =
+            match expr.Statements with
+            | Some statements -> statements |> List.fold collectStatement accWithBody
+            | None -> accWithBody
+        match expr.MatchArms with
+        | Some arms -> arms |> List.fold (fun state (_, armExpr) -> collectExpr state armExpr) accWithStatements
+        | None -> accWithStatements
+    and collectStatement (acc: Map<string, Ty>) statement =
+        match statement with
+        | TypedDefStatement(_, name, _, expr) -> collectExpr (acc |> Map.add name expr.Type) expr
+        | TypedExprStatement expr -> collectExpr acc expr
+        | TypedUseStatement(_, Some expr) -> collectExpr acc expr
+        | TypedUseStatement(_, None)
+        | TypedImportStatement _
+        | TypedTypeDefStatement _ -> acc
+    collectExpr (Map.ofList parameterTys) typedExpr
 
 /// The simple types inference found for a function's parameters and the locals of its body.
 let private collectTypedValueTypes (typedExpr: TypedExpr) =
@@ -665,7 +1031,14 @@ let private collectTypedValueTypes (typedExpr: TypedExpr) =
             | Some statements -> statements |> List.fold collectStatement accWithBody
             | None -> accWithBody
         match expr.MatchArms with
-        | Some arms -> arms |> List.fold (fun state (_, armExpr) -> collectExpr state armExpr) accWithStatements
+        | Some arms ->
+            arms
+            |> List.fold (fun state (typedPatterns, armExpr) ->
+                let withBindings =
+                    typedPatterns
+                    |> List.collect patternBoundValueTypes
+                    |> List.fold (fun acc (ident, tyName) -> acc |> Map.add ident tyName) state
+                collectExpr withBindings armExpr) accWithStatements
         | None -> accWithStatements
     and collectStatement (acc: Map<string, string>) statement =
         match statement with
@@ -684,34 +1057,65 @@ let private collectTypedValueTypes (typedExpr: TypedExpr) =
         | TypedTypeDefStatement _ -> acc
     collectExpr (Map.ofList parameterTypes) typedExpr
 
+/// The fields of a record type, looking through nominal wrappers.
+/// The inferred type of an expression, when `env.ValueTys` can tell: a named value, a field of a record-typed
+/// expression, or the result of calling a known function.
+let rec private tryExprTy (env: TranspileEnv) (expr: Expression) : Ty option =
+    match expr with
+    | IdentifierExpr(name, _) -> env.ValueTys |> Map.tryFind name
+    | MemberAccess(inner, fieldName, _) ->
+        tryExprTy env inner |> Option.bind tryRecordFieldTys |> Option.bind (Map.tryFind fieldName)
+    | FunctionCall("__with", _, baseExpr :: _) -> tryExprTy env baseExpr  // a record update has the record's type
+    | FunctionCall(name, _, _)
+    | Pipe(_, name, _, _) ->
+        env.ValueTys
+        |> Map.tryFind name
+        |> Option.bind (function
+            | TyFunc(_, returnTy) -> Some returnTy
+            | _ -> None)
+    | _ -> None
+
+/// The layout (field names in storage order) of a record-typed expression, from its inferred type. Records are
+/// stored with their fields sorted by name, which is also the order of a `Map`'s keys.
+let private tryRecordLayoutOfExpr (env: TranspileEnv) (expr: Expression) : string list option =
+    tryExprTy env expr
+    |> Option.bind tryRecordFieldTys
+    |> Option.map (fun fields -> fields |> Map.toList |> List.map fst)
+
 /// The simple type ("string", "int" or "bool") of an expression, when the backend can tell. Strings matter most:
 /// `+` and `==` are lowered differently when an operand is known to be a string.
 let rec private tryGetExprTypeName (env: TranspileEnv) (expr: Expression) =
+    let fromInferredType () = tryExprTy env expr |> Option.bind trySimpleTypeName
     match expr with
     | LiteralExpr(StringLit _) -> Some "string"
     | LiteralExpr(IntLit _) -> Some "int"
+    | LiteralExpr(FloatLit _) -> Some "float"
     | LiteralExpr(BoolLit _) -> Some "bool"
     | InterpolatedString _ -> Some "string"
     | IdentifierExpr(name, _) ->
         env.ValueTypes |> Map.tryFind name
         |> Option.orElseWith (fun () -> env.ParamTypes |> Map.tryFind name)
-    | MemberAccess(IdentifierExpr(varName, _), fieldName, _) ->
-        match env.RecordFieldTypes |> Map.tryFind varName with
-        | Some fieldTypes -> fieldTypes |> Map.tryFind fieldName
-        | None -> None
-    | BinaryOp(op, _, _) when [ "=="; "!="; "<"; "<="; ">"; ">="; "&&"; "||" ] |> List.contains op -> Some "bool"
+        |> Option.orElseWith fromInferredType
+    | MemberAccess(IdentifierExpr(varName, _), fieldName, _) when env.RecordFieldTypes |> Map.containsKey fieldName |> not && env.RecordFieldTypes |> Map.containsKey varName ->
+        env.RecordFieldTypes.[varName] |> Map.tryFind fieldName |> Option.orElseWith fromInferredType
+    | MemberAccess _ -> fromInferredType ()
+    | BinaryOp(op, _, _) when [ "=="; "!="; "<"; "<="; ">"; ">="; "and"; "or" ] |> List.contains op -> Some "bool"
+    | FunctionCall("not", _, _) -> Some "bool"
+    | FunctionCall("__with", _, baseExpr :: _) -> tryGetExprTypeName env baseExpr
     | BinaryOp(_, left, right) ->
         tryGetExprTypeName env left |> Option.orElseWith (fun () -> tryGetExprTypeName env right)
     | ListExpr _ -> Some "list"
     | FunctionCall(name, _, _)
-    | Pipe(_, name, _, _) -> env.FunctionReturnTypes |> Map.tryFind name
+    | Pipe(_, name, _, _) ->
+        // A top-level function's declared result, or else what inference knows (a local closure's, say).
+        env.FunctionReturnTypes |> Map.tryFind name |> Option.orElseWith fromInferredType
     | IfExpr(_, thenExpr, elseExpr) ->
         tryGetExprTypeName env thenExpr |> Option.orElseWith (fun () -> tryGetExprTypeName env elseExpr)
     | Block statements ->
         match List.tryLast statements with
         | Some (ExprStatement last) -> tryGetExprTypeName env last
         | _ -> None
-    | _ -> None
+    | _ -> fromInferredType ()
 
 let private isStringExpr (env: TranspileEnv) (expr: Expression) =
     tryGetExprTypeName env expr = Some "string"
@@ -720,6 +1124,75 @@ let private collectInterpolatedStringExpr (expr: Expression) : bool =
     match expr with
     | InterpolatedString _ -> true
     | _ -> false
+
+/// The immediate sub-expressions of `expr`, for traversals that only need to look inside.
+let private exprChildren (expr: Expression) : Expression list =
+    match expr with
+    | InterpolatedString parts ->
+        parts |> List.choose (function StringExpr value -> Some value | StringText _ -> None)
+    | Block statements ->
+        statements
+        |> List.choose (function
+            | DefStatement(_, _, _, rhs) -> Some rhs
+            | ExprStatement value -> Some value
+            | _ -> None)
+    | BinaryOp(_, left, right) -> [ left; right ]
+    | IfExpr(cond, thenExpr, elseExpr) -> [ cond; thenExpr; elseExpr ]
+    | FunctionCall(_, _, args) -> args
+    | Lambda(_, body) -> [ body ]
+    | Pipe(value, _, _, args) -> value :: args
+    | TupleExpr items
+    | ListExpr items -> items
+    | RecordExpr fields ->
+        fields
+        |> List.map (function
+            | NamedField(_, value) -> value
+            | PositionalField value -> value)
+    | Match(values, arms) -> values @ (arms |> List.map snd)
+    | UseIn(_, body) -> [ body ]
+    | MemberAccess(inner, _, _) -> [ inner ]
+    | TagExpr(_, payload) -> Option.toList payload
+    | WorkflowBindExpr(_, value)
+    | WorkflowReturnExpr value -> [ value ]
+    | ContextMemberCall(_, _, args) -> args
+    | ContextMemberAccess(_, _)
+    | UnitExpr
+    | LiteralExpr _
+    | IdentifierExpr _ -> []
+
+/// Whether lowering `expr` needs the interpolation scratch locals (see `interpolationLocalNames`).
+/// Used for function bodies and for the script start function alike, so both declare the same locals.
+let rec private containsInterpolation (expr: Expression) : bool =
+    match expr with
+    | InterpolatedString _ -> true
+    | _ -> exprChildren expr |> List.exists containsInterpolation
+
+/// The most `{...}` holes any single interpolated string in `expr` has: each hole is evaluated once
+/// into its own `__interp_hole_N` local, so the function has to declare that many.
+let rec private maxInterpolationHoles (expr: Expression) : int =
+    let own =
+        match expr with
+        | InterpolatedString parts -> parts |> List.filter (function StringExpr _ -> true | _ -> false) |> List.length
+        | _ -> 0
+    exprChildren expr |> List.fold (fun acc child -> max acc (maxInterpolationHoles child)) own
+
+let private interpolationHoleLocalName (index: int) = $"__interp_hole_{index}"
+
+/// The locals of the `for` loops in an expression. A loop at nesting depth `d` keeps its position in
+/// `__for_cursor_d` and `__for_end_d` and its element in `__for_<parameter>_d`; sibling loops share them,
+/// nested loops differ by depth.
+let private forLoopCursorLocal depth = $"__for_cursor_{depth}"
+let private forLoopEndLocal depth = $"__for_end_{depth}"
+let private forLoopElementLocal (parameter: string) depth = $"__for_{sanitizeIdentifier parameter}_{depth}"
+
+let rec private collectForLoopLocals (depth: int) (expr: Expression) : string list =
+    match expr with
+    | FunctionCall("__for", _, [ iterable; Lambda(parameters, body) ]) ->
+        [ forLoopCursorLocal depth; forLoopEndLocal depth ]
+        @ (parameters |> List.map (fun (parameter, _) -> forLoopElementLocal parameter depth))
+        @ collectForLoopLocals depth iterable
+        @ collectForLoopLocals (depth + 1) body
+    | _ -> exprChildren expr |> List.collect (collectForLoopLocals depth)
 
 let private interpolationLocalNames =
     [ "__interp_len"
@@ -733,6 +1206,14 @@ let private interpolationLocalNames =
       "__interp_lo"
       "__interp_hi"
       "__interp_swap" ]
+
+/// Every local that lowering the interpolations in `expr` needs, or none when it has no interpolation.
+let private interpolationLocalsFor (expr: Expression) : string list =
+    if containsInterpolation expr then
+        interpolationLocalNames
+        @ [ for index in 0 .. maxInterpolationHoles expr - 1 -> interpolationHoleLocalName index ]
+    else
+        []
 
 let private collectContextUseBindings (expr: Expression) : (string * Expression) list list =
     // Helper to extract bindings from a record expression
@@ -849,7 +1330,7 @@ let rec private countMatchExpressions (expr: Expression) : int =
         let arity = values.Length
         let maxArityInArms =
             arms |> List.map (fun (_, armExpr) -> countMatchArity armExpr) |> List.max
-        max arity maxArityInArms
+        arity + maxArityInArms
     | FunctionCall(_, _, args) -> args |> List.sumBy countMatchExpressions
     | BinaryOp(_, left, right) -> countMatchExpressions left + countMatchExpressions right
     | IfExpr(cond, thenExpr, elseExpr) ->
@@ -890,10 +1371,12 @@ let rec private countMatchExpressions (expr: Expression) : int =
 and countMatchArity (expr: Expression) : int =
     match expr with
     | Match(values, arms) ->
+        // A match inside an arm runs while the outer scrutinees are still held, so it needs its own temps on
+        // top of the outer ones; sibling arms reuse the same temps.
         let arity = values.Length
         let maxArityInArms =
             arms |> List.map (fun (_, armExpr) -> countMatchArity armExpr) |> maxOrZero
-        max arity maxArityInArms
+        arity + maxArityInArms
     | FunctionCall(_, _, args) -> args |> List.map countMatchArity |> maxOrZero
     | BinaryOp(_, left, right) -> max (countMatchArity left) (countMatchArity right)
     | IfExpr(cond, thenExpr, elseExpr) ->
@@ -1029,7 +1512,8 @@ let rec private usesHeapAllocationExpr (expr: Expression) : bool =
     match expr with
     | TupleExpr _
     | ListExpr _
-    | RecordExpr _ -> true
+    | RecordExpr _
+    | FunctionCall("__closure", _, _) -> true
     | FunctionCall(_, _, args) -> flattenCallArgs args |> List.exists usesHeapAllocationExpr
     | BinaryOp(_, left, right) -> usesHeapAllocationExpr left || usesHeapAllocationExpr right
     | IfExpr(cond, thenExpr, elseExpr) ->
@@ -1125,19 +1609,48 @@ and private collectStringLiteralsExpr (expr: Expression) : string list =
             | PositionalField value -> collectStringLiteralsExpr value)
     | Match(values, arms) ->
         let valueStrings = values |> List.collect collectStringLiteralsExpr
-        let armStrings = arms |> List.collect (fun (_, armExpr) -> collectStringLiteralsExpr armExpr)
+        let armStrings =
+            arms
+            |> List.collect (fun (patterns, armExpr) ->
+                (patterns |> List.collect collectStringLiteralsPattern) @ collectStringLiteralsExpr armExpr)
         valueStrings @ armStrings
     | UseIn(_, body) -> collectStringLiteralsExpr body
     | MemberAccess(inner, _, _) -> collectStringLiteralsExpr inner
     | TagExpr(_, payload) -> payload |> Option.map collectStringLiteralsExpr |> Option.defaultValue []
-    | InterpolatedString _
-    | WorkflowBindExpr _
-    | WorkflowReturnExpr _
+    | InterpolatedString parts ->
+        // Literals inside `{...}` holes need data-segment offsets like any other literal.
+        parts
+        |> List.collect (function
+            | StringText _ -> []
+            | StringExpr value -> collectStringLiteralsExpr value)
+    | WorkflowBindExpr(_, value)
+    | WorkflowReturnExpr value -> collectStringLiteralsExpr value
     | ContextMemberAccess(_, _) -> []
     | ContextMemberCall(_, _, args) -> args |> List.collect collectStringLiteralsExpr
     | UnitExpr
     | LiteralExpr _
     | IdentifierExpr _ -> []
+
+/// String literals that appear inside patterns (`| "Sat" -> ...`, `| #name("x") -> ...`) need data-segment
+/// offsets just like literals in expressions.
+and private collectStringLiteralsPattern (pattern: Pattern) : string list =
+    match pattern with
+    | LiteralPattern(StringLit value) -> [ value ]
+    | TagPattern(_, Some payload) -> collectStringLiteralsPattern payload
+    | TuplePattern patterns
+    | ListPattern(patterns, _) -> patterns |> List.collect collectStringLiteralsPattern
+    | ListSplatMiddle(beforePatterns, afterPatterns) ->
+        (beforePatterns |> List.collect collectStringLiteralsPattern)
+        @ (afterPatterns |> List.collect collectStringLiteralsPattern)
+    | RecordPattern(_, patterns) -> patterns |> List.collect collectStringLiteralsPattern
+    | RecordMemberPattern members -> members |> List.collect (fun (_, p) -> collectStringLiteralsPattern p)
+    | GuardPattern(_, value)
+    | RangePattern(value, _) -> collectStringLiteralsExpr value
+    | TagPattern(_, None)
+    | LiteralPattern _
+    | IdentifierPattern _
+    | WildcardPattern
+    | ElsePattern -> []
 
 and private collectStringLiteralsStatements (statements: Statement list) : string list =
     statements
@@ -1385,6 +1898,24 @@ and private collectTagNamesPattern (pattern: Pattern) : string list =
     | ElsePattern -> []
 
 let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : string =
+    /// The pointer to a string literal's bytes in the data section.
+    let stringLiteralCode (value: string) =
+        match env.StringLiterals |> Map.tryFind value with
+        | Some offset -> $"i32.const {offset}"
+        | None -> failwith $"Internal error: missing string literal offset for {value}"
+
+    /// Allocates a block of 4-byte slots and fills them with `values` in order, leaving the block's pointer on
+    /// the stack. The block is reserved before any value is evaluated and the pointer stays on the operand
+    /// stack throughout, so a value that allocates (a nested record, a string) cannot overwrite the block.
+    let allocateSlots (values: Expression list) =
+        env.UsedHelpers.Add Helpers.alloc |> ignore
+        env.UsedHelpers.Add Helpers.recordSet |> ignore
+        let stores =
+            values
+            |> List.mapi (fun index value ->
+                $"{transpileExpression env value}\n    i32.const {index * 4}\n    call ${Helpers.recordSet}")
+        ($"i32.const {values.Length * 4}\n    call ${Helpers.alloc}" :: stores) |> String.concat "\n    "
+
     let renderStaticBytes bytes =
         bytes
         |> Array.toList
@@ -1409,52 +1940,93 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
         let falseBytes = renderStaticBytes (Encoding.UTF8.GetBytes "false")
         $"{exprCode}\n    if\n      {trueBytes}\n    else\n      {falseBytes}\n    end"
 
-    let renderInterpolationPartLength part =
+    // Each `{...}` hole is evaluated exactly once, up front, into `__interp_hole_N`. The length and
+    // write passes then only read that local. Evaluating a hole in the write pass would be wrong twice
+    // over: its side effects would run again, and anything it allocated would land on top of the
+    // output buffer, which is only reserved once the whole string has been written.
+    let interpolationHoleType inner =
+        match tryGetExprTypeName env inner with
+        | Some ("string" | "int" | "bool" | "float" as typeName) -> typeName
+        | Some other -> failwith $"Unsupported interpolated value type for WASM MVP backend: {other}"
+        | None -> failwith $"Unable to determine interpolated value type for WASM MVP backend: {inner}"
+
+    // A float hole is formatted to a string here, in the evaluation pass, since formatting allocates and
+    // the length and write passes must not.
+    let renderInterpolationHoleEval (index: int) (inner: Expression) =
+        let valueCode =
+            match interpolationHoleType inner with
+            | "float" ->
+                env.UsedHelpers.Add Helpers.floatToString |> ignore
+                $"{transpileExpression env inner}\n    call ${Helpers.floatToString}"
+            | _ -> transpileExpression env inner
+        $"{valueCode}\n    local.set ${interpolationHoleLocalName index}"
+
+    let renderInterpolationPartLength (part, holeIndex) =
         match part with
         | StringText text ->
             let len = Encoding.UTF8.GetByteCount text
             $"local.get $__interp_len\n    i32.const {len}\n    i32.add\n    local.set $__interp_len"
         | StringExpr inner ->
-            let exprCode = transpileExpression env inner
-            match tryGetExprTypeName env inner with
-            | Some "string" ->
-                $"{exprCode}\n    local.tee $__interp_ptr\n    i32.const 4\n    i32.sub\n    i32.load\n    local.get $__interp_len\n    i32.add\n    local.set $__interp_len"
-            | Some "int" -> renderIntLength exprCode
-            | Some "bool" -> renderBoolLength exprCode
-            | Some other -> failwith $"Unsupported interpolated value type for WASM MVP backend: {other}"
-            | None -> failwith $"Unable to determine interpolated value type for WASM MVP backend: {inner}"
+            let valueCode = $"local.get ${interpolationHoleLocalName holeIndex}"
+            match interpolationHoleType inner with
+            | "string" | "float" ->
+                $"{valueCode}\n    i32.const 4\n    i32.sub\n    i32.load\n    local.get $__interp_len\n    i32.add\n    local.set $__interp_len"
+            | "int" -> renderIntLength valueCode
+            | _ -> renderBoolLength valueCode
 
-    let renderInterpolationPartWrite part =
+    let renderInterpolationPartWrite (part, holeIndex) =
         match part with
         | StringText text -> renderStaticBytes (Encoding.UTF8.GetBytes text)
         | StringExpr inner ->
-            let exprCode = transpileExpression env inner
-            match tryGetExprTypeName env inner with
-            | Some "string" -> renderStringCopy exprCode
-            | Some "int" -> renderIntWrite exprCode
-            | Some "bool" -> renderBoolWrite exprCode
-            | Some other -> failwith $"Unsupported interpolated value type for WASM MVP backend: {other}"
-            | None -> failwith $"Unable to determine interpolated value type for WASM MVP backend: {inner}"
+            let valueCode = $"local.get ${interpolationHoleLocalName holeIndex}"
+            match interpolationHoleType inner with
+            | "string" | "float" -> renderStringCopy valueCode
+            | "int" -> renderIntWrite valueCode
+            | _ -> renderBoolWrite valueCode
 
     match expr with
     | UnitExpr ->
         "i32.const 0"
     | LiteralExpr(IntLit value) ->
         $"i32.const {value}"
+    | LiteralExpr(FloatLit value) ->
+        env.UsedHelpers.Add Helpers.floatBox |> ignore
+        $"f64.const {wasmFloatConst value}\n    call ${Helpers.floatBox}"
     | LiteralExpr(BoolLit value) ->
         if value then "i32.const 1" else "i32.const 0"
-    | LiteralExpr(StringLit value) ->
-        match env.StringLiterals |> Map.tryFind value with
-        | Some offset -> $"i32.const {offset}"
-        | None -> failwith $"Internal error: missing string literal offset for {value}"
+    | LiteralExpr(StringLit value) -> stringLiteralCode value
     | InterpolatedString parts ->
-        let lengthCode = parts |> List.map renderInterpolationPartLength |> String.concat "\n    "
-        let writeCode = parts |> List.map renderInterpolationPartWrite |> String.concat "\n    "
-        $"i32.const 0\n    local.set $__interp_len\n    {lengthCode}\n    global.get $heap_ptr\n    local.tee $__interp_base\n    local.get $__interp_len\n    i32.store\n    local.get $__interp_base\n    i32.const 4\n    i32.add\n    local.set $__interp_cursor\n    {writeCode}\n    local.get $__interp_cursor\n    i32.const 0\n    i32.store8\n    local.get $__interp_base\n    local.get $__interp_len\n    i32.const 5\n    i32.add\n    i32.add\n    global.set $heap_ptr\n    local.get $__interp_base\n    i32.const 4\n    i32.add"
+        // Pair every part with the index of the hole local it reads (text parts get a dummy index).
+        let indexedParts =
+            parts
+            |> List.fold (fun (acc, nextHole) part ->
+                match part with
+                | StringExpr _ -> ((part, nextHole) :: acc, nextHole + 1)
+                | StringText _ -> ((part, -1) :: acc, nextHole)) ([], 0)
+            |> fst
+            |> List.rev
+        let evalCode =
+            indexedParts
+            |> List.choose (function
+                | (StringExpr inner, holeIndex) -> Some (renderInterpolationHoleEval holeIndex inner)
+                | _ -> None)
+            |> String.concat "\n    "
+        let lengthCode = indexedParts |> List.map renderInterpolationPartLength |> String.concat "\n    "
+        let writeCode = indexedParts |> List.map renderInterpolationPartWrite |> String.concat "\n    "
+        $"{evalCode}\n    i32.const 0\n    local.set $__interp_len\n    {lengthCode}\n    global.get $heap_ptr\n    local.tee $__interp_base\n    local.get $__interp_len\n    i32.store\n    local.get $__interp_base\n    i32.const 4\n    i32.add\n    local.set $__interp_cursor\n    {writeCode}\n    local.get $__interp_cursor\n    i32.const 0\n    i32.store8\n    local.get $__interp_base\n    local.get $__interp_len\n    i32.const 5\n    i32.add\n    i32.add\n    global.set $heap_ptr\n    local.get $__interp_base\n    i32.const 4\n    i32.add"
     | IdentifierExpr(name, _) ->
         match env.Locals |> Map.tryFind name with
         | Some localName -> $"local.get ${localName}"
-        | None when env.KnownFunctions.Contains name -> $"call ${sanitizeIdentifier name}"
+        | None when env.KnownFunctions.Contains name ->
+            match env.FunctionArities |> Map.tryFind name with
+            | Some arity when arity > 0 ->
+                // A function with parameters, referenced rather than called: the value is its table slot.
+                if env.FunctionContextRequirements.ContainsKey name then
+                    failwith $"Unsupported for WASM MVP backend: '{name}' requires contexts and cannot be used as a value"
+                $"i32.const {functionValueSlot env name arity}"
+            | _ ->
+                // A top-level value (or a parameterless function): evaluate it.
+                $"call ${sanitizeIdentifier name}"
         | None -> failwith $"Unsupported identifier for WASM MVP backend: {name}"
     | TagExpr(name, None) ->
         match env.TagIds |> Map.tryFind name with
@@ -1493,6 +2065,20 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
         | _ ->
             env.UsedHelpers.Add Helpers.stringEquals |> ignore
             $"{leftCode}\n    {rightCode}\n    call ${Helpers.stringEquals}\n    i32.eqz"
+    | BinaryOp(op, left, right) when tryGetExprTypeName env left = Some "float" || tryGetExprTypeName env right = Some "float" ->
+        // Floats are boxed: unbox both operands, compute in f64, and box an arithmetic result.
+        match wasmFloatInstruction op with
+        | Some instr ->
+            let leftCode = transpileExpression env left
+            let rightCode = transpileExpression env right
+            let compute = $"{leftCode}\n    f64.load\n    {rightCode}\n    f64.load\n    {instr}"
+            if instr.EndsWith "eq" || instr.EndsWith "ne" || instr.EndsWith "lt" || instr.EndsWith "le" || instr.EndsWith "gt" || instr.EndsWith "ge" then
+                compute
+            else
+                env.UsedHelpers.Add Helpers.floatBox |> ignore
+                $"{compute}\n    call ${Helpers.floatBox}"
+        | None ->
+            failwith $"Unsupported binary operator on floats for WASM MVP backend: {op}"
     | BinaryOp(op, left, right) ->
         match wasmBinaryInstruction op with
         | Some instr ->
@@ -1514,18 +2100,8 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
         let elseCode = transpileExpression env elseExpr
         $"{condCode}\n    (if (result i32)\n      (then\n        {thenCode}\n      )\n      (else\n        {elseCode}\n      )\n    )"
     | TupleExpr items ->
-        // Allocate (4 * n) bytes on the heap for n i32 values
-        // Store each item, return pointer to first element
-        let n = items.Length
-        let sizeBytes = n * 4
-        let itemCodes = items |> List.mapi (fun i item ->
-            let itemCode = transpileExpression env item
-            let offset = i * 4
-            // Get heap pointer, add offset, get value, store
-            $"global.get $heap_ptr\n    i32.const {offset}\n    i32.add\n    {itemCode}\n    i32.store")
-        let storeAll = itemCodes |> String.concat "\n    "
-        // Store all items, then push return value (original ptr), then bump heap
-        $"{storeAll}\n    global.get $heap_ptr\n    global.get $heap_ptr\n    i32.const {sizeBytes}\n    i32.add\n    global.set $heap_ptr"
+        // A tuple is a block of one 4-byte slot per item, in order.
+        allocateSlots items
     | RecordExpr fields ->
         // Sort fields alphabetically by name, store in that order on heap
         let sortedFields =
@@ -1535,14 +2111,8 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                 | NamedField(name, expr) -> (name, expr)
                 | PositionalField expr -> (string i, expr))
             |> List.sortBy fst
-        let n = sortedFields.Length
-        let sizeBytes = n * 4
-        let fieldCodes = sortedFields |> List.mapi (fun i (_, expr) ->
-            let exprCode = transpileExpression env expr
-            let offset = i * 4
-            $"global.get $heap_ptr\n    i32.const {offset}\n    i32.add\n    {exprCode}\n    i32.store")
-        let storeAll = fieldCodes |> String.concat "\n    "
-        $"{storeAll}\n    global.get $heap_ptr\n    global.get $heap_ptr\n    i32.const {sizeBytes}\n    i32.add\n    global.set $heap_ptr"
+        // A record is a block of one 4-byte slot per field, in field-name order.
+        allocateSlots (sortedFields |> List.map snd)
     | MemberAccess(recordExpr, fieldName, _) ->
         // Support both numeric indices (t.0, t.1) and named fields (r.name)
         match System.Int32.TryParse(fieldName) with
@@ -1552,7 +2122,19 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
             let offset = index * 4
             $"{recordCode}\n    i32.const {offset}\n    i32.add\n    i32.load"
         | false, _ ->
-            // Named field - look up layout to find offset
+            // Named field: find its offset from the record's layout. The inferred type is the most general
+            // source (it covers nested records, constructor results and top-level values); the syntactic
+            // bookkeeping below remains for modules compiled without type information.
+            let loadField (fieldNames: string list) =
+                match fieldNames |> List.tryFindIndex ((=) fieldName) with
+                | Some index ->
+                    let recordCode = transpileExpression env recordExpr
+                    let offset = index * 4
+                    Some $"{recordCode}\n    i32.const {offset}\n    i32.add\n    i32.load"
+                | None -> None
+            match tryRecordLayoutOfExpr env recordExpr |> Option.bind loadField with
+            | Some code -> code
+            | None ->
             match recordExpr with
             | IdentifierExpr(varName, _) ->
                 match env.RecordLayouts |> Map.tryFind varName with
@@ -1613,71 +2195,83 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
             | IdentifierPattern _ -> true
             | _ -> false
 
-        // The code that loads element `index` of the list in `tempName`; `listTailCode` the tail after `count` cells.
-        let listTailCode tempName count =
-            $"local.get ${tempName}" + String.replicate count "\n      i32.const 4\n      i32.add\n      i32.load"
-        let listElementCode tempName index =
-            $"{listTailCode tempName index}\n      i32.load"
+        // Patterns are lowered against a `valueCode` snippet that pushes the value being matched: the
+        // scrutinee local at the top of an arm, and a load from it for a tuple element, list element or tag
+        // payload below that. Every snippet is a pure load, so it is safe to emit it more than once.
+        let listTailCode valueCode count =
+            valueCode + String.replicate count "\n      i32.const 4\n      i32.add\n      i32.load"
+        let listElementCode valueCode index =
+            $"{listTailCode valueCode index}\n      i32.load"
+        let tupleElementCode valueCode index =
+            $"{valueCode}\n      i32.const {index * 4}\n      i32.add\n      i32.load"
+        let tagPayloadCode valueCode =
+            $"{valueCode}\n      i32.const {tagPayloadMask}\n      i32.and"
 
-        let patternCondition pattern tempName =
+        /// `first` and then, only if it held, `second` (so `second` may load through pointers that are
+        /// only valid when `first` holds).
+        let guarded first second =
+            $"{first}\n      (if (result i32)\n        (then\n          {second})\n        (else i32.const 0))"
+        let allOf conditions =
+            match conditions |> List.filter (fun condition -> condition <> "i32.const 1") with
+            | [] -> "i32.const 1"
+            | [ single ] -> single
+            | many -> (many |> String.concat "\n      ") + String.replicate (many.Length - 1) "\n      i32.and"
+
+        let rec patternCondition pattern valueCode =
             match pattern with
             | ListPattern(elements, restOpt) ->
                 env.UsedHelpers.Add Helpers.listLength |> ignore
                 let lengthInstr = if restOpt.IsSome then "i32.ge_s" else "i32.eq"
                 let lengthCheck =
-                    $"local.get ${tempName}\n      call ${Helpers.listLength}\n      i32.const {elements.Length}\n      {lengthInstr}"
+                    $"{valueCode}\n      call ${Helpers.listLength}\n      i32.const {elements.Length}\n      {lengthInstr}"
                 let elementChecks =
                     elements
-                    |> List.mapi (fun index element ->
-                        match element with
-                        | IdentifierPattern _
-                        | WildcardPattern
-                        | ElsePattern -> None
-                        | LiteralPattern(IntLit value) ->
-                            Some $"{listElementCode tempName index}\n      i32.const {value}\n      i32.eq"
-                        | LiteralPattern(BoolLit value) ->
-                            Some $"{listElementCode tempName index}\n      i32.const {(if value then 1 else 0)}\n      i32.eq"
-                        | other -> failwith $"Unsupported list element pattern for WASM MVP backend: {other}")
-                    |> List.choose id
-                match restOpt with
-                | None
-                | Some (IdentifierPattern _)
-                | Some WildcardPattern
-                | Some ElsePattern -> ()
-                | Some other -> failwith $"Unsupported list rest pattern for WASM MVP backend: {other}"
-                (lengthCheck :: elementChecks) |> String.concat "\n      " |> fun code ->
-                    code + String.replicate elementChecks.Length "\n      i32.and"
+                    |> List.mapi (fun index element -> patternCondition element (listElementCode valueCode index))
+                    |> allOf
+                let restCheck =
+                    match restOpt with
+                    | Some rest -> patternCondition rest (listTailCode valueCode elements.Length)
+                    | None -> "i32.const 1"
+                // Elements only exist once the length check holds.
+                match allOf [ elementChecks; restCheck ] with
+                | "i32.const 1" -> lengthCheck
+                | elementsAndRest -> guarded lengthCheck elementsAndRest
+            | TuplePattern patterns ->
+                patterns
+                |> List.mapi (fun index element -> patternCondition element (tupleElementCode valueCode index))
+                |> allOf
             | LiteralPattern(IntLit value) ->
-                $"local.get ${tempName}\n      i32.const {value}\n      i32.eq"
+                $"{valueCode}\n      i32.const {value}\n      i32.eq"
             | LiteralPattern(BoolLit value) ->
                 let asInt = if value then 1 else 0
-                $"local.get ${tempName}\n      i32.const {asInt}\n      i32.eq"
+                $"{valueCode}\n      i32.const {asInt}\n      i32.eq"
+            | LiteralPattern(StringLit value) ->
+                env.UsedHelpers.Add Helpers.stringEquals |> ignore
+                $"{valueCode}\n      {stringLiteralCode value}\n      call ${Helpers.stringEquals}"
             | TagPattern(tagName, payloadOpt) ->
                 let tagBase =
                     match env.TagIds |> Map.tryFind tagName with
                     | Some id -> tagDiscriminantBase id
                     | None -> failwith $"Internal error: missing tag discriminant for pattern #{tagName}"
+                let discriminantCheck =
+                    $"{valueCode}\n      i32.const {tagDiscriminantMask}\n      i32.and\n      i32.const {tagBase}\n      i32.eq"
                 match payloadOpt with
-                | None ->
-                    $"local.get ${tempName}\n      i32.const {tagDiscriminantMask}\n      i32.and\n      i32.const {tagBase}\n      i32.eq"
+                | None -> discriminantCheck
                 | Some (LiteralPattern(IntLit payload)) ->
+                    // An int payload is stored in the masked bits, so compare it masked too.
                     let payloadMasked = payload &&& tagPayloadMask
-                    $"local.get ${tempName}\n      i32.const {tagDiscriminantMask}\n      i32.and\n      i32.const {tagBase}\n      i32.eq\n      local.get ${tempName}\n      i32.const {tagPayloadMask}\n      i32.and\n      i32.const {payloadMasked}\n      i32.eq\n      i32.and"
-                | Some (LiteralPattern(BoolLit payload)) ->
-                    let payloadMasked = if payload then 1 else 0
-                    $"local.get ${tempName}\n      i32.const {tagDiscriminantMask}\n      i32.and\n      i32.const {tagBase}\n      i32.eq\n      local.get ${tempName}\n      i32.const {tagPayloadMask}\n      i32.and\n      i32.const {payloadMasked}\n      i32.eq\n      i32.and"
-                | Some WildcardPattern
-                | Some ElsePattern ->
-                    $"local.get ${tempName}\n      i32.const {tagDiscriminantMask}\n      i32.and\n      i32.const {tagBase}\n      i32.eq"
-                | Some (IdentifierPattern ident) ->
-                    $"local.get ${tempName}\n      i32.const {tagDiscriminantMask}\n      i32.and\n      i32.const {tagBase}\n      i32.eq"
-                | Some _ ->
-                    failwith $"Unsupported tag payload pattern for WASM MVP backend: {tagName}"
+                    allOf [ discriminantCheck; $"{tagPayloadCode valueCode}\n      i32.const {payloadMasked}\n      i32.eq" ]
+                | Some payload ->
+                    // Only look at the payload once the discriminant matches: another tag's payload bits
+                    // are not a valid pointer.
+                    match patternCondition payload (tagPayloadCode valueCode) with
+                    | "i32.const 1" -> discriminantCheck
+                    | payloadCheck -> guarded discriminantCheck payloadCheck
             | GuardPattern(op, guardExpr) ->
                 match wasmBinaryInstruction op with
                 | Some instr ->
                     let guardCode = transpileExpression env guardExpr
-                    $"local.get ${tempName}\n      {guardCode}\n      {instr}"
+                    $"{valueCode}\n      {guardCode}\n      {instr}"
                 | None ->
                     failwith $"Unsupported guard operator for WASM MVP backend: {op}"
             | WildcardPattern
@@ -1693,7 +2287,7 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                     failwith "Unsupported match arm: pattern count does not match scrutinee count"
                 let conds : string list =
                     List.zip patterns matchTempNames
-                    |> List.map (fun (pat, temp) -> patternCondition pat temp)
+                    |> List.map (fun (pat, temp) -> patternCondition pat $"local.get ${temp}")
                 let allConds =
                     match conds with
                     | [] -> "i32.const 1"
@@ -1709,32 +2303,44 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                     |> List.fold (fun acc ident ->
                         let localName = $"__payload_{ident}"
                         { acc with Locals = acc.Locals |> Map.add ident localName }) envForNested
+                // A bare identifier pattern (`| n -> ...`, `| 0, y -> ...`) needs no local of its own: it
+                // is an alias for the scrutinee temp it was matched against.
+                let envWithPayloadLocals =
+                    List.zip patterns matchTempNames
+                    |> List.fold (fun acc (pat, temp) ->
+                        match pat with
+                        | IdentifierPattern ident -> { acc with Locals = acc.Locals |> Map.add ident temp }
+                        | _ -> acc) envWithPayloadLocals
                 let payloadLocal ident =
                     match envWithPayloadLocals.Locals |> Map.tryFind ident with
                     | Some localName -> localName
                     | None -> failwith $"Internal error: missing local for payload variable {ident}"
+                // Stores for the identifiers nested inside a pattern, mirroring `patternCondition`.
+                let rec patternBinds pattern valueCode =
+                    match pattern with
+                    | IdentifierPattern ident -> [ $"{valueCode}\n        local.set ${payloadLocal ident}" ]
+                    | TagPattern(_, Some payload) -> patternBinds payload (tagPayloadCode valueCode)
+                    | ListPattern(elements, restOpt) ->
+                        let elementBinds =
+                            elements
+                            |> List.mapi (fun index element -> patternBinds element (listElementCode valueCode index))
+                            |> List.concat
+                        let restBinds =
+                            match restOpt with
+                            | Some rest -> patternBinds rest (listTailCode valueCode elements.Length)
+                            | None -> []
+                        elementBinds @ restBinds
+                    | TuplePattern elements ->
+                        elements
+                        |> List.mapi (fun index element -> patternBinds element (tupleElementCode valueCode index))
+                        |> List.concat
+                    | _ -> []
                 let patternPayloadBinds =
                     List.zip patterns matchTempNames
                     |> List.collect (fun (pat, temp) ->
                         match pat with
-                        | TagPattern(_, Some (IdentifierPattern ident)) ->
-                            [ $"local.get ${temp}\n        i32.const {tagPayloadMask}\n        i32.and\n        local.set ${payloadLocal ident}" ]
-                        | ListPattern(elements, restOpt) ->
-                            let elementBinds =
-                                elements
-                                |> List.mapi (fun index element ->
-                                    match element with
-                                    | IdentifierPattern ident ->
-                                        Some $"{listElementCode temp index}\n        local.set ${payloadLocal ident}"
-                                    | _ -> None)
-                                |> List.choose id
-                            let restBinds =
-                                match restOpt with
-                                | Some (IdentifierPattern ident) ->
-                                    [ $"{listTailCode temp elements.Length}\n        local.set ${payloadLocal ident}" ]
-                                | _ -> []
-                            elementBinds @ restBinds
-                        | _ -> [])
+                        | IdentifierPattern _ -> []  // aliases the scrutinee local
+                        | nested -> patternBinds nested $"local.get ${temp}")
                     |> String.concat "\n    "
                 let armCode =
                     if patternPayloadBinds = "" then
@@ -1747,6 +2353,84 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
         let armsCode = emitArms arms
         $"{setScrutineeLocals}\n    {armsCode}"
     // ...existing code...
+    | FunctionCall("not", _, [ operand ]) ->
+        $"{transpileExpression env operand}\n    i32.eqz"
+    | FunctionCall("__with", _, [ baseExpr; RecordExpr updates ]) ->
+        // `record with f = v, ...`: copy the record's block, then overwrite the updated fields in place. The
+        // record is evaluated once and the copy's pointer stays on the stack, so the values may allocate.
+        let layout =
+            tryRecordLayoutOfExpr env baseExpr
+            |> Option.orElseWith (fun () ->
+                match baseExpr with
+                | IdentifierExpr(name, _) -> env.RecordLayouts |> Map.tryFind name
+                | _ -> None)
+        match layout with
+        | None -> failwith "Unsupported for WASM MVP backend: `with` on a value whose record layout is not known"
+        | Some fieldNames ->
+            env.UsedHelpers.Add Helpers.recordCopy |> ignore
+            env.UsedHelpers.Add Helpers.recordSet |> ignore
+            let stores =
+                updates
+                |> List.map (function
+                    | NamedField(fieldName, value) ->
+                        match fieldNames |> List.tryFindIndex ((=) fieldName) with
+                        | Some index -> $"{transpileExpression env value}\n    i32.const {index * 4}\n    call ${Helpers.recordSet}"
+                        | None -> failwith $"Unknown field '{fieldName}' in record update"
+                    | PositionalField _ -> failwith "Unsupported for WASM MVP backend: positional field in a record update")
+            ($"{transpileExpression env baseExpr}\n    i32.const {fieldNames.Length * 4}\n    call ${Helpers.recordCopy}" :: stores)
+            |> String.concat "\n    "
+    | FunctionCall("__range", _, _) ->
+        failwith "Unsupported for WASM MVP backend: a range is only supported as the iterable of a for loop"
+    | FunctionCall("__closure", _, fields) ->
+        // A closure block: the function's table slot followed by the values it captures.
+        allocateSlots fields
+    | FunctionCall("__slot", _, [ IdentifierExpr(name, _) ]) ->
+        // The table slot of a lifted function, for the first field of its closure block.
+        match env.FunctionArities |> Map.tryFind name with
+        | Some arity -> $"i32.const {functionValueSlot env name arity}"
+        | None -> failwith $"Internal error: no lifted function named {name}"
+    | FunctionCall("__for", _, [ iterable; Lambda([ (parameter, _) ], body) ]) ->
+        // `for iterable | arms`: a loop with the body inlined. The element goes into a local the body reads
+        // through the lambda's parameter name; a range counts from its start to its end, a list walks its
+        // cells. The loop is unit.
+        let depth = env.ForDepth
+        let cursor = forLoopCursorLocal depth
+        let finish = forLoopEndLocal depth
+        let element = forLoopElementLocal parameter depth
+        let doneLabel = $"__for_done_{depth}"
+        let nextLabel = $"__for_next_{depth}"
+        let elementTy, elementTypeName =
+            match iterable with
+            | FunctionCall("__range", _, _) -> Some (TyPrimitive "int"), Some "int"
+            | _ ->
+                let ty = tryExprTy env iterable |> Option.bind tryListElementType
+                ty, ty |> Option.bind trySimpleTypeName
+        // The body is usually `match element | pattern -> ...`: tell the backend the types of the names the
+        // patterns bind, since the typed AST does not reach into a call's lambda argument.
+        let patternValueTypes =
+            match body, elementTy with
+            | Match(_, arms), Some ty ->
+                arms |> List.collect (fun (patterns, _) -> patterns |> List.collect (fun p -> patternBoundValueTypes { Pattern = p; Type = ty }))
+            | _ -> []
+        let bodyEnv =
+            { env with
+                Locals = env.Locals |> Map.add parameter element
+                ValueTypes =
+                    (match elementTypeName with
+                     | Some typeName -> env.ValueTypes |> Map.add parameter typeName
+                     | None -> env.ValueTypes)
+                    |> fun values -> patternValueTypes |> List.fold (fun acc (name, typeName) -> acc |> Map.add name typeName) values
+                ValueTys =
+                    match elementTy with
+                    | Some ty -> env.ValueTys |> Map.add parameter ty
+                    | None -> env.ValueTys
+                ForDepth = depth + 1 }
+        let bodyCode = transpileExpression bodyEnv body
+        match iterable with
+        | FunctionCall("__range", _, [ startExpr; endExpr ]) ->
+            $"{transpileExpression env startExpr}\n    local.set ${element}\n    {transpileExpression env endExpr}\n    local.set ${finish}\n    block ${doneLabel}\n      loop ${nextLabel}\n        local.get ${element}\n        local.get ${finish}\n        i32.gt_s\n        br_if ${doneLabel}\n        {bodyCode}\n        drop\n        local.get ${element}\n        i32.const 1\n        i32.add\n        local.set ${element}\n        br ${nextLabel}\n      end\n    end\n    i32.const 0"
+        | _ ->
+            $"{transpileExpression env iterable}\n    local.set ${cursor}\n    block ${doneLabel}\n      loop ${nextLabel}\n        local.get ${cursor}\n        i32.eqz\n        br_if ${doneLabel}\n        local.get ${cursor}\n        i32.load\n        local.set ${element}\n        {bodyCode}\n        drop\n        local.get ${cursor}\n        i32.const 4\n        i32.add\n        i32.load\n        local.set ${cursor}\n        br ${nextLabel}\n      end\n    end\n    i32.const 0"
     | FunctionCall(name, _, args) when name = "dbg" ->
         let dbgLocal =
             match env.DbgTempLocal with
@@ -1785,6 +2469,9 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
         | TagExpr _ -> argCode
         | LiteralExpr(StringLit _) -> $"{argCode}\n    local.tee ${dbgLocal}\n    call $dbg_str\n    local.get ${dbgLocal}"
         | _ when isStringTypedExpr argExpr -> $"{argCode}\n    local.tee ${dbgLocal}\n    call $dbg_str\n    local.get ${dbgLocal}"
+        | _ when tryGetExprTypeName env argExpr = Some "float" ->
+            env.UsedHelpers.Add Helpers.floatToString |> ignore
+            $"{argCode}\n    local.tee ${dbgLocal}\n    call ${Helpers.floatToString}\n    call $dbg_str\n    local.get ${dbgLocal}"
         | _ -> $"{argCode}\n    local.tee ${dbgLocal}\n    call $dbg\n    local.get ${dbgLocal}"
     | FunctionCall(name, _, args) ->
         // Check if this is a type constructor call (e.g., Person(...))
@@ -1802,14 +2489,7 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                         | NamedField(fieldName, expr) -> (fieldName, expr)
                         | PositionalField expr -> (string i, expr))
                     |> List.sortBy fst
-                let n = sortedFields.Length
-                let sizeBytes = n * 4
-                let fieldCodes = sortedFields |> List.mapi (fun i (_, expr) ->
-                    let exprCode = transpileExpression env expr
-                    let offset = i * 4
-                    $"global.get $heap_ptr\n    i32.const {offset}\n    i32.add\n    {exprCode}\n    i32.store")
-                let storeAll = fieldCodes |> String.concat "\n    "
-                $"{storeAll}\n    global.get $heap_ptr\n    global.get $heap_ptr\n    i32.const {sizeBytes}\n    i32.add\n    global.set $heap_ptr"
+                allocateSlots (sortedFields |> List.map snd)
             | _ ->
                 failwith $"Type constructor {name} expects a record expression as argument"
         | None ->
@@ -1832,6 +2512,9 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                     | _ ->
                         // Not a known record, just pass it
                         flatArgs |> List.map (transpileExpression env)
+                | _ when expectedArity = 1 && flatArgs.Length > 1 ->
+                    // `f(a, b)` and `f((a, b))` parse alike; a one-parameter callee takes the whole tuple.
+                    [ transpileExpression env (TupleExpr flatArgs) ]
                 | _ ->
                     flatArgs |> List.map (transpileExpression env)
             
@@ -1851,6 +2534,16 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                     $"{slotCode}\n    call_indirect (type $ctx_fn_{ctxFnArity ctxFn})"
                 else
                     $"{prefix}\n    {slotCode}\n    call_indirect (type $ctx_fn_{ctxFnArity ctxFn})"
+            | None when env.Locals.ContainsKey name || (env.KnownFunctions.Contains name && expectedArity = 0 && not flatArgs.IsEmpty) ->
+                // Calling a parameter, local or top-level value that holds a function value: a closure block
+                // whose first slot is the function's table slot. The block is passed as the environment.
+                let closureCode =
+                    match env.Locals |> Map.tryFind name with
+                    | Some localName -> $"local.get ${localName}"
+                    | None -> $"call ${sanitizeIdentifier name}"
+                env.FunctionTable.IndirectArities.Add (flatArgs.Length + 1) |> ignore
+                ([ closureCode ] @ argsCode @ [ closureCode; "i32.load"; $"call_indirect (type $ctx_fn_{flatArgs.Length + 1})" ])
+                |> String.concat "\n    "
             | None when NyxCompiler.Intrinsics.isIntrinsic name ->
                 // A compiler intrinsic (only the standard library can call these): a runtime helper of the same
                 // name. Every Nanyx expression leaves an i32, so a unit result is materialised as 0.
@@ -1988,6 +2681,7 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                         match expr with
                         | LiteralExpr(StringLit _) -> "string"
                         | LiteralExpr(IntLit _) -> "int"
+                        | LiteralExpr(FloatLit _) -> "float"
                         | LiteralExpr(BoolLit _) -> "bool"
                         | _ -> "unknown"
 
@@ -2013,6 +2707,18 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                                 RecordLayouts = env.RecordLayouts |> Map.add name fieldNames
                                 RecordFieldTypes = env.RecordFieldTypes |> Map.add name fieldTypes
                                 ValueTypes = env.ValueTypes |> Map.add name "tuple" }
+                        | FunctionCall("__with", _, IdentifierExpr(baseName, _) :: _) when env.RecordLayouts |> Map.containsKey baseName ->
+                            // A record update has the layout of the record it copies
+                            { env with
+                                RecordLayouts = env.RecordLayouts |> Map.add name env.RecordLayouts.[baseName]
+                                RecordFieldTypes =
+                                    match env.RecordFieldTypes |> Map.tryFind baseName with
+                                    | Some fieldTypes -> env.RecordFieldTypes |> Map.add name fieldTypes
+                                    | None -> env.RecordFieldTypes
+                                ValueTypes =
+                                    match env.ValueTypes |> Map.tryFind baseName with
+                                    | Some tyName -> env.ValueTypes |> Map.add name tyName
+                                    | None -> env.ValueTypes }
                         | FunctionCall(typeName, _, _) when env.TypeLayouts |> Map.containsKey typeName ->
                             // Type constructor call - use the type's field types
                             let typeFieldTypes = env.TypeFieldTypes |> Map.tryFind typeName |> Option.defaultValue Map.empty
@@ -2022,9 +2728,15 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                                 RecordFieldTypes = env.RecordFieldTypes |> Map.add name typeFieldTypes
                                 ValueTypes = env.ValueTypes |> Map.add name typeName }
                         | _ ->
-                            match tryGetExprTypeName env rhs with
-                            | Some tyName -> { env with ValueTypes = env.ValueTypes |> Map.add name tyName }
-                            | None -> env
+                            let withSimpleType =
+                                match tryGetExprTypeName env rhs with
+                                | Some tyName -> { env with ValueTypes = env.ValueTypes |> Map.add name tyName }
+                                | None -> env
+                            // Carry the full inferred type too, so a record bound here (a captured one read
+                            // from a closure's environment, say) keeps its layout.
+                            match tryExprTy env rhs with
+                            | Some ty when not (env.ValueTys.ContainsKey name) -> { withSimpleType with ValueTys = env.ValueTys |> Map.add name ty }
+                            | _ -> withSimpleType
                     let restCode = transpileStatements updatedEnv tail
                     $"{rhsCode}\n    local.set ${localName}\n    {restCode}"
                 | None ->
@@ -2056,6 +2768,337 @@ let private defBodyAndParameters (expr: Expression) =
     match expr with
     | Lambda(args, body) -> args, body
     | _ -> [], expr
+
+/// Lambda lifting. A lambda with parameters that appears as a value (a call or pipe argument, the right-hand
+/// side of a local `def`, ...) becomes a top-level function `__lambda_N`, and the expression becomes a reference
+/// to that name, so the rest of the backend only ever meets lambdas as definitions. Only a lambda that captures
+/// nothing from its enclosing function is lifted; a capturing one is left in place and reported as unsupported
+/// when it is lowered (closures are not supported yet).
+module private LambdaLifting =
+    /// Every name an expression refers to: identifiers, callees and pipe targets.
+    let rec private referencedNames (expr: Expression) : string list =
+        match expr with
+        | IdentifierExpr(name, _) -> [ name ]
+        | FunctionCall(name, _, args) -> name :: (args |> List.collect referencedNames)
+        | Pipe(value, name, _, args) -> name :: referencedNames value @ (args |> List.collect referencedNames)
+        | Lambda(_, body) -> referencedNames body
+        | BinaryOp(_, left, right) -> referencedNames left @ referencedNames right
+        | IfExpr(cond, thenExpr, elseExpr) -> referencedNames cond @ referencedNames thenExpr @ referencedNames elseExpr
+        | Block statements -> statements |> List.collect referencedNamesStatement
+        | Match(values, arms) ->
+            (values |> List.collect referencedNames)
+            @ (arms |> List.collect (fun (patterns, body) -> (patterns |> List.collect referencedNamesPattern) @ referencedNames body))
+        | TupleExpr items
+        | ListExpr items -> items |> List.collect referencedNames
+        | RecordExpr fields ->
+            fields |> List.collect (function NamedField(_, value) | PositionalField value -> referencedNames value)
+        | TagExpr(_, payload) -> payload |> Option.map referencedNames |> Option.defaultValue []
+        | MemberAccess(inner, _, _) -> referencedNames inner
+        | UseIn(binding, body) -> referencedNamesBinding binding @ referencedNames body
+        | WorkflowBindExpr(_, value)
+        | WorkflowReturnExpr value -> referencedNames value
+        | InterpolatedString parts ->
+            parts |> List.collect (function StringExpr value -> referencedNames value | StringText _ -> [])
+        | ContextMemberCall(_, _, args) -> args |> List.collect referencedNames
+        | ContextMemberAccess _
+        | UnitExpr
+        | LiteralExpr _ -> []
+
+    and private referencedNamesStatement (statement: Statement) : string list =
+        match statement with
+        | DefStatement(_, _, _, rhs) -> referencedNames rhs
+        | ExprStatement value -> referencedNames value
+        | UseStatement binding -> referencedNamesBinding binding
+        | ImportStatement _
+        | TypeDefStatement _ -> []
+
+    and private referencedNamesBinding (binding: UseBinding) : string list =
+        match binding with
+        | UseValue value
+        | UseContextInstance(_, value) -> referencedNames value
+
+    and private referencedNamesPattern (pattern: Pattern) : string list =
+        match pattern with
+        | GuardPattern(_, value) -> referencedNames value
+        | RangePattern(startValue, endValue) -> referencedNames startValue @ referencedNames endValue
+        | TagPattern(_, Some payload) -> referencedNamesPattern payload
+        | TuplePattern patterns
+        | ListPattern(patterns, _) -> patterns |> List.collect referencedNamesPattern
+        | ListSplatMiddle(before, after) -> (before @ after) |> List.collect referencedNamesPattern
+        | RecordPattern(_, patterns) -> patterns |> List.collect referencedNamesPattern
+        | RecordMemberPattern members -> members |> List.collect (snd >> referencedNamesPattern)
+        | TagPattern(_, None)
+        | LiteralPattern _
+        | IdentifierPattern _
+        | WildcardPattern
+        | ElsePattern -> []
+
+    /// Every name a pattern binds.
+    let rec private boundNamesPattern (pattern: Pattern) : string list =
+        match pattern with
+        | IdentifierPattern name -> [ name ]
+        | TagPattern(_, Some payload) -> boundNamesPattern payload
+        | TuplePattern patterns -> patterns |> List.collect boundNamesPattern
+        | ListPattern(patterns, rest) ->
+            (patterns |> List.collect boundNamesPattern) @ (rest |> Option.map boundNamesPattern |> Option.defaultValue [])
+        | ListSplatMiddle(before, after) -> (before @ after) |> List.collect boundNamesPattern
+        | RecordPattern(_, patterns) -> patterns |> List.collect boundNamesPattern
+        | RecordMemberPattern members -> members |> List.collect (fun (name, p) -> name :: boundNamesPattern p)
+        | TagPattern(_, None)
+        | LiteralPattern _
+        | GuardPattern _
+        | RangePattern _
+        | WildcardPattern
+        | ElsePattern -> []
+
+    /// Every name bound anywhere inside an expression: local defs, lambda parameters and pattern variables.
+    /// (An over-approximation of what a nested lambda could capture, which errs on the side of not lifting.)
+    let rec private boundNames (expr: Expression) : string list =
+        match expr with
+        | Lambda(args, body) -> (args |> List.map fst) @ boundNames body
+        | Block statements ->
+            statements
+            |> List.collect (function
+                | DefStatement(_, name, _, rhs) -> name :: boundNames rhs
+                | ExprStatement value -> boundNames value
+                | UseStatement _
+                | ImportStatement _
+                | TypeDefStatement _ -> [])
+        | Match(values, arms) ->
+            (values |> List.collect boundNames)
+            @ (arms |> List.collect (fun (patterns, body) -> (patterns |> List.collect boundNamesPattern) @ boundNames body))
+        | FunctionCall(_, _, args)
+        | ContextMemberCall(_, _, args) -> args |> List.collect boundNames
+        | Pipe(value, _, _, args) -> boundNames value @ (args |> List.collect boundNames)
+        | BinaryOp(_, left, right) -> boundNames left @ boundNames right
+        | IfExpr(cond, thenExpr, elseExpr) -> boundNames cond @ boundNames thenExpr @ boundNames elseExpr
+        | TupleExpr items
+        | ListExpr items -> items |> List.collect boundNames
+        | RecordExpr fields -> fields |> List.collect (function NamedField(_, value) | PositionalField value -> boundNames value)
+        | TagExpr(_, payload) -> payload |> Option.map boundNames |> Option.defaultValue []
+        | MemberAccess(inner, _, _) -> boundNames inner
+        | UseIn(_, body) -> boundNames body
+        | WorkflowBindExpr(name, value) -> name :: boundNames value
+        | WorkflowReturnExpr value -> boundNames value
+        | InterpolatedString parts -> parts |> List.collect (function StringExpr value -> boundNames value | StringText _ -> [])
+        | ContextMemberAccess _
+        | UnitExpr
+        | LiteralExpr _
+        | IdentifierExpr _ -> []
+
+    /// The name of the environment parameter every lifted function takes first: the closure block itself.
+    let envParameter = "__env"
+
+    /// `expr` with every reference to the local function `from` redirected to its lifted form `to'`: a call
+    /// becomes a direct call that passes the environment on, and a use as a value is the environment itself
+    /// (the closure block).
+    let rec private redirectSelfReferences (from: string) (to': string) (expr: Expression) : Expression =
+        let recur = redirectSelfReferences from to'
+        let flatten (args: Expression list) =
+            match args with
+            | [ TupleExpr items ] -> items
+            | _ -> args
+        match expr with
+        | IdentifierExpr(name, range) when name = from -> IdentifierExpr(envParameter, range)
+        | IdentifierExpr _ -> expr
+        | FunctionCall(name, range, args) when name = from ->
+            FunctionCall(to', range, [ TupleExpr (IdentifierExpr(envParameter, None) :: (flatten args |> List.map recur)) ])
+        | FunctionCall(name, range, args) -> FunctionCall(name, range, args |> List.map recur)
+        | Pipe(value, name, range, args) when name = from ->
+            FunctionCall(to', range, [ TupleExpr (IdentifierExpr(envParameter, None) :: recur value :: (flatten args |> List.map recur)) ])
+        | Pipe(value, name, range, args) -> Pipe(recur value, name, range, args |> List.map recur)
+        | Lambda(args, body) -> Lambda(args, recur body)
+        | BinaryOp(op, left, right) -> BinaryOp(op, recur left, recur right)
+        | IfExpr(cond, thenExpr, elseExpr) -> IfExpr(recur cond, recur thenExpr, recur elseExpr)
+        | Block statements ->
+            statements
+            |> List.map (function
+                | DefStatement(isExport, name, typeOpt, rhs) -> DefStatement(isExport, name, typeOpt, recur rhs)
+                | ExprStatement value -> ExprStatement(recur value)
+                | other -> other)
+            |> Block
+        | Match(values, arms) -> Match(values |> List.map recur, arms |> List.map (fun (patterns, body) -> patterns, recur body))
+        | TupleExpr items -> TupleExpr(items |> List.map recur)
+        | ListExpr items -> ListExpr(items |> List.map recur)
+        | RecordExpr fields ->
+            fields
+            |> List.map (function
+                | NamedField(name, value) -> NamedField(name, recur value)
+                | PositionalField value -> PositionalField(recur value))
+            |> RecordExpr
+        | TagExpr(name, payload) -> TagExpr(name, payload |> Option.map recur)
+        | MemberAccess(inner, field, range) -> MemberAccess(recur inner, field, range)
+        | UseIn(binding, body) -> UseIn(binding, recur body)
+        | WorkflowBindExpr(name, value) -> WorkflowBindExpr(name, recur value)
+        | WorkflowReturnExpr value -> WorkflowReturnExpr(recur value)
+        | InterpolatedString parts ->
+            parts |> List.map (function StringExpr value -> StringExpr(recur value) | text -> text) |> InterpolatedString
+        | ContextMemberCall(ctx, name, args) -> ContextMemberCall(ctx, name, args |> List.map recur)
+        | ContextMemberAccess _
+        | UnitExpr
+        | LiteralExpr _ -> expr
+
+    /// Where a lifted function came from: the top-level def it was written in, its local name there if it
+    /// was a `rec` def, and the names of the variables it captures, in the order they sit in its environment.
+    type LiftedOrigin = { Owner: string; LocalName: string option; Captured: string list }
+
+    /// Closure conversion. Every function value is a closure block: a tuple of the function's table slot
+    /// followed by the values it captures. A lifted function takes that block as its first parameter,
+    /// `__env`, and starts by binding each captured name to the matching field; a call through a value
+    /// passes the block as the environment and calls the slot it holds. A top-level function used as a
+    /// value gets a wrapper that takes and ignores an environment. Lifts the lambdas of a module into
+    /// top-level definitions appended at the end, and returns where each came from (lifting runs after
+    /// type checking, so the backend uses that to find the types of parameters and captures).
+    let lift (module': Module) : Module * Map<string, LiftedOrigin> =
+        let lifted = System.Collections.Generic.List<TopLevelItem>()
+        let origins = System.Collections.Generic.Dictionary<string, LiftedOrigin>()
+        let wrappers = System.Collections.Generic.Dictionary<string, string>()
+        let mutable owner = ""
+        let mutable counter = 0
+
+        let topLevelFunctions =
+            module'
+            |> List.choose (function
+                | Def (ValueDef(_, name, _, Lambda(args, _))) when not args.IsEmpty -> Some (name, args.Length)
+                | _ -> None)
+            |> Map.ofList
+
+        /// The closure block for the lifted function `liftedName` over the given captured names. (A marker
+        /// call rather than a tuple, so that `f(closure)` is not flattened into one argument per field.)
+        let closureOf (liftedName: string) (captured: string list) =
+            FunctionCall("__closure", None,
+                FunctionCall("__slot", None, [ IdentifierExpr(liftedName, None) ])
+                :: (captured |> List.map (fun name -> IdentifierExpr(name, None))))
+
+        /// The lifted function's lambda: the environment parameter first, then the captured names bound
+        /// from the environment's fields ahead of the original body.
+        let liftedLambda (args: (string * TypeExpr option) list) (captured: string list) (body: Expression) =
+            let captureBindings =
+                captured
+                |> List.mapi (fun index name ->
+                    DefStatement(false, name, None, MemberAccess(IdentifierExpr(envParameter, None), string (index + 1), None)))
+            let bodyWithCaptures =
+                match captureBindings, body with
+                | [], _ -> body
+                | _, Block statements -> Block (captureBindings @ statements)
+                | _, _ -> Block (captureBindings @ [ ExprStatement body ])
+            Lambda((envParameter, None) :: args, bodyWithCaptures)
+
+        // `scope` is every name the enclosing function binds; a lambda referring to one of them captures it.
+        let rec liftExpr (scope: Set<string>) (expr: Expression) : Expression =
+            let recur = liftExpr scope
+            match expr with
+            // A `for` loop's lambda is inlined as the loop body by the backend, never lifted; lift inside it.
+            | FunctionCall("__for", range, [ iterable; Lambda(args, body) ]) ->
+                let innerScope = Set.union (args |> List.map fst |> Set.ofList) (boundNames body |> Set.ofList)
+                FunctionCall("__for", range, [ recur iterable; Lambda(args, liftExpr (Set.union scope innerScope) body) ])
+            | Lambda(args, body) when not args.IsEmpty ->
+                let parameterNames = args |> List.map fst |> Set.ofList
+                let innerScope = Set.union parameterNames (boundNames body |> Set.ofList)
+                // A lambda nested inside may capture what this one binds and what encloses this one alike;
+                // what it captures from outside is then referenced here, so this lambda captures it in turn.
+                let liftedBody = liftExpr (Set.union scope innerScope) body
+                let captured =
+                    Set.difference (referencedNames liftedBody |> Set.ofList) innerScope
+                    |> Set.intersect scope
+                    |> Set.toList
+                let name = $"__lambda_{counter}"
+                counter <- counter + 1
+                lifted.Add(Def (ValueDef(false, name, None, liftedLambda args captured liftedBody)))
+                origins.[name] <- { Owner = owner; LocalName = None; Captured = captured }
+                closureOf name captured
+            | Lambda(args, body) -> Lambda(args, recur body)
+            // A top-level function used as a value: a closure over a wrapper that takes an environment.
+            | IdentifierExpr(name, _) when topLevelFunctions.ContainsKey name && not (scope.Contains name) ->
+                let wrapperName =
+                    match wrappers.TryGetValue name with
+                    | true, existing -> existing
+                    | _ ->
+                        let wrapperName = $"__fn_{sanitizeIdentifier name}"
+                        let parameters = [ for index in 1 .. topLevelFunctions.[name] -> $"__arg{index}" ]
+                        let call = FunctionCall(name, None, [ TupleExpr (parameters |> List.map (fun p -> IdentifierExpr(p, None))) ])
+                        lifted.Add(Def (ValueDef(false, wrapperName, None, Lambda((envParameter, None) :: (parameters |> List.map (fun p -> p, None)), call))))
+                        wrappers.[name] <- wrapperName
+                        wrapperName
+                closureOf wrapperName []
+            | FunctionCall(name, range, args) -> FunctionCall(name, range, args |> List.map recur)
+            | Pipe(value, name, range, args) -> Pipe(recur value, name, range, args |> List.map recur)
+            | BinaryOp(op, left, right) -> BinaryOp(op, recur left, recur right)
+            | IfExpr(cond, thenExpr, elseExpr) -> IfExpr(recur cond, recur thenExpr, recur elseExpr)
+            | Block statements ->
+                statements
+                |> List.map (function
+                    // `rec name = { ... }`: a local function that calls itself. It is lifted under a fresh
+                    // name with its self-references redirected there (a self-call passes the environment on),
+                    // and the local is bound to its closure.
+                    | DefStatement(isExport, name, _, FunctionCall("__rec", _, [ Lambda(args, body) ])) when not args.IsEmpty ->
+                        let liftedName = $"__rec_{sanitizeIdentifier name}_{counter}"
+                        counter <- counter + 1
+                        let parameterNames = args |> List.map fst |> Set.ofList
+                        let innerScope = Set.union parameterNames (boundNames body |> Set.ofList) |> Set.add name
+                        let liftedBody = liftExpr (Set.union scope innerScope) body |> redirectSelfReferences name liftedName
+                        let captured =
+                            Set.difference (referencedNames liftedBody |> Set.ofList) (innerScope |> Set.add liftedName |> Set.add envParameter)
+                            |> Set.intersect scope
+                            |> Set.toList
+                        lifted.Add(Def (ValueDef(false, liftedName, None, liftedLambda args captured liftedBody)))
+                        origins.[liftedName] <- { Owner = owner; LocalName = Some name; Captured = captured }
+                        DefStatement(isExport, name, None, closureOf liftedName captured)
+                    | DefStatement(isExport, name, typeOpt, FunctionCall("__rec", _, [ rhs ])) ->
+                        DefStatement(isExport, name, typeOpt, recur rhs)
+                    | DefStatement(isExport, name, typeOpt, rhs) -> DefStatement(isExport, name, typeOpt, recur rhs)
+                    | ExprStatement value -> ExprStatement(recur value)
+                    // `use` bindings are hoisted by the context machinery; leave them to it.
+                    | other -> other)
+                |> Block
+            | Match(values, arms) -> Match(values |> List.map recur, arms |> List.map (fun (patterns, body) -> patterns, recur body))
+            | TupleExpr items -> TupleExpr(items |> List.map recur)
+            | ListExpr items -> ListExpr(items |> List.map recur)
+            | RecordExpr fields ->
+                fields
+                |> List.map (function
+                    // A record of lambdas is how a context instance is written (`use (f = { ... })`), and the
+                    // context machinery hoists those lambdas itself: leave them in place, lift inside only.
+                    | NamedField(name, Lambda(args, body)) ->
+                        let innerScope = Set.union (args |> List.map fst |> Set.ofList) (boundNames body |> Set.ofList)
+                        NamedField(name, Lambda(args, liftExpr (Set.union scope innerScope) body))
+                    | NamedField(name, value) -> NamedField(name, recur value)
+                    | PositionalField value -> PositionalField(recur value))
+                |> RecordExpr
+            | TagExpr(name, payload) -> TagExpr(name, payload |> Option.map recur)
+            | MemberAccess(inner, field, range) -> MemberAccess(recur inner, field, range)
+            | UseIn(binding, body) -> UseIn(binding, recur body)
+            | WorkflowBindExpr(name, value) -> WorkflowBindExpr(name, recur value)
+            | WorkflowReturnExpr value -> WorkflowReturnExpr(recur value)
+            | InterpolatedString parts ->
+                parts
+                |> List.map (function
+                    | StringExpr value -> StringExpr(recur value)
+                    | text -> text)
+                |> InterpolatedString
+            | ContextMemberCall(ctx, name, args) -> ContextMemberCall(ctx, name, args |> List.map recur)
+            | ContextMemberAccess _
+            | UnitExpr
+            | LiteralExpr _
+            | IdentifierExpr _ -> expr
+
+        let liftItem (item: TopLevelItem) : TopLevelItem =
+            match item with
+            // A definition's own lambda is the function being defined; lift inside its body only.
+            | Def (ValueDef(isExport, name, typeOpt, Lambda(args, body))) ->
+                owner <- name
+                let scope = Set.union (args |> List.map fst |> Set.ofList) (boundNames body |> Set.ofList)
+                Def (ValueDef(isExport, name, typeOpt, Lambda(args, liftExpr scope body)))
+            | Def (ValueDef(isExport, name, typeOpt, rhs)) ->
+                owner <- name
+                Def (ValueDef(isExport, name, typeOpt, liftExpr (boundNames rhs |> Set.ofList) rhs))
+            | Expr expr ->
+                owner <- ""
+                Expr (liftExpr (boundNames expr |> Set.ofList) expr)
+            | other -> other
+
+        let items = module' |> List.map liftItem
+        items @ List.ofSeq lifted, origins |> Seq.map (fun pair -> pair.Key, pair.Value) |> Map.ofSeq
 
 let private extractTypeLayouts (module': Module) : Map<string, string list> * Map<string, Map<string, string>> =
     let rec typeExprToTypeString (t: TypeExpr) : string =
@@ -2120,7 +3163,8 @@ let private getLayoutFromTypeExpr (typeLayouts: Map<string, string list>) (typeF
         Some (fieldNames, fieldTypes)
     | _ -> None
 
-let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map<string, TypedExpr>) (typedValueTypes: Map<string, string>) (typedReturnTypes: Map<string, string>) : string =
+let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map<string, TypedExpr>) (typedValueTypes: Map<string, string>) (typedReturnTypes: Map<string, string>) (typedTopLevelTys: Map<string, Ty>) : string =
+    let module', liftedOrigins = LambdaLifting.lift module'
     let defs =
         module'
         |> List.choose (function
@@ -2243,6 +3287,12 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                 memberName, ctxFn))
         |> Map.ofList
 
+    // Functions used as values take the table slots after the ones the context machinery assigned.
+    let functionTable: FunctionTable =
+        { Values = System.Collections.Generic.Dictionary<string, ContextFn>()
+          NextSlot = nextContextIndex
+          IndirectArities = System.Collections.Generic.HashSet<int>() }
+
     // The result types the backend can read off definitions' annotations, plus what inference told it.
     let functionReturnTypes =
         let fromAnnotations =
@@ -2353,35 +3403,10 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                 |> List.map snd
                 |> Set.ofList
 
-            let rec containsInterpolation expr =
-                match expr with
-                | InterpolatedString _ -> true
-                | Block statements -> statements |> List.exists (function | DefStatement(_, _, _, rhs) -> containsInterpolation rhs | ExprStatement value -> containsInterpolation value | _ -> false)
-                | BinaryOp(_, left, right) -> containsInterpolation left || containsInterpolation right
-                | IfExpr(cond, thenExpr, elseExpr) -> containsInterpolation cond || containsInterpolation thenExpr || containsInterpolation elseExpr
-                | FunctionCall(_, _, args) -> args |> List.exists containsInterpolation
-                | Lambda(_, body) -> containsInterpolation body
-                | Pipe(value, _, _, args) -> containsInterpolation value || (args |> List.exists containsInterpolation)
-                | TupleExpr items
-                | ListExpr items -> items |> List.exists containsInterpolation
-                | RecordExpr fields -> fields |> List.exists (function | NamedField(_, value) -> containsInterpolation value | PositionalField value -> containsInterpolation value)
-                | Match(values, arms) -> (values |> List.exists containsInterpolation) || (arms |> List.exists (fun (_, armExpr) -> containsInterpolation armExpr))
-                | UseIn(_, body) -> containsInterpolation body
-                | MemberAccess(inner, _, _) -> containsInterpolation inner
-                | TagExpr(_, payload) -> payload |> Option.exists containsInterpolation
-                | WorkflowBindExpr(_, value)
-                | WorkflowReturnExpr value -> containsInterpolation value
-                | ContextMemberCall(_, _, args) -> args |> List.exists containsInterpolation
-                | ContextMemberAccess(_, _)
-                | UnitExpr
-                | LiteralExpr _
-                | IdentifierExpr _ -> false
+            let interpolationLocals = interpolationLocalsFor bodyExpr
 
-            let usesInterpolation = containsInterpolation bodyExpr
-
-            if usesInterpolation then
-                for localName in interpolationLocalNames do
-                    usedLocalNames <- usedLocalNames |> Set.add localName
+            for localName in interpolationLocals do
+                usedLocalNames <- usedLocalNames |> Set.add localName
 
             let matchArity = countMatchArity bodyExpr
             let matchTempNames =
@@ -2460,6 +3485,12 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                 |> Option.map collectTypedValueTypes
                 |> Option.defaultValue Map.empty
 
+            let valueTys =
+                typedExprOpt
+                |> Option.map collectTypedValueTys
+                |> Option.defaultValue Map.empty
+                |> Map.fold (fun acc key value -> acc |> Map.add key value) typedTopLevelTys
+
             let initialValueTypes =
                 typedValueTypes
                 |> Map.fold (fun acc key value -> acc |> Map.add key value) Map.empty
@@ -2531,7 +3562,10 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                   RecordFieldTypes = initialRecordFieldTypes
                   ParamTypes = initialParamTypes
                   ValueTypes = initialValueTypes
-                  UsedHelpers = usedHelpers }
+                  ValueTys = valueTys
+                  UsedHelpers = usedHelpers
+                  FunctionTable = functionTable
+                  ForDepth = 0 }
             let fn = sanitizeIdentifier name
             
             // Build parameter signature including context params
@@ -2554,12 +3588,13 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                     yield! (localNames |> List.map (fun localName -> localMap.[localName]))
                     yield! matchTempNames
                     yield! payloadLocalNames
-                    if usesInterpolation then
-                        yield! interpolationLocalNames
+                    yield! interpolationLocals
+                    yield! collectForLoopLocals 0 bodyExpr
                     match dbgLocalName with
                     | Some name -> yield name
                     | None -> ()
                 ]
+                |> List.distinct
                 |> List.map (fun localName -> $"(local ${localName} i32)")
                 |> String.concat " "
             let functionHeader =
@@ -2577,7 +3612,45 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
         defs
         |> List.map (fun (name, typeOpt, expr) ->
             let pending = contextBindingsByDef |> Map.tryFind name |> Option.defaultValue []
-            let typedExprOpt = typedFunctionBodies |> Map.tryFind name
+            let typedExprOpt =
+                typedFunctionBodies
+                |> Map.tryFind name
+                |> Option.orElseWith (fun () ->
+                    // A lifted function has no typed body of its own. Its environment's type is a tuple of
+                    // the captured names' types in the def it came from, and a `rec` function's parameter
+                    // types are those of the local it was there.
+                    liftedOrigins
+                    |> Map.tryFind name
+                    |> Option.bind (fun origin ->
+                        typedFunctionBodies
+                        |> Map.tryFind origin.Owner
+                        |> Option.map (fun ownerTyped ->
+                            let ownerTys = collectTypedValueTys ownerTyped
+                            let envTy =
+                                origin.Captured
+                                |> List.mapi (fun index captured -> string (index + 1), ownerTys |> Map.tryFind captured)
+                                |> List.choose (fun (key, tyOpt) -> tyOpt |> Option.map (fun ty -> key, ty))
+                                |> Map.ofList
+                                |> Map.add "0" (TyPrimitive "int")
+                                |> TyRecord
+                            let localTy = origin.LocalName |> Option.bind (fun localName -> ownerTys |> Map.tryFind localName)
+                            let parameterTys =
+                                match localTy with
+                                | Some (TyFunc(TyRecord fields, _)) ->
+                                    fields
+                                    |> Map.toList
+                                    |> List.choose (fun (key, ty) ->
+                                        match Int32.TryParse key with
+                                        | true, index -> Some (string (index + 1), ty)
+                                        | _ -> None)
+                                | Some (TyFunc(single, _)) -> [ "1", single ]
+                                | _ -> []
+                            let returnTy =
+                                match localTy with
+                                | Some (TyFunc(_, ret)) -> ret
+                                | _ -> TyVar { Id = -1; Name = None }
+                            let inputTy = TyRecord (Map.ofList (("0", envTy) :: parameterTys))
+                            { Expr = expr; Type = TyFunc(inputTy, returnTy); Body = None; Statements = None; MatchArms = None })))
             renderFunction name typeOpt expr typedExprOpt true pending)
 
     let renderedContextFunctions =
@@ -2626,6 +3699,8 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                 [ yield! (localNames |> List.map (fun localName -> localMap.[localName]))
                   yield! matchTempNames
                   yield! payloadLocalNames
+                  yield! interpolationLocalsFor (Block (topLevelExprs |> List.map ExprStatement))
+                  yield! (topLevelExprs |> List.collect (collectForLoopLocals 0))
                   match dbgLocalName with
                   | Some name -> yield name
                   | None -> () ]
@@ -2653,7 +3728,10 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                   RecordFieldTypes = Map.empty
                   ParamTypes = Map.empty
                   ValueTypes = typedValueTypes
-                  UsedHelpers = usedHelpers }
+                  ValueTys = typedTopLevelTys
+                  UsedHelpers = usedHelpers
+                  FunctionTable = functionTable
+                  ForDepth = 0 }
             let bodyCode =
                 topLevelExprs
                 |> List.map (fun expr -> $"{transpileExpression env expr}\n    drop")
@@ -2678,6 +3756,10 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
           Helpers.stringEquals, [ Helpers.stringLength ]
           Helpers.writeStdout, [ Helpers.stringLength ]
           Helpers.listCons, [ Helpers.alloc ]
+          Helpers.recordSet, []
+          Helpers.recordCopy, [ Helpers.alloc; Helpers.copyBytes ]
+          Helpers.floatBox, [ Helpers.alloc ]
+          Helpers.floatToString, [ Helpers.alloc ]
           Helpers.listLength, []
           Helpers.listConcat, [ Helpers.listCons ] ]
     let rec closeHelpers (acc: Set<string>) (pending: string list) =
@@ -2887,9 +3969,11 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
         else
             ""
 
+    // Every function body has been rendered by now, so the function-value slots are final: add them to the table.
+    contextFnList <- contextFnList @ (functionTable.Values.Values |> Seq.toList)
+
     let contextTypeDefs =
-        contextFnList
-        |> List.map ctxFnArity
+        (contextFnList |> List.map ctxFnArity) @ (functionTable.IndirectArities |> Seq.toList)
         |> Set.ofList
         |> Set.toList
         |> List.sort
@@ -2981,7 +4065,7 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
         $"(module\n{body}\n)"
 
 let transpileModuleToWat (module': Module) : string =
-    transpileModuleToWatCore module' Map.empty Map.empty Map.empty
+    transpileModuleToWatCore module' Map.empty Map.empty Map.empty Map.empty
 
 let transpileTypedModuleToWat (typed: TypedModule) : string =
     let typedBodies =
@@ -3003,4 +4087,4 @@ let transpileTypedModuleToWat (typed: TypedModule) : string =
             | TyFunc(_, returnTy) -> trySimpleTypeName returnTy |> Option.map (fun tyName -> name, tyName)
             | _ -> None)
         |> Map.ofList
-    transpileModuleToWatCore typed.Module typedBodies typedValueTypes typedReturnTypes
+    transpileModuleToWatCore typed.Module typedBodies typedValueTypes typedReturnTypes typed.Types
