@@ -26,6 +26,7 @@
     <ProjectReference Include="..\Nanyx.Compiler\NanyxCompiler.fsproj" />
     <ProjectReference Include="..\Nanyx.Compiler.Wasm\Nanyx.Compiler.Wasm.fsproj" />
     <ProjectReference Include="..\Nanyx.Compiler.Runtime\Nanyx.Compiler.Runtime.fsproj" />
+    <ProjectReference Include="..\Nanyx.LanguageServer\Nanyx.LanguageServer.csproj" />
   </ItemGroup>
 
   <ItemGroup>

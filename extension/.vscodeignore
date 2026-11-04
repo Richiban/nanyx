@@ -1,6 +1,5 @@
 .vscode/
 src/
-server/
 *.ts
 **/*.map
 tsconfig.json
