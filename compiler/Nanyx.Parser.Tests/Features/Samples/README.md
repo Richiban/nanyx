@@ -80,9 +80,6 @@ let filePath = Path.Combine(testDataDir, filename)
 ### Manual Testing
 From the `compiler` directory:
 ```bash
-.\Nyx.Parser\bin\Debug\net9.0\NyxParser.exe Nyx.Parser.Tests\testdata\<filename>.nyx
+dotnet run --project Nanyx.Compiler.Cli/NanyxCompiler.Cli.csproj -- parse Nanyx.Parser.Tests/Features/Samples/<filename>.nyx
 ```
-
-### Special Cases
-- Files ending in `.txt` are parsed as patterns (for debugging pattern parsers)
 - Files ending in `.nyx` are parsed as complete modules
