@@ -397,6 +397,27 @@ let ``Run - mutually recursive top-level functions`` () =
         "dbg(later(2))\n" +
         "def later = { x -> x * 21 }\n"
     runSource source |> assertRan "yes\nyes\nno\ndbg: 42\n"
+[<Fact>]
+let ``Run - nested record field access`` () =
+    // Regression: `line.start.x` failed with "cannot determine layout for .x" (#30).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "type Point = (x: int, y: int)\n" +
+        "def origin = (x = 0, y = 0)\n" +
+        "def unit = Point(x = 1, y = 1)\n" +
+        "def main = {\n" +
+        "  def line = (start = (x = 1, y = 2), finish = (x = 4, y = 6))\n" +
+        "  def deep = (outer = (inner = (label = \"deep\")))\n" +
+        "  dbg(line.finish.x - line.start.x)\n" +
+        "  dbg(line.finish.y - line.start.y)\n" +
+        "  println(deep.outer.inner.label)\n" +
+        "  dbg(origin.x + origin.y)\n" +
+        "  dbg(unit.x + unit.y)\n" +
+        "}\n" +
+        "main()\n"
+    // The last line covers #31: a record built through a type constructor at the top level.
+    runSource source |> assertRan "dbg: 3\ndbg: 4\ndeep\ndbg: 0\ndbg: 2\n"
 
 [<Fact>]
 let ``Run - a match with no matching arm exits 1 with a runtime error`` () =
