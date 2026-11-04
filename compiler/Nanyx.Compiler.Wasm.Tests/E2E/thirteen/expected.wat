@@ -175,6 +175,43 @@
 
   (global $heap_ptr (mut i32) (i32.const 4096))
 
+  (func $__nanyx_alloc (param $size i32) (result i32)
+    (local $ptr i32)
+    global.get $heap_ptr
+    local.set $ptr
+    local.get $ptr
+    local.get $size
+    i32.add
+    global.set $heap_ptr
+    block $fits
+      loop $grow
+        global.get $heap_ptr
+        memory.size
+        i32.const 65536
+        i32.mul
+        i32.le_u
+        br_if $fits
+        i32.const 1
+        memory.grow
+        i32.const -1
+        i32.eq
+        if
+          unreachable
+        end
+        br $grow
+      end
+    end
+    local.get $ptr
+  )
+  (func $__nanyx_record_set (param $base i32) (param $value i32) (param $offset i32) (result i32)
+    local.get $base
+    local.get $offset
+    i32.add
+    local.get $value
+    i32.store
+    local.get $base
+  )
+
   (data (i32.const 256) "\05\00\00\00Alice\00")
   (data (i32.const 266) "\03\00\00\00Bob\00")
 
@@ -208,50 +245,32 @@
   (export "printPerson" (func $printPerson))
 
   (func $main (result i32) (local $p i32) (local $p2 i32)
-    global.get $heap_ptr
-    i32.const 0
-    i32.add
-    i32.const 30
-    i32.store
-    global.get $heap_ptr
-    i32.const 4
-    i32.add
-    i32.const 260
-    i32.store
-    global.get $heap_ptr
-    i32.const 8
-    i32.add
-    i32.const 100
-    i32.store
-    global.get $heap_ptr
-    global.get $heap_ptr
     i32.const 12
-    i32.add
-    global.set $heap_ptr
+    call $__nanyx_alloc
+    i32.const 30
+    i32.const 0
+    call $__nanyx_record_set
+    i32.const 260
+    i32.const 4
+    call $__nanyx_record_set
+    i32.const 100
+    i32.const 8
+    call $__nanyx_record_set
     local.set $p
     local.get $p
     call $printPerson
     drop
-    global.get $heap_ptr
-    i32.const 0
-    i32.add
-    i32.const 25
-    i32.store
-    global.get $heap_ptr
-    i32.const 4
-    i32.add
-    i32.const 270
-    i32.store
-    global.get $heap_ptr
-    i32.const 8
-    i32.add
-    i32.const 80
-    i32.store
-    global.get $heap_ptr
-    global.get $heap_ptr
     i32.const 12
-    i32.add
-    global.set $heap_ptr
+    call $__nanyx_alloc
+    i32.const 25
+    i32.const 0
+    call $__nanyx_record_set
+    i32.const 270
+    i32.const 4
+    call $__nanyx_record_set
+    i32.const 80
+    i32.const 8
+    call $__nanyx_record_set
     local.set $p2
     local.get $p2
     call $printPerson

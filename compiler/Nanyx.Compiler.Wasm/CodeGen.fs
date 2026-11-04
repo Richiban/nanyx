@@ -31,6 +31,10 @@ type private TranspileEnv =
       RecordFieldTypes: Map<string, Map<string, string>>
       ParamTypes: Map<string, string>
       ValueTypes: Map<string, string>
+      /// The full inferred types of top-level defs, parameters and locals, when the module was type-checked.
+      /// Record layouts are derived from these, so field access works on any expression whose type is known,
+      /// not only on locals the backend saw being assigned a record literal.
+      ValueTys: Map<string, Ty>
       /// The runtime helpers (see `runtimeHelpers`) the lowered code calls; shared by every function of a module.
       UsedHelpers: System.Collections.Generic.HashSet<string> }
 
@@ -43,6 +47,7 @@ module private Helpers =
     let stringEquals = "__nanyx_string_equals"
     let listLength = "__nanyx_list_length"
     let listConcat = "__nanyx_list_concat"
+    let recordSet = "__nanyx_record_set"
     let writeStdout = NyxCompiler.Intrinsics.writeStdout
     let stringLength = NyxCompiler.Intrinsics.stringLength
     let stringByteAt = NyxCompiler.Intrinsics.stringByteAt
@@ -319,6 +324,19 @@ let private runtimeHelpers : Map<string, string> =
             "  i32.const 8"
             "  call $fd_write"
             "  drop"
+            ")" ]
+      // Stores one field of a freshly allocated record and hands the record pointer back, so a record
+      // literal is built entirely on the operand stack: `base value offset -> base`. That keeps nested
+      // literals safe, since an inner allocation can never disturb an outer one held on the stack.
+      Helpers.recordSet,
+      lines
+          [ $"(func ${Helpers.recordSet} (param $base i32) (param $value i32) (param $offset i32) (result i32)"
+            "  local.get $base"
+            "  local.get $offset"
+            "  i32.add"
+            "  local.get $value"
+            "  i32.store"
+            "  local.get $base"
             ")" ]
       Helpers.listCons,
       lines
@@ -681,6 +699,38 @@ let private patternBoundValueTypes (typedPattern: TypedPattern) : (string * stri
         elementBindings @ restBinding
     | _ -> []
 
+/// The full inferred types of a function's parameters and the locals defined anywhere in its body.
+let private collectTypedValueTys (typedExpr: TypedExpr) : Map<string, Ty> =
+    let parameterTys =
+        match typedExpr.Expr, typedExpr.Type with
+        | Lambda([ (name, _) ], _), TyFunc(inputTy, _) -> [ name, inputTy ]
+        | Lambda(parameters, _), TyFunc(TyRecord fields, _) ->
+            parameters
+            |> List.mapi (fun index (name, _) -> fields |> Map.tryFind (string index) |> Option.map (fun ty -> name, ty))
+            |> List.choose id
+        | _ -> []
+    let rec collectExpr (acc: Map<string, Ty>) (expr: TypedExpr) =
+        let accWithBody =
+            match expr.Body with
+            | Some body -> collectExpr acc body
+            | None -> acc
+        let accWithStatements =
+            match expr.Statements with
+            | Some statements -> statements |> List.fold collectStatement accWithBody
+            | None -> accWithBody
+        match expr.MatchArms with
+        | Some arms -> arms |> List.fold (fun state (_, armExpr) -> collectExpr state armExpr) accWithStatements
+        | None -> accWithStatements
+    and collectStatement (acc: Map<string, Ty>) statement =
+        match statement with
+        | TypedDefStatement(_, name, _, expr) -> collectExpr (acc |> Map.add name expr.Type) expr
+        | TypedExprStatement expr -> collectExpr acc expr
+        | TypedUseStatement(_, Some expr) -> collectExpr acc expr
+        | TypedUseStatement(_, None)
+        | TypedImportStatement _
+        | TypedTypeDefStatement _ -> acc
+    collectExpr (Map.ofList parameterTys) typedExpr
+
 /// The simple types inference found for a function's parameters and the locals of its body.
 let private collectTypedValueTypes (typedExpr: TypedExpr) =
     let parameterTypes =
@@ -732,9 +782,40 @@ let private collectTypedValueTypes (typedExpr: TypedExpr) =
         | TypedTypeDefStatement _ -> acc
     collectExpr (Map.ofList parameterTypes) typedExpr
 
+/// The fields of a record type, looking through nominal wrappers.
+let rec private tryRecordFieldTys (ty: Ty) : Map<string, Ty> option =
+    match ty with
+    | TyRecord fields -> Some fields
+    | TyNominal(_, underlying, _) -> tryRecordFieldTys underlying
+    | _ -> None
+
+/// The inferred type of an expression, when `env.ValueTys` can tell: a named value, a field of a record-typed
+/// expression, or the result of calling a known function.
+let rec private tryExprTy (env: TranspileEnv) (expr: Expression) : Ty option =
+    match expr with
+    | IdentifierExpr(name, _) -> env.ValueTys |> Map.tryFind name
+    | MemberAccess(inner, fieldName, _) ->
+        tryExprTy env inner |> Option.bind tryRecordFieldTys |> Option.bind (Map.tryFind fieldName)
+    | FunctionCall(name, _, _)
+    | Pipe(_, name, _, _) ->
+        env.ValueTys
+        |> Map.tryFind name
+        |> Option.bind (function
+            | TyFunc(_, returnTy) -> Some returnTy
+            | _ -> None)
+    | _ -> None
+
+/// The layout (field names in storage order) of a record-typed expression, from its inferred type. Records are
+/// stored with their fields sorted by name, which is also the order of a `Map`'s keys.
+let private tryRecordLayoutOfExpr (env: TranspileEnv) (expr: Expression) : string list option =
+    tryExprTy env expr
+    |> Option.bind tryRecordFieldTys
+    |> Option.map (fun fields -> fields |> Map.toList |> List.map fst)
+
 /// The simple type ("string", "int" or "bool") of an expression, when the backend can tell. Strings matter most:
 /// `+` and `==` are lowered differently when an operand is known to be a string.
 let rec private tryGetExprTypeName (env: TranspileEnv) (expr: Expression) =
+    let fromInferredType () = tryExprTy env expr |> Option.bind trySimpleTypeName
     match expr with
     | LiteralExpr(StringLit _) -> Some "string"
     | LiteralExpr(IntLit _) -> Some "int"
@@ -743,10 +824,10 @@ let rec private tryGetExprTypeName (env: TranspileEnv) (expr: Expression) =
     | IdentifierExpr(name, _) ->
         env.ValueTypes |> Map.tryFind name
         |> Option.orElseWith (fun () -> env.ParamTypes |> Map.tryFind name)
-    | MemberAccess(IdentifierExpr(varName, _), fieldName, _) ->
-        match env.RecordFieldTypes |> Map.tryFind varName with
-        | Some fieldTypes -> fieldTypes |> Map.tryFind fieldName
-        | None -> None
+        |> Option.orElseWith fromInferredType
+    | MemberAccess(IdentifierExpr(varName, _), fieldName, _) when env.RecordFieldTypes |> Map.containsKey fieldName |> not && env.RecordFieldTypes |> Map.containsKey varName ->
+        env.RecordFieldTypes.[varName] |> Map.tryFind fieldName |> Option.orElseWith fromInferredType
+    | MemberAccess _ -> fromInferredType ()
     | BinaryOp(op, _, _) when [ "=="; "!="; "<"; "<="; ">"; ">="; "&&"; "||" ] |> List.contains op -> Some "bool"
     | BinaryOp(_, left, right) ->
         tryGetExprTypeName env left |> Option.orElseWith (fun () -> tryGetExprTypeName env right)
@@ -759,7 +840,7 @@ let rec private tryGetExprTypeName (env: TranspileEnv) (expr: Expression) =
         match List.tryLast statements with
         | Some (ExprStatement last) -> tryGetExprTypeName env last
         | _ -> None
-    | _ -> None
+    | _ -> fromInferredType ()
 
 let private isStringExpr (env: TranspileEnv) (expr: Expression) =
     tryGetExprTypeName env expr = Some "string"
@@ -1529,6 +1610,18 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
         | Some offset -> $"i32.const {offset}"
         | None -> failwith $"Internal error: missing string literal offset for {value}"
 
+    /// Allocates a block of 4-byte slots and fills them with `values` in order, leaving the block's pointer on
+    /// the stack. The block is reserved before any value is evaluated and the pointer stays on the operand
+    /// stack throughout, so a value that allocates (a nested record, a string) cannot overwrite the block.
+    let allocateSlots (values: Expression list) =
+        env.UsedHelpers.Add Helpers.alloc |> ignore
+        env.UsedHelpers.Add Helpers.recordSet |> ignore
+        let stores =
+            values
+            |> List.mapi (fun index value ->
+                $"{transpileExpression env value}\n    i32.const {index * 4}\n    call ${Helpers.recordSet}")
+        ($"i32.const {values.Length * 4}\n    call ${Helpers.alloc}" :: stores) |> String.concat "\n    "
+
     let renderStaticBytes bytes =
         bytes
         |> Array.toList
@@ -1679,18 +1772,8 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
         let elseCode = transpileExpression env elseExpr
         $"{condCode}\n    (if (result i32)\n      (then\n        {thenCode}\n      )\n      (else\n        {elseCode}\n      )\n    )"
     | TupleExpr items ->
-        // Allocate (4 * n) bytes on the heap for n i32 values
-        // Store each item, return pointer to first element
-        let n = items.Length
-        let sizeBytes = n * 4
-        let itemCodes = items |> List.mapi (fun i item ->
-            let itemCode = transpileExpression env item
-            let offset = i * 4
-            // Get heap pointer, add offset, get value, store
-            $"global.get $heap_ptr\n    i32.const {offset}\n    i32.add\n    {itemCode}\n    i32.store")
-        let storeAll = itemCodes |> String.concat "\n    "
-        // Store all items, then push return value (original ptr), then bump heap
-        $"{storeAll}\n    global.get $heap_ptr\n    global.get $heap_ptr\n    i32.const {sizeBytes}\n    i32.add\n    global.set $heap_ptr"
+        // A tuple is a block of one 4-byte slot per item, in order.
+        allocateSlots items
     | RecordExpr fields ->
         // Sort fields alphabetically by name, store in that order on heap
         let sortedFields =
@@ -1700,14 +1783,8 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                 | NamedField(name, expr) -> (name, expr)
                 | PositionalField expr -> (string i, expr))
             |> List.sortBy fst
-        let n = sortedFields.Length
-        let sizeBytes = n * 4
-        let fieldCodes = sortedFields |> List.mapi (fun i (_, expr) ->
-            let exprCode = transpileExpression env expr
-            let offset = i * 4
-            $"global.get $heap_ptr\n    i32.const {offset}\n    i32.add\n    {exprCode}\n    i32.store")
-        let storeAll = fieldCodes |> String.concat "\n    "
-        $"{storeAll}\n    global.get $heap_ptr\n    global.get $heap_ptr\n    i32.const {sizeBytes}\n    i32.add\n    global.set $heap_ptr"
+        // A record is a block of one 4-byte slot per field, in field-name order.
+        allocateSlots (sortedFields |> List.map snd)
     | MemberAccess(recordExpr, fieldName, _) ->
         // Support both numeric indices (t.0, t.1) and named fields (r.name)
         match System.Int32.TryParse(fieldName) with
@@ -1717,7 +1794,19 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
             let offset = index * 4
             $"{recordCode}\n    i32.const {offset}\n    i32.add\n    i32.load"
         | false, _ ->
-            // Named field - look up layout to find offset
+            // Named field: find its offset from the record's layout. The inferred type is the most general
+            // source (it covers nested records, constructor results and top-level values); the syntactic
+            // bookkeeping below remains for modules compiled without type information.
+            let loadField (fieldNames: string list) =
+                match fieldNames |> List.tryFindIndex ((=) fieldName) with
+                | Some index ->
+                    let recordCode = transpileExpression env recordExpr
+                    let offset = index * 4
+                    Some $"{recordCode}\n    i32.const {offset}\n    i32.add\n    i32.load"
+                | None -> None
+            match tryRecordLayoutOfExpr env recordExpr |> Option.bind loadField with
+            | Some code -> code
+            | None ->
             match recordExpr with
             | IdentifierExpr(varName, _) ->
                 match env.RecordLayouts |> Map.tryFind varName with
@@ -1983,14 +2072,7 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                         | NamedField(fieldName, expr) -> (fieldName, expr)
                         | PositionalField expr -> (string i, expr))
                     |> List.sortBy fst
-                let n = sortedFields.Length
-                let sizeBytes = n * 4
-                let fieldCodes = sortedFields |> List.mapi (fun i (_, expr) ->
-                    let exprCode = transpileExpression env expr
-                    let offset = i * 4
-                    $"global.get $heap_ptr\n    i32.const {offset}\n    i32.add\n    {exprCode}\n    i32.store")
-                let storeAll = fieldCodes |> String.concat "\n    "
-                $"{storeAll}\n    global.get $heap_ptr\n    global.get $heap_ptr\n    i32.const {sizeBytes}\n    i32.add\n    global.set $heap_ptr"
+                allocateSlots (sortedFields |> List.map snd)
             | _ ->
                 failwith $"Type constructor {name} expects a record expression as argument"
         | None ->
@@ -2301,7 +2383,7 @@ let private getLayoutFromTypeExpr (typeLayouts: Map<string, string list>) (typeF
         Some (fieldNames, fieldTypes)
     | _ -> None
 
-let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map<string, TypedExpr>) (typedValueTypes: Map<string, string>) (typedReturnTypes: Map<string, string>) : string =
+let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map<string, TypedExpr>) (typedValueTypes: Map<string, string>) (typedReturnTypes: Map<string, string>) (typedTopLevelTys: Map<string, Ty>) : string =
     let defs =
         module'
         |> List.choose (function
@@ -2616,6 +2698,12 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                 |> Option.map collectTypedValueTypes
                 |> Option.defaultValue Map.empty
 
+            let valueTys =
+                typedExprOpt
+                |> Option.map collectTypedValueTys
+                |> Option.defaultValue Map.empty
+                |> Map.fold (fun acc key value -> acc |> Map.add key value) typedTopLevelTys
+
             let initialValueTypes =
                 typedValueTypes
                 |> Map.fold (fun acc key value -> acc |> Map.add key value) Map.empty
@@ -2687,6 +2775,7 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                   RecordFieldTypes = initialRecordFieldTypes
                   ParamTypes = initialParamTypes
                   ValueTypes = initialValueTypes
+                  ValueTys = valueTys
                   UsedHelpers = usedHelpers }
             let fn = sanitizeIdentifier name
             
@@ -2809,6 +2898,7 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                   RecordFieldTypes = Map.empty
                   ParamTypes = Map.empty
                   ValueTypes = typedValueTypes
+                  ValueTys = typedTopLevelTys
                   UsedHelpers = usedHelpers }
             let bodyCode =
                 topLevelExprs
@@ -2834,6 +2924,7 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
           Helpers.stringEquals, [ Helpers.stringLength ]
           Helpers.writeStdout, [ Helpers.stringLength ]
           Helpers.listCons, [ Helpers.alloc ]
+          Helpers.recordSet, []
           Helpers.listLength, []
           Helpers.listConcat, [ Helpers.listCons ] ]
     let rec closeHelpers (acc: Set<string>) (pending: string list) =
@@ -3137,7 +3228,7 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
         $"(module\n{body}\n)"
 
 let transpileModuleToWat (module': Module) : string =
-    transpileModuleToWatCore module' Map.empty Map.empty Map.empty
+    transpileModuleToWatCore module' Map.empty Map.empty Map.empty Map.empty
 
 let transpileTypedModuleToWat (typed: TypedModule) : string =
     let typedBodies =
@@ -3159,4 +3250,4 @@ let transpileTypedModuleToWat (typed: TypedModule) : string =
             | TyFunc(_, returnTy) -> trySimpleTypeName returnTy |> Option.map (fun tyName -> name, tyName)
             | _ -> None)
         |> Map.ofList
-    transpileModuleToWatCore typed.Module typedBodies typedValueTypes typedReturnTypes
+    transpileModuleToWatCore typed.Module typedBodies typedValueTypes typedReturnTypes typed.Types
