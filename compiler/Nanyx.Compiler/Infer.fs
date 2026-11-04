@@ -958,11 +958,13 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
             let mutable armExprs: TypedExpr list = []
             let mutable typedArms: TypedMatchArm list = []
             let mutable errors: Diagnostic list = []
-            let isCatchAllPattern pattern =
+            let rec isCatchAllPattern pattern =
                 match pattern with
                 | WildcardPattern
                 | ElsePattern
                 | IdentifierPattern _ -> true
+                // `(a, _)` matches every tuple: a tuple pattern is irrefutable when each element is.
+                | TuplePattern elements -> elements |> List.forall isCatchAllPattern
                 | _ -> false
             let tryGetTagName pattern =
                 match pattern with

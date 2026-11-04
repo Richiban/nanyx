@@ -561,23 +561,25 @@ and private collectStatementLocalNames (statements: Statement list) : string lis
 let private collectBlockLocalNames (statements: Statement list) =
     collectStatementLocalNames statements |> List.distinct
 
-/// The identifiers a pattern binds that live in `__payload_<name>` locals: tag payloads, list elements and list
-/// rests. (Plain identifier patterns alias the scrutinee local and need no local of their own.)
+/// Every identifier a pattern binds, however deeply nested.
+let rec private nestedPatternIdentifiers (pattern: Pattern) : string list =
+    match pattern with
+    | IdentifierPattern ident -> [ ident ]
+    | TagPattern(_, Some payload) -> nestedPatternIdentifiers payload
+    | ListPattern(elements, restOpt) ->
+        (elements |> List.collect nestedPatternIdentifiers)
+        @ (restOpt |> Option.map nestedPatternIdentifiers |> Option.defaultValue [])
+    | TuplePattern patterns
+    | RecordPattern(_, patterns) -> patterns |> List.collect nestedPatternIdentifiers
+    | _ -> []
+
+/// The identifiers a pattern binds that live in `__payload_<name>` locals: tag payloads, list elements and
+/// rests, and tuple elements. (A plain identifier pattern at the top of an arm aliases the scrutinee local
+/// and needs no local of its own.)
 let private patternBoundIdentifiers (pattern: Pattern) : string list =
     match pattern with
-    | TagPattern(_, Some (IdentifierPattern ident)) -> [ ident ]
-    | ListPattern(elements, restOpt) ->
-        let elementIdents =
-            elements
-            |> List.choose (function
-                | IdentifierPattern ident -> Some ident
-                | _ -> None)
-        let restIdents =
-            match restOpt with
-            | Some (IdentifierPattern ident) -> [ ident ]
-            | _ -> []
-        elementIdents @ restIdents
-    | _ -> []
+    | IdentifierPattern _ -> []
+    | nested -> nestedPatternIdentifiers nested
 
 let rec private collectPayloadLocalsExpr expr =
     match expr with
@@ -695,31 +697,39 @@ let rec private tryListElementType (ty: Ty) : Ty option =
     | TyNominal(_, underlying, _) -> tryListElementType underlying
     | _ -> None
 
+let rec private tryRecordFieldTys (ty: Ty) : Map<string, Ty> option =
+    match ty with
+    | TyRecord fields -> Some fields
+    | TyNominal(_, underlying, _) -> tryRecordFieldTys underlying
+    | _ -> None
+
 /// The simple types of the identifiers a typed pattern binds: `#some(n)` binds `n` at the tag's payload
 /// type, `[x, ...rest]` binds `x` at the element type and `rest` as a list, and a bare `n` binds at the
 /// scrutinee's type.
 let private patternBoundValueTypes (typedPattern: TypedPattern) : (string * string) list =
-    match typedPattern.Pattern with
-    | IdentifierPattern ident ->
-        trySimpleTypeName typedPattern.Type |> Option.map (fun tyName -> ident, tyName) |> Option.toList
-    | TagPattern(tagName, Some (IdentifierPattern ident)) ->
-        tryTagPayloadType tagName typedPattern.Type
-        |> Option.bind trySimpleTypeName
-        |> Option.map (fun tyName -> ident, tyName)
-        |> Option.toList
-    | ListPattern(elements, restOpt) ->
-        let elementTyName = tryListElementType typedPattern.Type |> Option.bind trySimpleTypeName
-        let elementBindings =
-            elements
-            |> List.choose (function
-                | IdentifierPattern ident -> elementTyName |> Option.map (fun tyName -> ident, tyName)
-                | _ -> None)
-        let restBinding =
-            match restOpt with
-            | Some (IdentifierPattern ident) -> [ ident, "list" ]
-            | _ -> []
-        elementBindings @ restBinding
-    | _ -> []
+    let rec boundTypes (pattern: Pattern) (ty: Ty) : (string * string) list =
+        let under (tyOpt: Ty option) (inner: Pattern) =
+            tyOpt |> Option.map (boundTypes inner) |> Option.defaultValue []
+        match pattern with
+        | IdentifierPattern ident ->
+            trySimpleTypeName ty |> Option.map (fun tyName -> ident, tyName) |> Option.toList
+        | TagPattern(tagName, Some payload) -> under (tryTagPayloadType tagName ty) payload
+        | ListPattern(elements, restOpt) ->
+            let elementTy = tryListElementType ty
+            let elementBindings = elements |> List.collect (under elementTy)
+            let restBinding =
+                match restOpt with
+                | Some (IdentifierPattern ident) -> [ ident, "list" ]
+                | Some rest -> boundTypes rest ty
+                | None -> []
+            elementBindings @ restBinding
+        | TuplePattern patterns ->
+            let fieldTys = tryRecordFieldTys ty
+            patterns
+            |> List.mapi (fun index element -> under (fieldTys |> Option.bind (Map.tryFind (string index))) element)
+            |> List.concat
+        | _ -> []
+    boundTypes typedPattern.Pattern typedPattern.Type
 
 /// The full inferred types of a function's parameters and the locals defined anywhere in its body.
 let private collectTypedValueTys (typedExpr: TypedExpr) : Map<string, Ty> =
@@ -805,12 +815,6 @@ let private collectTypedValueTypes (typedExpr: TypedExpr) =
     collectExpr (Map.ofList parameterTypes) typedExpr
 
 /// The fields of a record type, looking through nominal wrappers.
-let rec private tryRecordFieldTys (ty: Ty) : Map<string, Ty> option =
-    match ty with
-    | TyRecord fields -> Some fields
-    | TyNominal(_, underlying, _) -> tryRecordFieldTys underlying
-    | _ -> None
-
 /// The inferred type of an expression, when `env.ValueTys` can tell: a named value, a field of a record-typed
 /// expression, or the result of calling a known function.
 let rec private tryExprTy (env: TranspileEnv) (expr: Expression) : Ty option =
@@ -1899,79 +1903,83 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
             | IdentifierPattern _ -> true
             | _ -> false
 
-        // The code that loads element `index` of the list in `tempName`; `listTailCode` the tail after `count` cells.
-        let listTailCode tempName count =
-            $"local.get ${tempName}" + String.replicate count "\n      i32.const 4\n      i32.add\n      i32.load"
-        let listElementCode tempName index =
-            $"{listTailCode tempName index}\n      i32.load"
+        // Patterns are lowered against a `valueCode` snippet that pushes the value being matched: the
+        // scrutinee local at the top of an arm, and a load from it for a tuple element, list element or tag
+        // payload below that. Every snippet is a pure load, so it is safe to emit it more than once.
+        let listTailCode valueCode count =
+            valueCode + String.replicate count "\n      i32.const 4\n      i32.add\n      i32.load"
+        let listElementCode valueCode index =
+            $"{listTailCode valueCode index}\n      i32.load"
+        let tupleElementCode valueCode index =
+            $"{valueCode}\n      i32.const {index * 4}\n      i32.add\n      i32.load"
+        let tagPayloadCode valueCode =
+            $"{valueCode}\n      i32.const {tagPayloadMask}\n      i32.and"
 
-        let patternCondition pattern tempName =
+        /// `first` and then, only if it held, `second` (so `second` may load through pointers that are
+        /// only valid when `first` holds).
+        let guarded first second =
+            $"{first}\n      (if (result i32)\n        (then\n          {second})\n        (else i32.const 0))"
+        let allOf conditions =
+            match conditions |> List.filter (fun condition -> condition <> "i32.const 1") with
+            | [] -> "i32.const 1"
+            | [ single ] -> single
+            | many -> (many |> String.concat "\n      ") + String.replicate (many.Length - 1) "\n      i32.and"
+
+        let rec patternCondition pattern valueCode =
             match pattern with
             | ListPattern(elements, restOpt) ->
                 env.UsedHelpers.Add Helpers.listLength |> ignore
                 let lengthInstr = if restOpt.IsSome then "i32.ge_s" else "i32.eq"
                 let lengthCheck =
-                    $"local.get ${tempName}\n      call ${Helpers.listLength}\n      i32.const {elements.Length}\n      {lengthInstr}"
+                    $"{valueCode}\n      call ${Helpers.listLength}\n      i32.const {elements.Length}\n      {lengthInstr}"
                 let elementChecks =
                     elements
-                    |> List.mapi (fun index element ->
-                        match element with
-                        | IdentifierPattern _
-                        | WildcardPattern
-                        | ElsePattern -> None
-                        | LiteralPattern(IntLit value) ->
-                            Some $"{listElementCode tempName index}\n      i32.const {value}\n      i32.eq"
-                        | LiteralPattern(BoolLit value) ->
-                            Some $"{listElementCode tempName index}\n      i32.const {(if value then 1 else 0)}\n      i32.eq"
-                        | other -> failwith $"Unsupported list element pattern for WASM MVP backend: {other}")
-                    |> List.choose id
-                match restOpt with
-                | None
-                | Some (IdentifierPattern _)
-                | Some WildcardPattern
-                | Some ElsePattern -> ()
-                | Some other -> failwith $"Unsupported list rest pattern for WASM MVP backend: {other}"
-                (lengthCheck :: elementChecks) |> String.concat "\n      " |> fun code ->
-                    code + String.replicate elementChecks.Length "\n      i32.and"
+                    |> List.mapi (fun index element -> patternCondition element (listElementCode valueCode index))
+                    |> allOf
+                let restCheck =
+                    match restOpt with
+                    | Some rest -> patternCondition rest (listTailCode valueCode elements.Length)
+                    | None -> "i32.const 1"
+                // Elements only exist once the length check holds.
+                match allOf [ elementChecks; restCheck ] with
+                | "i32.const 1" -> lengthCheck
+                | elementsAndRest -> guarded lengthCheck elementsAndRest
+            | TuplePattern patterns ->
+                patterns
+                |> List.mapi (fun index element -> patternCondition element (tupleElementCode valueCode index))
+                |> allOf
             | LiteralPattern(IntLit value) ->
-                $"local.get ${tempName}\n      i32.const {value}\n      i32.eq"
+                $"{valueCode}\n      i32.const {value}\n      i32.eq"
             | LiteralPattern(BoolLit value) ->
                 let asInt = if value then 1 else 0
-                $"local.get ${tempName}\n      i32.const {asInt}\n      i32.eq"
+                $"{valueCode}\n      i32.const {asInt}\n      i32.eq"
             | LiteralPattern(StringLit value) ->
                 env.UsedHelpers.Add Helpers.stringEquals |> ignore
-                $"local.get ${tempName}\n      {stringLiteralCode value}\n      call ${Helpers.stringEquals}"
+                $"{valueCode}\n      {stringLiteralCode value}\n      call ${Helpers.stringEquals}"
             | TagPattern(tagName, payloadOpt) ->
                 let tagBase =
                     match env.TagIds |> Map.tryFind tagName with
                     | Some id -> tagDiscriminantBase id
                     | None -> failwith $"Internal error: missing tag discriminant for pattern #{tagName}"
+                let discriminantCheck =
+                    $"{valueCode}\n      i32.const {tagDiscriminantMask}\n      i32.and\n      i32.const {tagBase}\n      i32.eq"
                 match payloadOpt with
-                | None ->
-                    $"local.get ${tempName}\n      i32.const {tagDiscriminantMask}\n      i32.and\n      i32.const {tagBase}\n      i32.eq"
+                | None -> discriminantCheck
                 | Some (LiteralPattern(IntLit payload)) ->
+                    // An int payload is stored in the masked bits, so compare it masked too.
                     let payloadMasked = payload &&& tagPayloadMask
-                    $"local.get ${tempName}\n      i32.const {tagDiscriminantMask}\n      i32.and\n      i32.const {tagBase}\n      i32.eq\n      local.get ${tempName}\n      i32.const {tagPayloadMask}\n      i32.and\n      i32.const {payloadMasked}\n      i32.eq\n      i32.and"
-                | Some (LiteralPattern(BoolLit payload)) ->
-                    let payloadMasked = if payload then 1 else 0
-                    $"local.get ${tempName}\n      i32.const {tagDiscriminantMask}\n      i32.and\n      i32.const {tagBase}\n      i32.eq\n      local.get ${tempName}\n      i32.const {tagPayloadMask}\n      i32.and\n      i32.const {payloadMasked}\n      i32.eq\n      i32.and"
-                | Some (LiteralPattern(StringLit payload)) ->
-                    // The payload is a string pointer; compare contents, not addresses. Only compare once
-                    // the discriminant matches: another tag's payload bits are not a valid pointer.
-                    env.UsedHelpers.Add Helpers.stringEquals |> ignore
-                    $"local.get ${tempName}\n      i32.const {tagDiscriminantMask}\n      i32.and\n      i32.const {tagBase}\n      i32.eq\n      (if (result i32)\n        (then\n          local.get ${tempName}\n          i32.const {tagPayloadMask}\n          i32.and\n          {stringLiteralCode payload}\n          call ${Helpers.stringEquals})\n        (else i32.const 0))"
-                | Some WildcardPattern
-                | Some ElsePattern ->
-                    $"local.get ${tempName}\n      i32.const {tagDiscriminantMask}\n      i32.and\n      i32.const {tagBase}\n      i32.eq"
-                | Some (IdentifierPattern ident) ->
-                    $"local.get ${tempName}\n      i32.const {tagDiscriminantMask}\n      i32.and\n      i32.const {tagBase}\n      i32.eq"
-                | Some _ ->
-                    failwith $"Unsupported tag payload pattern for WASM MVP backend: {tagName}"
+                    allOf [ discriminantCheck; $"{tagPayloadCode valueCode}\n      i32.const {payloadMasked}\n      i32.eq" ]
+                | Some payload ->
+                    // Only look at the payload once the discriminant matches: another tag's payload bits
+                    // are not a valid pointer.
+                    match patternCondition payload (tagPayloadCode valueCode) with
+                    | "i32.const 1" -> discriminantCheck
+                    | payloadCheck -> guarded discriminantCheck payloadCheck
             | GuardPattern(op, guardExpr) ->
                 match wasmBinaryInstruction op with
                 | Some instr ->
                     let guardCode = transpileExpression env guardExpr
-                    $"local.get ${tempName}\n      {guardCode}\n      {instr}"
+                    $"{valueCode}\n      {guardCode}\n      {instr}"
                 | None ->
                     failwith $"Unsupported guard operator for WASM MVP backend: {op}"
             | WildcardPattern
@@ -1987,7 +1995,7 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                     failwith "Unsupported match arm: pattern count does not match scrutinee count"
                 let conds : string list =
                     List.zip patterns matchTempNames
-                    |> List.map (fun (pat, temp) -> patternCondition pat temp)
+                    |> List.map (fun (pat, temp) -> patternCondition pat $"local.get ${temp}")
                 let allConds =
                     match conds with
                     | [] -> "i32.const 1"
@@ -2015,28 +2023,32 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                     match envWithPayloadLocals.Locals |> Map.tryFind ident with
                     | Some localName -> localName
                     | None -> failwith $"Internal error: missing local for payload variable {ident}"
+                // Stores for the identifiers nested inside a pattern, mirroring `patternCondition`.
+                let rec patternBinds pattern valueCode =
+                    match pattern with
+                    | IdentifierPattern ident -> [ $"{valueCode}\n        local.set ${payloadLocal ident}" ]
+                    | TagPattern(_, Some payload) -> patternBinds payload (tagPayloadCode valueCode)
+                    | ListPattern(elements, restOpt) ->
+                        let elementBinds =
+                            elements
+                            |> List.mapi (fun index element -> patternBinds element (listElementCode valueCode index))
+                            |> List.concat
+                        let restBinds =
+                            match restOpt with
+                            | Some rest -> patternBinds rest (listTailCode valueCode elements.Length)
+                            | None -> []
+                        elementBinds @ restBinds
+                    | TuplePattern elements ->
+                        elements
+                        |> List.mapi (fun index element -> patternBinds element (tupleElementCode valueCode index))
+                        |> List.concat
+                    | _ -> []
                 let patternPayloadBinds =
                     List.zip patterns matchTempNames
                     |> List.collect (fun (pat, temp) ->
                         match pat with
-                        | TagPattern(_, Some (IdentifierPattern ident)) ->
-                            [ $"local.get ${temp}\n        i32.const {tagPayloadMask}\n        i32.and\n        local.set ${payloadLocal ident}" ]
-                        | ListPattern(elements, restOpt) ->
-                            let elementBinds =
-                                elements
-                                |> List.mapi (fun index element ->
-                                    match element with
-                                    | IdentifierPattern ident ->
-                                        Some $"{listElementCode temp index}\n        local.set ${payloadLocal ident}"
-                                    | _ -> None)
-                                |> List.choose id
-                            let restBinds =
-                                match restOpt with
-                                | Some (IdentifierPattern ident) ->
-                                    [ $"{listTailCode temp elements.Length}\n        local.set ${payloadLocal ident}" ]
-                                | _ -> []
-                            elementBinds @ restBinds
-                        | _ -> [])
+                        | IdentifierPattern _ -> []  // aliases the scrutinee local
+                        | nested -> patternBinds nested $"local.get ${temp}")
                     |> String.concat "\n    "
                 let armCode =
                     if patternPayloadBinds = "" then
@@ -2129,6 +2141,9 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                     | _ ->
                         // Not a known record, just pass it
                         flatArgs |> List.map (transpileExpression env)
+                | _ when expectedArity = 1 && flatArgs.Length > 1 ->
+                    // `f(a, b)` and `f((a, b))` parse alike; a one-parameter callee takes the whole tuple.
+                    [ transpileExpression env (TupleExpr flatArgs) ]
                 | _ ->
                     flatArgs |> List.map (transpileExpression env)
             

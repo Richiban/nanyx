@@ -357,6 +357,35 @@ let ``Run - matching on string literals`` () =
         "println(greet(#name(\"Ada\")) ++ \" / \" ++ greet(#name(\"Bob\")) ++ \" / \" ++ greet(#anon))\n"
     runSource source |> assertRan "weekend weekend weekday\nweekend\nhello, Ada! / hello, someone / hello, stranger\n"
 [<Fact>]
+let ``Run - tuple patterns in match arms`` () =
+    // Regression: `| (0, _) -> ...` failed with "Unsupported match pattern" (#33).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def describe: (int, int) -> string = { p ->\n" +
+        "  match p\n" +
+        "    | (0, _) -> \"x zero\"\n" +
+        "    | (_, 0) -> \"y zero\"\n" +
+        "    | _ -> \"other\"\n" +
+        "}\n" +
+        "def swapped: (int, int) -> string = { p ->\n" +
+        "  match p\n" +
+        "    | (a, b) -> \"{b} {a}\"\n" +
+        "}\n" +
+        "def firstName: list((string, int)) -> string = { people ->\n" +
+        "  match people\n" +
+        "    | [(name, _), ...rest] -> name\n" +
+        "    | [] -> \"nobody\"\n" +
+        "}\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  println(describe((0, 1)) ++ \" \" ++ describe((1, 0)) ++ \" \" ++ describe((1, 1)))\n" +
+        "  println(swapped((1, 2)))\n" +
+        "  println(firstName([(\"Ada\", 36), (\"Grace\", 45)]) ++ \" \" ++ firstName([]))\n" +
+        "}\n"
+    runSource source |> assertRan "x zero y zero other\n2 1\nAda nobody\n"
+
+[<Fact>]
 let ``Run - identifier patterns bind the scrutinee`` () =
     // Regression: `| n -> ...` and `| 0, y -> ...` failed with "Unsupported identifier" (#34).
     let source =
