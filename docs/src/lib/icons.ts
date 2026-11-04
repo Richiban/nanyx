@@ -1,5 +1,6 @@
 import {
   BookOpen,
+  Code,
   Construction,
   Fingerprint,
   Languages,
@@ -14,6 +15,7 @@ import {
 
 const iconMap: Record<string, LucideIcon> = {
   BookOpen,
+  Code,
   Construction,
   Fingerprint,
   Languages,
