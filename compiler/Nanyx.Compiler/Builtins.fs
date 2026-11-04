@@ -1,52 +1,106 @@
 namespace NyxCompiler
 
+open System.IO
+open System.Reflection
 open Parser.Program
 
-/// Functions and standard-library modules that the compiler knows about without any user declaration.
+/// The compiler intrinsics: the few operations the standard library is written over because they cannot
+/// be expressed in Nanyx itself. This is the one place that lists them and their types.
 ///
-/// This is a stop-gap until there is a real standard library: `import nanyx/console` is accepted and
-/// `println` is always in scope with the type `string -> unit`, whether or not the import is present.
-module Builtins =
-    /// The standard-library module prefix in import paths, e.g. `import nanyx/console`.
-    let standardLibraryPrefix = "nanyx/"
+/// They are in scope only while a standard-library module is being checked, never in user code. The
+/// WebAssembly backend lowers a call to one of them onto a helper function it emits with the module
+/// (see `runtimeHelpers` in Transpiler.Wasm.CodeGen).
+module Intrinsics =
+    /// Every intrinsic name starts with this, which keeps them out of the way of ordinary identifiers.
+    let prefix = "__nanyx_"
 
-    /// Standard-library modules that may be imported. None of them currently contributes bindings;
-    /// the functions they describe are built in (see `typeEnv`).
-    let standardLibraryModules = set [ "nanyx/console" ]
+    let private stringTy = TyPrimitive "string"
+    let private intTy = TyPrimitive "int"
+    let private unitTy = TyPrimitive "unit"
 
-    /// The name of the standard-library module an import refers to, if it refers to one at all.
-    let tryStandardLibraryModule (item: ImportItem) : string option =
+    /// The input type of a function taking several arguments: a positional record, as inference builds it.
+    let private tuple (items: Ty list) =
+        items |> List.mapi (fun index ty -> string index, ty) |> Map.ofList |> TyRecord
+
+    let private elementVar = { Id = -1; Name = Some "a" }
+    let private element = TyVar elementVar
+    let private listOf (ty: Ty) = TyApply("list", [ ty ])
+
+    /// Writes a string to standard output, with nothing added.
+    let writeStdout = prefix + "write_stdout"
+    /// The number of bytes in a string.
+    let stringLength = prefix + "string_length"
+    /// The byte at an index of a string, or -1 when the index is out of range.
+    let stringByteAt = prefix + "string_byte_at"
+    /// A new string holding `count` bytes of a string from `start`; both are clamped to the string.
+    let stringSlice = prefix + "string_slice"
+    /// A new one-byte string.
+    let stringFromByte = prefix + "string_from_byte"
+    /// A list with an element added at the front.
+    let listCons = prefix + "list_cons"
+
+    /// Every intrinsic with its type scheme.
+    let all : (string * TypeScheme) list =
+        [ writeStdout, TypeEnv.mono (TyFunc(stringTy, unitTy))
+          stringLength, TypeEnv.mono (TyFunc(stringTy, intTy))
+          stringByteAt, TypeEnv.mono (TyFunc(tuple [ stringTy; intTy ], intTy))
+          stringSlice, TypeEnv.mono (TyFunc(tuple [ stringTy; intTy; intTy ], stringTy))
+          stringFromByte, TypeEnv.mono (TyFunc(intTy, stringTy))
+          listCons, { Quantified = set [ elementVar.Id ]; Type = TyFunc(tuple [ element; listOf element ], listOf element) } ]
+
+    let names : Set<string> = all |> List.map fst |> Set.ofList
+
+    let isIntrinsic (name: string) = names.Contains name
+
+    /// The intrinsics that yield unit, so the backend knows to push a unit value after calling them.
+    let returnsUnit (name: string) =
+        all
+        |> List.exists (fun (intrinsicName, scheme) ->
+            intrinsicName = name
+            && (match scheme.Type with
+                | TyFunc(_, TyPrimitive "unit") -> true
+                | _ -> false))
+
+    /// The type environment a standard-library module is checked in.
+    let typeEnv : TypeEnv =
+        all |> List.fold (fun env (name, scheme) -> TypeEnv.extend name scheme env) TypeEnv.empty
+
+/// The standard library: an ordinary package named `nanyx`, written in Nanyx (stdlib/nanyx/*.nyx at the
+/// repository root) and embedded in the compiler assembly, so it is versioned with the compiler and the
+/// published binary needs no files next to it. `import nanyx/<module>` reads the module's source from the
+/// embedded resource "nanyx/<module>.nyx" and compiles it together with the importing program.
+module StandardLibrary =
+    let packageName = "nanyx"
+
+    /// The prefix of an import path that refers to the standard library, e.g. `import nanyx/console`.
+    let importPrefix = packageName + "/"
+
+    /// The name of the standard-library module an import refers to (`console` for `nanyx/console`), if any.
+    let tryModuleName (item: ImportItem) : string option =
         match item.Source with
-        | ModuleImport name when name.StartsWith standardLibraryPrefix -> Some name
+        | ModuleImport name when name.StartsWith importPrefix -> Some (name.Substring importPrefix.Length)
         | _ -> None
 
-    let isStandardLibraryModule (name: string) = standardLibraryModules.Contains name
+    let private resourceName (moduleName: string) = $"{packageName}/{moduleName}.nyx"
 
-    /// Writes a string followed by a newline to standard output.
-    let printlnName = "println"
+    let private assembly = Assembly.GetExecutingAssembly()
 
-    let printlnType = TyFunc(TyPrimitive "string", TyPrimitive "unit")
+    /// The modules the library ships, in alphabetical order.
+    let moduleNames : string list =
+        assembly.GetManifestResourceNames()
+        |> Array.choose (fun name ->
+            if name.StartsWith importPrefix && name.EndsWith ".nyx" then
+                Some (name.Substring(importPrefix.Length, name.Length - importPrefix.Length - ".nyx".Length))
+            else
+                None)
+        |> Array.sort
+        |> Array.toList
 
-    /// The type environment every module is checked in.
-    let typeEnv : TypeEnv =
-        TypeEnv.empty
-        |> TypeEnv.extend printlnName (TypeEnv.mono printlnType)
-
-    /// Names of the members of every record or context type the module declares.
-    let private declaredMemberNames (module': Module) : Set<string> =
-        module'
-        |> List.collect (function
-            | Def (TypeDef(_, _, _, TypeRecord fields)) ->
-                fields
-                |> List.map (function
-                    | TypeField(name, _, _, _, _) -> name
-                    | TypeMember(name, _) -> name)
-            | _ -> [])
-        |> Set.ofList
-
-    /// The type environment for a particular module: a built-in is shadowed when the module declares a
-    /// context member of the same name (for example `context Console = (println: string -> ())`), so
-    /// that member must then be brought into scope with `use` like any other.
-    let typeEnvFor (module': Module) : TypeEnv =
-        let declared = declaredMemberNames module'
-        typeEnv |> Map.filter (fun name _ -> not (declared.Contains name))
+    /// The source of a standard-library module, or None when the library has no module of that name.
+    let tryLoadSource (moduleName: string) : string option =
+        use stream = assembly.GetManifestResourceStream(resourceName moduleName)
+        if isNull stream then
+            None
+        else
+            use reader = new StreamReader(stream)
+            Some (reader.ReadToEnd())

@@ -113,9 +113,13 @@ let ``E2E - twentytwo - top-level main call emits start`` () =
     runE2ETest "twentytwo"
 
 [<Fact>]
-let ``E2E - twentythree - built-in println in a script`` () =
+let ``E2E - twentythree - println from nanyx/console in a script`` () =
     runE2EFileTest "twentythree"
 
 [<Fact>]
 let ``E2E - twentyfour - entry attribute runs main at start`` () =
     runE2EFileTest "twentyfour"
+
+[<Fact>]
+let ``E2E - twentyfive - list literals and patterns`` () =
+    runE2ETest "twentyfive"

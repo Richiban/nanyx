@@ -1,0 +1,12 @@
+-- Lists: literals build cons cells, patterns take them apart
+def sum = { xs ->
+  match xs
+  | [] -> 0
+  | [x, ...rest] -> x + sum(rest)
+}
+
+def main = {
+  dbg(sum([1, 2, 3]))
+}
+
+main()

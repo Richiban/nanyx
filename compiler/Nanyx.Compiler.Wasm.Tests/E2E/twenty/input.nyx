@@ -8,7 +8,7 @@ context ToString(a) = (
 def compareStrings: [ToString(a) + ToString(b)] (a, b) -> bool = { x, y ->
   def xString = ToString(a).toString(x)
   def yString = ToString(b).toString(y)
-  dbg("xString: " + xString + ", yString: " + yString)
+  dbg("xString: " ++ xString ++ ", yString: " ++ yString)
   xString == yString
 }
 
