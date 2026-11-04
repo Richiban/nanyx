@@ -1,0 +1,6 @@
+module main
+
+@entry
+def main = {
+  println("Hello, World!")
+}

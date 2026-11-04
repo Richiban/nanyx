@@ -1409,6 +1409,8 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
             currentModule <- Some name
             items <- items @ [ TypedModuleDecl name ]
         | ModuleBlock _ -> ()
+        // Attributes are resolved by the compiler front end before inference (see Compiler.applyAttributes).
+        | Attribute _ -> ()
         | Def (TypeDef(name, modifiers, parameters, body)) ->
             state <- registerTypeDef state name modifiers parameters body
             items <- items @ [ TypedDef (TypedTypeDef(name, modifiers, parameters, body)) ]
