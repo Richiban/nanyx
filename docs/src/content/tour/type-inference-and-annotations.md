@@ -28,6 +28,41 @@ def identity = { x -> x }
 -- inferred as `a -> a`, meaning it can take any type `a` and returns the same type `a`
 ```
 
+## Inferring tag unions
+
+When the branches of an `if` or `match` evaluate to different [tags](./tags), the compiler does not pick one branch's type and reject the others. It collects the tags from every branch into a union, so a function that returns a tag per outcome needs no annotation:
+
+```nanyx
+def getMessage = {
+  def message = "Hello, from Nanyx!"
+  if false then #some(message)
+  else #noMessage
+}
+-- inferred as `() -> #some(string) | #noMessage`
+```
+
+The same applies across the arms of a `match`:
+
+```nanyx
+def classify = { n ->
+  match n
+    | 0 -> #zero
+    | 1 -> #one(n)
+    | _ -> #many(n)
+}
+-- inferred as `int -> #zero | #one(int) | #many(int)`
+```
+
+Only tags are collected this way. Branches of other types still have to agree, so an `if` with an `int` in one branch and a `string` in the other is an error. Payloads are unified per tag, which means `#some(1)` in one branch and `#some("one")` in another is also an error, because a single `#some` cannot carry both.
+
+An annotation still makes sense when you want the union fixed up front, for example to let a branch you have not written yet return a tag that no current branch produces:
+
+```nanyx
+def getMessage: () -> #some(string) | #noMessage | #error(string) = {
+  if false then #some("Hello") else #noMessage
+}
+```
+
 ## Positional vs named inference
 
 When functions are unannotated, Nanyx assumes that any deconstructed arguments are positional. If you want to use named parameters, annotate the function type:

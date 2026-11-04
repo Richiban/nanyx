@@ -42,6 +42,8 @@ def myFavoriteColor: Color = #green
 
 Using plain tags gives you an enum-like shape (while remaining structural).
 
+You rarely have to write a union out by hand. When different branches of a function return different tags, the compiler infers the union for you; see [Inferring tag unions](./type-inference-and-annotations#inferring-tag-unions).
+
 # Payloads
 
 Tags can also carry payloads, allowing them to function as discriminated unions or sum types:
