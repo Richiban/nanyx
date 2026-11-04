@@ -8,7 +8,7 @@
     "url": "https://github.com/Richiban/nanyx"
   },
   "license": "MIT",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "icon": "img/nanyx.png",
   "galleryBanner": {
     "color": "#5b5bf2",
@@ -22,8 +22,7 @@
   ],
   "main": "./dist/extension.js",
   "activationEvents": [
-    "onLanguage:nanyx",
-    "onCommand:nanyx.typecheckFile"
+    "onLanguage:nanyx"
   ],
   "contributes": {
     "languages": [
@@ -48,42 +47,42 @@
     ],
     "commands": [
       {
-        "command": "nanyx.typecheckFile",
-        "title": "Nanyx: Typecheck Current File"
+        "command": "nanyx.downloadCompiler",
+        "title": "Nanyx: Download the compiler"
+      },
+      {
+        "command": "nanyx.restartServer",
+        "title": "Nanyx: Restart the language server"
       }
     ],
     "configuration": {
       "title": "Nanyx",
       "properties": {
-        "nanyx.typecheckOnSave": {
-          "type": "boolean",
-          "default": true,
-          "description": "Run the Nanyx compiler on save to surface diagnostics."
-        },
-        "nanyx.compilerProject": {
+        "nanyx.path": {
           "type": "string",
-          "default": "compiler/Nanyx.Compiler.Cli/Nanyx.Compiler.Cli.fsproj",
-          "description": "Relative path to Nanyx.Compiler.Cli.fsproj in the workspace."
+          "default": "",
+          "markdownDescription": "Path to the `nanyx` executable (the compiler, which is also the language server). Leave empty to use the `nanyx` on PATH, or to download a release into the extension's storage."
         },
-        "nanyx.compilerDotnetPath": {
+        "nanyx.compilerVersion": {
           "type": "string",
-          "default": "dotnet",
-          "description": "Path to the dotnet executable."
+          "default": "",
+          "markdownDescription": "The compiler release to download when no `nanyx` is found. Leave empty for the version this extension was built for."
+        },
+        "nanyx.downloadUrl": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Where to download the compiler from. `${version}`, `${rid}` (e.g. `win-x64`) and `${ext}` (`zip` or `tar.gz`) are substituted. Leave empty for the GitHub releases of Richiban/nanyx."
         }
       }
     }
   },
   "scripts": {
-    "compile": "tsc -p ./ && tsc -p ./server",
+    "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "watch:server": "tsc -watch -p ./server",
     "vscode:prepublish": "npm run compile"
   },
   "dependencies": {
-    "vscode-languageclient": "^9.0.1",
-    "vscode-languageserver": "^9.0.1",
-    "vscode-languageserver-textdocument": "^1.0.11",
-    "vscode-uri": "^3.0.8"
+    "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",

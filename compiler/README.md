@@ -42,6 +42,8 @@ compiler/
 ├── Nanyx.Compiler.Wasm/       # WebAssembly text (.wat) backend (F#)
 ├── Nanyx.Compiler.Wasm.Tests/ # Backend fixture, end-to-end and execution tests
 ├── Nanyx.Compiler.Runtime/    # Runs emitted modules on an embedded Wasmtime engine (F#)
+├── Nanyx.LanguageServer/      # The language server (C#, OmniSharp LSP), run by `nanyx lsp`
+├── Nanyx.LanguageServer.Tests/# Drives the server through a real LSP client in-process
 ├── Nanyx.Compiler.Cli/        # The `nanyx` executable (C#, Consolo)
 ├── Nyx.Compiler.slnx          # Solution covering all projects
 └── README.md
@@ -181,6 +183,36 @@ To add a module: create `stdlib/nanyx/<name>.nyx` declaring `module <name>`, mar
 module must be written before the definitions that use them (self-recursion is fine). Add an intrinsic
 only when a function genuinely cannot be written in Nanyx: give it a name and type in `Intrinsics`, and
 a WebAssembly body of the same name in `runtimeHelpers`.
+
+## The language server
+
+`nanyx lsp` runs a [Language Server Protocol](https://microsoft.github.io/language-server-protocol/)
+server over standard input and output, so the same binary that compiles programs also serves editors.
+The VS Code extension in `extension/` launches it (see `extension/README.md`); any other LSP client
+can start it with `nanyx lsp` and `TransportKind.stdio`.
+
+The server lives in `Nanyx.LanguageServer` and calls the compiler as a library: on every open and
+change it runs `Compiler.compileSource` (or `Compiler.compile` for an untitled buffer) on the editor's
+text and publishes the resulting diagnostics. Standard-library imports resolve because the library is
+embedded in the compiler; imports by path resolve relative to the file as they do for `nanyx check`.
+
+What it does today:
+
+- `initialize`/`shutdown`/`exit`, full text document sync, and `textDocument/publishDiagnostics` on
+  open and change (cleared on close).
+- A diagnostic the compiler positions is reported from that position to the end of the identifier
+  there; one the compiler cannot position is shown at the start of the file.
+- A file that fails to parse gets one diagnostic for the parse error, and a compiler exception is
+  reported as a diagnostic rather than taking the server down.
+
+Hover, go-to-definition and completion are deliberately not implemented yet: each is one handler
+class in `Nanyx.LanguageServer/Handlers/`, registered in `NanyxLanguageServer.Configure`, and they
+wait on the compiler keeping ranges for every symbol and on modules and imports settling. Two
+compiler improvements the server makes visible: a parse error currently drops the whole file (so
+one error hides everything after it), and only some diagnostics carry a range.
+
+The tests in `Nanyx.LanguageServer.Tests` start the server in-process and talk to it through
+OmniSharp's LSP client over a pair of pipes, so they exercise the real wire protocol.
 
 ## WebAssembly (MVP)
 
