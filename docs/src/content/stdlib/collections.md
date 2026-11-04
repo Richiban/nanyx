@@ -284,7 +284,7 @@ type Color = #red | #green | #blue | #other(string)
 
 def f: list(Color) -> list(string) = { items ->
     items \List.select { item ->
-        if #other(v) = item then yield(v)
+        if item is #other(v) then yield(v)
     }
 }
 ```
@@ -306,7 +306,7 @@ type Color = #red | #green | #blue | #other(string)
 
 def f: list(Color) -> #some(string) | #emptyList = { items ->
     items \List.selectOne { item ->
-        if #other(v) = item then yield(v)
+        if item is #other(v) then yield(v)
     }
 }
 ```

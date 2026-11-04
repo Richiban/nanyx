@@ -208,7 +208,7 @@ if | cond1 ->
      yetMoreCode()
 ```
 
-`if` can also test a pattern; see [Pattern matching](../tour/pattern-matching#if-matching).
+`if` can also test a value against a pattern with `is`, as in `if get(3) is #some(v) then println("got {v}")`; see [Pattern matching](../tour/pattern-matching#if-matching).
 
 # Unimplemented code
 

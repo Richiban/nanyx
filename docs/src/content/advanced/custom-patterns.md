@@ -61,7 +61,7 @@ match num
   | _ -> "non-zero"
 
 -- Alternatively, we can use if-matching style:
-if #Zero = num then
+if num is #Zero then
   println("It's zero!")
 ```
 
@@ -69,8 +69,8 @@ In the case of partial patterns with multiple choices or output values, the wild
 
 ```nanyx
 pattern string -> #ParseInt(int) | #ParseBool(bool) | _ = { s ->
-  if | #some(i) = int.parse(s) -> #ParseInt(i)
-     | #some(b) = bool.parse(s) -> #ParseBool(b)
+  if | int.parse(s) is #some(i) -> #ParseInt(i)
+     | bool.parse(s) is #some(b) -> #ParseBool(b)
      | else -> _
 }
 
