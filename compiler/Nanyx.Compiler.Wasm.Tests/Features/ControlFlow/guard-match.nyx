@@ -2,8 +2,8 @@ module M
 
 def g = { x ->
   match x
-  | > 5 -> 1
-  | else -> 0
+  | { > 5 } -> 1
+  | _ -> 0
 }
 
 def main = g(7)

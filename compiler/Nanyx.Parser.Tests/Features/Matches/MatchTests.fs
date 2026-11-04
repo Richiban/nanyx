@@ -2,8 +2,22 @@ module ParserTests.Features.Matches
 
 open Xunit
 open FsUnit.Xunit
+open Parser.Program
 open ParserTestHelpers
 open System.IO
+
+[<Fact>]
+let ``a braced guard pattern takes any expression and the bare form still parses`` () =
+    match parseModule "def f = { | { < 0 } -> 1 | { >= limit * 2 } -> 2 | > 5 -> 3 | _ -> 4 }" with
+    | Result.Ok [ Def (ValueDef (_, "f", _, Lambda (_, Match (_, arms)))) ] ->
+        match arms |> List.map fst with
+        | [ [ GuardPattern ("<", LiteralExpr (IntLit 0)) ]
+            [ GuardPattern (">=", BinaryOp ("*", IdentifierExpr ("limit", _), _)) ]
+            [ GuardPattern (">", LiteralExpr (IntLit 5)) ]
+            [ WildcardPattern ] ] -> ()
+        | other -> failwith $"Unexpected arms: %A{other}"
+    | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
+    | Result.Error err -> failwith $"Parse failed: {err}"
 
 [<Fact>]
 let ``Parse match feature files`` () =
