@@ -1,4 +1,4 @@
-﻿module Parser.Program
+module Parser.Program
 
 open System
 open FParsec
@@ -811,6 +811,23 @@ let matchArmAlternatives : Parser<(Pattern list * Expression) list, unit> =
 let matchArms : Parser<(Pattern list * Expression) list, unit> =
     many1 (attempt (ws >>. matchArmAlternatives)) |>> List.concat
 
+// `for iterable | arms` runs the arms' bodies for each element (the element is matched against the arms, as
+// the loops page shows with `| { < 5 } -> ... | _ -> ...`), and `for iterable -> body` ignores the element.
+// Both are represented as a call to the built-in "__for" with the iterable and a one-parameter lambda,
+// which the type checker and backend handle as a loop.
+let forExpr : Parser<Expression, unit> =
+    let keywordEnd = notFollowedBy (satisfy (fun c -> Char.IsLetterOrDigit c || c = '_'))
+    let elementName = "__for_element"
+    let withArms =
+        matchArms |>> fun arms -> Lambda([ (elementName, None) ], Match([ IdentifierExpr(elementName, None) ], arms))
+    let withoutElement =
+        ws >>. pstring "->" >>. matchArmBody |>> fun body -> Lambda([ (elementName, None) ], body)
+    pipe2
+        (pstring "for" >>. keywordEnd >>. ws >>. expression)
+        (attempt withArms <|> withoutElement)
+        (fun iterable body -> FunctionCall("__for", None, [ iterable; body ]))
+    <?> "for loop"
+
 // Match expression parser
 do
     matchExprRef :=
@@ -901,23 +918,25 @@ let tagExpr =
 // pattern-matching page), which is desugared to `match value | pattern -> body | _ -> other`, with `()` as
 // the other arm when there is no `else`. `is` makes it plain that the pattern binds its names rather than
 // comparing against existing ones.
+// Either branch may be an indented block on the following lines, and the `else` may be left out when the
+// `then` branch is unit (`if i > 0 then` followed by `println(...)` on the functions page); a missing
+// `else` is `()`.
 let ifExpr =
     let keywordEnd = notFollowedBy (satisfy (fun c -> Char.IsLetterOrDigit c || c = '_'))
+    let branch = attempt (blockExpr()) <|> (ws >>. expression)
     let patternBinding =
         attempt (expression .>> ws .>> pstring "is" .>> keywordEnd .>> ws) .>>. pattern
         |>> fun (value, pat) -> Choice2Of2 (pat, value)
     let condition = expression |>> Choice1Of2
     pipe3
         (pstring "if" >>. keywordEnd >>. ws >>. (patternBinding <|> condition))
-        (ws >>. pstring "then" >>. keywordEnd >>. ws >>. expression)
-        (opt (attempt (ws >>. pstring "else" >>. keywordEnd >>. ws >>. expression)))
-        (fun head thenExpr elseOpt -> head, thenExpr, elseOpt)
-    >>= fun (head, thenExpr, elseOpt) ->
-        match head, elseOpt with
-        | Choice1Of2 cond, Some elseExpr -> preturn (IfExpr(cond, thenExpr, elseExpr))
-        | Choice1Of2 _, None -> fail "an if expression needs an else branch (only if-matching may omit it)"
-        | Choice2Of2 (pat, value), _ ->
-            preturn (Match([ value ], [ [ pat ], thenExpr; [ WildcardPattern ], defaultArg elseOpt UnitExpr ]))
+        (ws >>. pstring "then" >>. keywordEnd >>. branch)
+        (opt (attempt (ws >>. pstring "else" >>. keywordEnd >>. branch)))
+        (fun head thenExpr elseOpt ->
+            match head with
+            | Choice1Of2 cond -> IfExpr(cond, thenExpr, defaultArg elseOpt UnitExpr)
+            | Choice2Of2 (pat, value) ->
+                Match([ value ], [ [ pat ], thenExpr; [ WildcardPattern ], defaultArg elseOpt UnitExpr ]))
     <?> "if expression"
 
 let workflowBindExpr =
@@ -999,6 +1018,7 @@ let primaryExprNoWs =
         attempt useInExpr
         attempt unitExpr
         attempt ifExpr  // if-then-else must be early to avoid partial matches
+        attempt forExpr
         attempt matchExpr
         attempt lambda
         attempt contextMemberAccess  // C(T).field - must come before functionCall
@@ -1016,7 +1036,6 @@ do simpleExpressionRef := primaryExprNoWs
 let memberAccessChain =
     let tupleIndex = many1Satisfy isDigit
     let fieldOrIndex = identifierNoWs <|> tupleIndex
-    let dotField = pstring "." >>. (getPosition .>>. fieldOrIndex |>> fun (pos, field) -> field, Some (posToRange pos))
     // `record with field = value, ...` copies a record with some fields replaced. The parser represents it
     // as a call to "__with" with the record and a record of the updated fields, which the type checker and
     // backend handle as a built-in (the same way `not` is a call to "not").
@@ -1026,6 +1045,8 @@ let memberAccessChain =
             (identifierNoWs .>> wsInline .>> pstring "=" .>> ws) .>>. expression
             |>> fun (field, value) -> NamedField(field, value)
         attempt (wsInline >>. pstring "with" >>. keywordEnd >>. ws >>. sepBy1 update (pstring "," .>> ws))
+    // `..` is the range operator, not a member access.
+    let dotField = attempt (pstring "." >>. notFollowedBy (pchar '.') >>. (getPosition .>>. fieldOrIndex |>> fun (pos, field) -> field, Some (posToRange pos)))
     primaryExprNoWs >>= fun baseExpr ->
         many dotField >>= fun fields ->
             let accessed = List.fold (fun expr (field, range) -> MemberAccess(expr, field, range)) baseExpr fields
@@ -1045,7 +1066,8 @@ opp.AddOperator(InfixOperator("%", ws, 7, Associativity.Left, fun x y -> BinaryO
 
 // Additive operators
 opp.AddOperator(InfixOperator("+", ws, 6, Associativity.Left, fun x y -> BinaryOp("+", x, y)))
-opp.AddOperator(InfixOperator("-", ws, 6, Associativity.Left, fun x y -> BinaryOp("-", x, y)))
+// `-` must not take the start of a `->` (as in `for 1..2 -> ...`).
+opp.AddOperator(InfixOperator("-", notFollowedBy (pchar '>') >>. ws, 6, Associativity.Left, fun x y -> BinaryOp("-", x, y)))
 
 // Concatenation (strings, lists): binds looser than arithmetic, tighter than comparison
 opp.AddOperator(InfixOperator("++", ws, 5, Associativity.Right, fun x y -> BinaryOp("++", x, y)))
@@ -1057,6 +1079,9 @@ opp.AddOperator(InfixOperator("<=", ws, 4, Associativity.Left, fun x y -> Binary
 opp.AddOperator(InfixOperator(">=", ws, 4, Associativity.Left, fun x y -> BinaryOp(">=", x, y)))
 
 // Equality operators 
+// A bounded range `a..b` (see the ranges page) is represented as a call to the built-in "__range". It binds
+// looser than arithmetic, so `n - 1..n + 1` is `(n - 1)..(n + 1)`. `...` is list spread, not a range.
+opp.AddOperator(InfixOperator("..", notFollowedBy (pchar '.') >>. ws, 4, Associativity.Left, fun x y -> FunctionCall("__range", None, [ x; y ])))
 opp.AddOperator(InfixOperator("==", ws, 3, Associativity.Left, fun x y -> BinaryOp("==", x, y)))
 opp.AddOperator(InfixOperator("!=", ws, 3, Associativity.Left, fun x y -> BinaryOp("!=", x, y)))
 
@@ -1308,6 +1333,16 @@ do
             destructuringDefWith lineStart.Column defExprParser
             |>> fun (isExport, bindings) ->
                 bindings |> List.mapi (fun index (name, value) -> DefStatement(isExport && index > 0, name, None, value))
+    // `rec name = { ... }` is a local definition that can refer to itself (see the functions page). It is a
+    // def whose value is wrapped in a call to the built-in "__rec", which tells the backend to compile the
+    // lambda as a function that may call itself.
+    let recStatement =
+        let keywordEnd = notFollowedBy (satisfy (fun c -> Char.IsLetterOrDigit c || c = '_'))
+        getPosition >>= fun lineStart ->
+            (pstring "rec" >>. keywordEnd >>. ws >>. typedQualifiedIdentifier .>> wsNoNl())
+            >>= fun (name, typeOpt) ->
+                defEqualsContinuation lineStart.Column >>. pstring "=" >>. wsNoNl() >>. defExprParser
+                |>> fun expr -> DefStatement(false, name, typeOpt, FunctionCall("__rec", None, [ expr ]))
 
     let exprStatement =
         wsNoNl()
@@ -1317,6 +1352,7 @@ do
     
     statementRef := (attempt importStatement <|> attempt typeDefStatement <|> attempt defStatement <|> attempt useStatement <|> exprStatement) <?> "statement"
     statementItemsRef := (attempt destructuringDefStatement <|> (statement |>> List.singleton)) <?> "statement"
+    statementRef := (attempt importStatement <|> attempt typeDefStatement <|> attempt defStatement <|> attempt recStatement <|> attempt useStatement <|> exprStatement) <?> "statement"
 
 // Parser for module declaration
 let moduleDecl: Parser<TopLevelItem, unit> =

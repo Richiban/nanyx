@@ -565,6 +565,40 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                         if errors.IsEmpty then Ok (mkTypedExpr expr typedBase.Type None None None, current)
                         else Error errors
             | _ -> Error [ Diagnostics.error "`with` expects a record and the fields to update" ]
+
+        elif name = "__range" then
+            // `a..b`: a bounded range of ints, a `seq(int)` (see the ranges page).
+            let mutable current = state
+            let mutable errors: Diagnostic list = []
+            for arg in args do
+                match inferExpr env current arg with
+                | Ok (typedArg, next) -> current <- addConstraint typedArg.Type (TyPrimitive "int") next
+                | Error err -> errors <- errors @ err
+            if errors.IsEmpty then Ok (mkTypedExpr expr (TyApply("seq", [ TyPrimitive "int" ])) None None None, current)
+            else Error errors
+        elif name = "__rec" then
+            // `rec name = value`: the value of a self-referencing local def; the block already binds the name.
+            match args with
+            | [ inner ] -> inferExpr env state inner
+            | _ -> Error [ Diagnostics.error "rec expects a single definition" ]
+        elif name = "__for" then
+            // `for iterable | arms`: the parser passes the iterable and a one-parameter lambda. The lambda's
+            // parameter is an element of the iterable (a `list(a)` or a `seq(a)`), and the loop is unit.
+            match args with
+            | [ iterable; Lambda(lambdaArgs, lambdaBody) ] ->
+                match inferExpr env state iterable with
+                | Error err -> Error err
+                | Ok (typedIterable, afterIterable) ->
+                    let elementTy, constrained =
+                        match resolveSoFar afterIterable typedIterable.Type with
+                        | TyApply(("seq" | "list"), [ elementTy ]) -> elementTy, afterIterable
+                        | _ ->
+                            let elementTy, next = freshVar afterIterable
+                            elementTy, addConstraint typedIterable.Type (listType elementTy) next
+                    match inferLambdaWithExpected env constrained lambdaArgs lambdaBody (Some elementTy) None with
+                    | Ok (_, next) -> Ok (mkTypedExpr expr (TyPrimitive "unit") None None None, next)
+                    | Error err -> Error err
+            | _ -> Error [ Diagnostics.error "for expects an iterable and a loop body" ]
         else
         let contextCheck =
             match state.ContextRequirements |> Map.tryFind name with
