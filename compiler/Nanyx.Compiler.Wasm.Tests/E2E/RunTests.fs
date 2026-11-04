@@ -751,12 +751,14 @@ let ``Run - closures`` () =
         "  def compose = { g -> { v -> add5(g(v)) } }\n" +
         "  def shiftedThenAdd5 = compose(shiftX)\n" +
         "  def doubledThenAdd5 = compose({ v -> v * 2 })\n" +
-        "  println(\"{shiftX(10)} {shiftedThenAdd5(1)} {doubledThenAdd5(3)}\")\n" +
+        "  println(\"{shiftX(10)}\")\n" +
+        "  dbg(shiftedThenAdd5(1))\n" +
+        "  dbg(doubledThenAdd5(3))\n" +
         "  def limit = 3\n" +
         "  rec countTo = { i -> if i < limit then countTo(i + 1) else i }\n" +
         "  println(\"{countTo(0)}\")\n" +
         "}\n"
-    runSource source |> assertRan "15 11 2\nHello, Ada\n11 7 11\n3\n"
+    runSource source |> assertRan "15 11 2\nHello, Ada\n11\ndbg: 7\ndbg: 11\n3\n"
 
 [<Fact>]
 let ``Run - a match with no matching arm exits 1 with a runtime error`` () =
