@@ -501,6 +501,38 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                     Ok (mkTypedExpr expr (TyPrimitive "bool") None None None, constrained)
                 | Error err -> Error err
             | _ -> Error [ Diagnostics.error "not expects a single operand" ]
+        elif name = "__with" then
+            // `record with f = v, ...`: the parser represents a record update as a call to "__with" with the
+            // record and a record of the updated fields. The result has the record's type; every updated
+            // field must exist on it, at the field's type.
+            match args with
+            | [ baseExpr; RecordExpr updates ] ->
+                match inferExpr env state baseExpr with
+                | Error err -> Error err
+                | Ok (typedBase, afterBase) ->
+                    let fieldsOpt =
+                        match typedBase.Type with
+                        | TyRecord fields
+                        | TyNominal(_, TyRecord fields, _) -> Some fields
+                        | _ -> None
+                    match fieldsOpt with
+                    | None -> Error [ Diagnostics.error "`with` needs a record whose fields are known here" ]
+                    | Some fields ->
+                        let mutable current = afterBase
+                        let mutable errors: Diagnostic list = []
+                        for update in updates do
+                            match update with
+                            | NamedField(fieldName, valueExpr) ->
+                                match fields |> Map.tryFind fieldName with
+                                | None -> errors <- errors @ [ Diagnostics.error $"Record has no member '{fieldName}' to update" ]
+                                | Some fieldTy ->
+                                    match inferExpr env current valueExpr with
+                                    | Ok (typedValue, next) -> current <- addConstraint typedValue.Type fieldTy next
+                                    | Error err -> errors <- errors @ err
+                            | PositionalField _ -> errors <- errors @ [ Diagnostics.error "`with` updates fields by name" ]
+                        if errors.IsEmpty then Ok (mkTypedExpr expr typedBase.Type None None None, current)
+                        else Error errors
+            | _ -> Error [ Diagnostics.error "`with` expects a record and the fields to update" ]
         else
         let contextCheck =
             match state.ContextRequirements |> Map.tryFind name with

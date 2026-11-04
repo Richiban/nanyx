@@ -483,6 +483,23 @@ let ``Run - tuple destructuring with def`` () =
         "  println(name ++ \" {age}\")\n" +
         "}\n"
     runSource source |> assertRan "10,20\n1+2=3\nAda 36\n"
+[<Fact>]
+let ``Run - with record update`` () =
+    // Regression: `alice with age = 31` was a parse error (#40).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "type Point = (x: int, y: int)\n" +
+        "def shiftedX: Point -> int = { p -> (p with x = p.x + 1).x }\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  def alice = (name = \"Alice\", age = 30)\n" +
+        "  def older = alice with age = 31\n" +
+        "  def renamed = older with name = \"Al\" ++ \"ice\", age = older.age + 1\n" +
+        "  println(\"{older.age} {alice.age} {renamed.name} {renamed.age}\")\n" +
+        "  println(\"{shiftedX(Point(x = 3, y = 4))}\")\n" +
+        "}\n"
+    runSource source |> assertRan "31 30 Alice 32\n4\n"
 
 [<Fact>]
 let ``Run - nested record field access`` () =

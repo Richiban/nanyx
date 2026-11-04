@@ -992,9 +992,21 @@ let memberAccessChain =
     let tupleIndex = many1Satisfy isDigit
     let fieldOrIndex = identifierNoWs <|> tupleIndex
     let dotField = pstring "." >>. (getPosition .>>. fieldOrIndex |>> fun (pos, field) -> field, Some (posToRange pos))
+    // `record with field = value, ...` copies a record with some fields replaced. The parser represents it
+    // as a call to "__with" with the record and a record of the updated fields, which the type checker and
+    // backend handle as a built-in (the same way `not` is a call to "not").
+    let withClause =
+        let keywordEnd = notFollowedBy (satisfy (fun c -> Char.IsLetterOrDigit c || c = '_'))
+        let update =
+            (identifierNoWs .>> wsInline .>> pstring "=" .>> ws) .>>. expression
+            |>> fun (field, value) -> NamedField(field, value)
+        attempt (wsInline >>. pstring "with" >>. keywordEnd >>. ws >>. sepBy1 update (pstring "," .>> ws))
     primaryExprNoWs >>= fun baseExpr ->
-        many dotField |>> fun fields ->
-            List.fold (fun expr (field, range) -> MemberAccess(expr, field, range)) baseExpr fields
+        many dotField >>= fun fields ->
+            let accessed = List.fold (fun expr (field, range) -> MemberAccess(expr, field, range)) baseExpr fields
+            opt withClause |>> function
+                | Some updates -> FunctionCall("__with", None, [ accessed; RecordExpr updates ])
+                | None -> accessed
 
 let primaryExpr = memberAccessChain .>> wsInline  // Consume trailing inline ws for operator parsing
 
