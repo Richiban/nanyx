@@ -200,6 +200,46 @@ let ``Run - list literals and patterns`` () =
     runSource source |> assertRan "empty\none\none then another\nmany\ndbg: 10\n"
 
 [<Fact>]
+let ``Run - list spread in expressions`` () =
+    // Regression: `[1, ...rest]` worked as a pattern but not as an expression (#44).
+    let source =
+        "import nanyx/console\n" +
+        "import nanyx/text\n" +
+        "\n" +
+        "def sum: list(int) -> int = {\n" +
+        "  | [] -> 0\n" +
+        "  | [head, ...tail] -> head + sum(tail)\n" +
+        "}\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  def xs = [1, ...[2, 3]]\n" +
+        "  println(\"{sum(xs)}\")\n" +
+        "  def names = [\"b\"]\n" +
+        "  println(join([\"a\", ...names, \"c\", ...[], ...[\"d\"]], \"-\"))\n" +
+        "}\n"
+    runSource source |> assertRan "6\na-b-c-d\n"
+
+[<Fact>]
+let ``Run - multi-argument pattern lambdas`` () =
+    // The two-parameter `{ | [], _ -> ... | [head, ...tail], f -> ... }` form from the pattern-matching page (#45).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def map: (list(int), (int -> int)) -> list(int) = {\n" +
+        "  | [], _ -> []\n" +
+        "  | [head, ...tail], f -> [f(head), ...map(tail, f)]\n" +
+        "}\n" +
+        "def sum: list(int) -> int = {\n" +
+        "  | [] -> 0\n" +
+        "  | [head, ...tail] -> head + sum(tail)\n" +
+        "}\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  println(\"{sum(map([1, 2, 3], { * 10 }))}\")\n" +
+        "}\n"
+    runSource source |> assertRan "60\n"
+
+[<Fact>]
 let ``Run - ++ joins lists`` () =
     let source =
         "import nanyx/console\n" +

@@ -854,13 +854,28 @@ let tupleOrParenExpr =
                 RecordExpr fields)
     <?> "tuple or record"
 
-// List expression parser
+// List expression parser. `...expr` splices a list in place: `[a, ...xs, b]` is desugared to
+// `[a] ++ xs ++ [b]`, so the rest of the compiler only ever sees list literals and concatenation.
 let listExpr =
+    let item =
+        (pstring "..." >>. ws >>. expression |>> Choice2Of2)
+        <|> (expression |>> Choice1Of2)
     between
         (pstring "[")
         (pstring "]")
-        (sepBy (ws >>. expression) (pstring "," .>> ws))
-    |>> ListExpr
+        (sepBy (ws >>. item) (pstring "," .>> ws))
+    |>> fun items ->
+        let segments =
+            items
+            |> List.fold (fun segments item ->
+                match item, segments with
+                | Choice1Of2 element, ListExpr elements :: rest -> ListExpr (elements @ [ element ]) :: rest
+                | Choice1Of2 element, _ -> ListExpr [ element ] :: segments
+                | Choice2Of2 spread, _ -> spread :: segments) []
+            |> List.rev
+        match segments with
+        | [] -> ListExpr []
+        | _ -> segments |> List.reduceBack (fun left right -> BinaryOp("++", left, right))
 
 // Tag expression parser: #tagName or #tagName(expr)
 // The payload can be a tuple-like expression with comma-separated values
