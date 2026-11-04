@@ -1050,6 +1050,28 @@ let ``Typecheck gives a record update the record's type and checks the updated f
     Assert.False(wrongType.Diagnostics.IsEmpty, "updating age with a string should not type-check")
     let unknownField = Compiler.compile "def alice = (name = \"Alice\", age = 30)\ndef older = alice with height = 1"
     Assert.False(unknownField.Diagnostics.IsEmpty, "updating a field the record lacks should not type-check")
+[<Fact>]
+let ``Typecheck allows member access on the result of a call`` () =
+    // #60: the call's result used to be an unsolved variable when the member access looked for fields.
+    let declared =
+        Compiler.compile (
+            "type Point = (x: int, y: int)\n" +
+            "def shift: Point -> Point = { q -> Point(x = q.x + 1, y = q.y + 1) }\n" +
+            "def a = shift(Point(x = 3, y = 4)).x\n" +
+            "def q = shift(Point(x = 3, y = 4))\n" +
+            "def b: int = q.y\n")
+    Assert.True(declared.Diagnostics.IsEmpty, sprintf "%A" declared.Diagnostics)
+    let inferred =
+        Compiler.compile (
+            "def make = { n -> (value = n, label = \"v\") }\n" +
+            "def m = make(1)\n" +
+            "def s: string = m.label\n" +
+            "def t = (1, \"two\")\n" +
+            "def pick = { p -> p }\n" +
+            "def u: string = pick(t).1\n")
+    Assert.True(inferred.Diagnostics.IsEmpty, sprintf "%A" inferred.Diagnostics)
+    let missing = Compiler.compile "type Point = (x: int, y: int)\ndef id: Point -> Point = { p -> p }\ndef z = id(Point(x = 1, y = 2)).z"
+    Assert.False(missing.Diagnostics.IsEmpty, "a field the result lacks should still be an error")
 
 [<Fact>]
 let ``Typecheck rejects boolean keywords on non-booleans`` () =

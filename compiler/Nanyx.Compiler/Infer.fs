@@ -423,6 +423,22 @@ let private instantiate (state: InferState) (scheme: TypeScheme) : Ty * InferSta
 let private mkTypedExpr expr ty body statements matchArms : TypedExpr =
     { Expr = expr; Type = ty; Body = body; Statements = statements; MatchArms = matchArms }
 
+/// The fields of a record type, looking through a nominal wrapper. Member access and `with` need a record's
+/// fields while inference is still running, so a type that is still a variable here (a call's result, or a
+/// local bound to one) is first resolved against the constraints gathered so far.
+let private recordFieldsSoFar (state: InferState) (ty: Ty) : Map<string, Ty> option =
+    let resolved =
+        match ty with
+        | TyVar _ ->
+            match Unifier.unify state.Constraints with
+            | Ok subst -> Unifier.apply subst ty
+            | Error _ -> ty
+        | _ -> ty
+    match resolved with
+    | TyRecord fields
+    | TyNominal(_, TyRecord fields, _) -> Some fields
+    | _ -> None
+
 let private argTypesFromExpected (state: InferState) (args: (Identifier * TypeExpr option) list) (expectedInput: Ty) =
     let mutable current = state
     let argTys =
@@ -601,7 +617,13 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                         let argTys =
                             argResults
                             |> List.choose (function Ok typedExpr -> Some typedExpr.Type | _ -> None)
-                        let retTy, nextState = freshVar current
+                        // When the callee's type is already a function (an annotated or already-inferred
+                        // def), its return type is the call's type directly, so a member access or match on
+                        // the result can see it without waiting for the constraint below to be solved.
+                        let retTy, nextState =
+                            match funcTy with
+                            | TyFunc(_, declaredRet) -> declaredRet, current
+                            | _ -> freshVar current
                         let expectedInput, nextState2 = freshVar nextState
                         let inputTy = inputTypeFromArgs argTys
                         let withFuncConstraint = addConstraint funcTy (TyFunc(expectedInput, retTy)) nextState2
@@ -1184,14 +1206,7 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                 match inferExpr env state baseExpr with
                 | Error err -> Error err
                 | Ok (typedBase, next) ->
-                    let fieldTypeOpt =
-                        match typedBase.Type with
-                        | TyRecord fields -> fields |> Map.tryFind memberName
-                        | TyNominal(_, underlying, _) ->
-                            match underlying with
-                            | TyRecord fields -> fields |> Map.tryFind memberName
-                            | _ -> None
-                        | _ -> None
+                    let fieldTypeOpt = recordFieldsSoFar next typedBase.Type |> Option.bind (Map.tryFind memberName)
                     match fieldTypeOpt with
                     | Some fieldTy -> Ok (mkTypedExpr expr fieldTy None None None, next)
                     | None ->
@@ -1202,14 +1217,7 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
             match inferExpr env state baseExpr with
             | Error err -> Error err
             | Ok (typedBase, next) ->
-                let fieldTypeOpt =
-                    match typedBase.Type with
-                    | TyRecord fields -> fields |> Map.tryFind memberName
-                    | TyNominal(_, underlying, _) ->
-                        match underlying with
-                        | TyRecord fields -> fields |> Map.tryFind memberName
-                        | _ -> None
-                    | _ -> None
+                let fieldTypeOpt = recordFieldsSoFar next typedBase.Type |> Option.bind (Map.tryFind memberName)
                 match fieldTypeOpt with
                 | Some fieldTy -> Ok (mkTypedExpr expr fieldTy None None None, next)
                 | None ->
