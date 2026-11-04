@@ -614,6 +614,11 @@ module Compiler =
         else
             compileWith (SourceFile (Path.GetFullPath filePath)) (File.ReadAllText filePath)
 
+    /// Compiles `source` as if it were the contents of the file at `filePath` (which need not exist, or may hold
+    /// older text: an editor's unsaved buffer, say). Imports are resolved exactly as `compileFile` resolves them.
+    let compileSource (filePath: string) (source: string) : CompileResult =
+        compileWith (SourceFile (Path.GetFullPath filePath)) source
+
     /// Compiles source given directly, up to the typed module. Standard-library imports are resolved; imports by
     /// path cannot be, since there is no file for them to be relative to.
     let compile (source: string) : CompileResult =
