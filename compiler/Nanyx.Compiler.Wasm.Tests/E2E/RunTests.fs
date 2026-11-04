@@ -382,6 +382,21 @@ let ``Run - identifier patterns bind the scrutinee`` () =
         "dbg(pick(7, 5))\n" +
         "println(label(\"x\"))\n"
     runSource source |> assertRan "dbg: 100\ndbg: 42\ndbg: 5\ndbg: 7\n<x>\n"
+[<Fact>]
+let ``Run - mutually recursive top-level functions`` () =
+    // Regression: a def could not call one declared later in the file (#47).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def isEven: int -> bool = { n -> if n == 0 then true else isOdd(n - 1) }\n" +
+        "def isOdd: int -> bool = { n -> if n == 0 then false else isEven(n - 1) }\n" +
+        "def show: bool -> () = { b -> println(if b then \"yes\" else \"no\") }\n" +
+        "show(isEven(10))\n" +
+        "show(isOdd(7))\n" +
+        "show(isEven(7))\n" +
+        "dbg(later(2))\n" +
+        "def later = { x -> x * 21 }\n"
+    runSource source |> assertRan "yes\nyes\nno\ndbg: 42\n"
 
 [<Fact>]
 let ``Run - a match with no matching arm exits 1 with a runtime error`` () =
