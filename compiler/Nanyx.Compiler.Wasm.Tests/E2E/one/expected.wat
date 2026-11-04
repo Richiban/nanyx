@@ -182,4 +182,11 @@
     local.get $__dbg_tmp
   )
   (export "main" (func $main))
+
+  (func $__nanyx_start
+    call $main
+    drop
+  )
+
+  (start $__nanyx_start)
 )

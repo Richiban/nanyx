@@ -7,7 +7,7 @@ on:
       - "extension/**"
       - ".github/workflows/extension.yml"
     tags:
-      - "extension-v*"
+      - "extension/*"
   pull_request:
     paths:
       - "extension/**"
@@ -47,9 +47,9 @@ jobs:
         run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
       - name: Check that a release tag matches the extension version
-        if: startsWith(github.ref, 'refs/tags/extension-v')
+        if: startsWith(github.ref, 'refs/tags/extension/')
         run: |
-          tag="${GITHUB_REF_NAME#extension-v}"
+          tag="${GITHUB_REF_NAME#extension/}"
           if [ "$tag" != "${{ steps.version.outputs.version }}" ]; then
             echo "Tag version $tag does not match package.json version ${{ steps.version.outputs.version }}" >&2
             exit 1
@@ -67,7 +67,7 @@ jobs:
   publish:
     name: Publish
     needs: build
-    if: startsWith(github.ref, 'refs/tags/extension-v')
+    if: startsWith(github.ref, 'refs/tags/extension/')
     runs-on: ubuntu-latest
     permissions:
       contents: write

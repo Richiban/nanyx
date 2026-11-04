@@ -334,7 +334,7 @@ let ``Typecheck uses tuple input for multi-arg functions`` () =
     let result = Compiler.compile source
     let typed = result.Typed.Value
     match typed.Types.["f"] with
-    | TyFunc(TyRecord fields, TyVar _) when fields.ContainsKey("item1") && fields.ContainsKey("item2") ->
+    | TyFunc(TyRecord fields, TyVar _) when fields.ContainsKey("0") && fields.ContainsKey("1") ->
         Assert.True(true)
     | other -> Assert.True(false, $"Unexpected function type: %A{other}")
     Assert.Equal(TyPrimitive "int", typed.Types.["result"])
@@ -427,9 +427,9 @@ let ``Typecheck supports mixed positional and named records`` () =
     let result = Compiler.compile source
     let typed = result.Typed.Value
     match typed.Types.["value"] with
-    | TyRecord fields when fields.ContainsKey("item1") && fields.ContainsKey("item2") && fields.ContainsKey("z") ->
-        Assert.Equal(TyPrimitive "int", fields.["item1"])
-        Assert.Equal(TyPrimitive "int", fields.["item2"])
+    | TyRecord fields when fields.ContainsKey("0") && fields.ContainsKey("1") && fields.ContainsKey("z") ->
+        Assert.Equal(TyPrimitive "int", fields.["0"])
+        Assert.Equal(TyPrimitive "int", fields.["1"])
         Assert.Equal(TyPrimitive "int", fields.["z"])
     | other -> Assert.True(false, $"Unexpected mixed record type: %A{other}")
 

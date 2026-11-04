@@ -1470,33 +1470,3 @@ let parseModule (input: string) : Result<Module, string> =
     match run moduleParser normalized with
     | ParserResult.Success(result, _, _) -> Result.Ok (expandMidFileModules result)
     | ParserResult.Failure(errorMsg, _, _) -> Result.Error errorMsg
-
-// Main entry point for standalone testing
-[<EntryPoint>]
-let main argv =
-    if argv.Length > 0 then
-        let file = argv.[0]
-        let text = System.IO.File.ReadAllText(file)
-        
-        // Debug mode: if file ends with .txt, parse as pattern
-        if file.EndsWith(".txt") then
-            match run (literalOrRangePattern .>> eof) text with
-            | Success(pat, _, _) ->
-                printfn "Pattern parsed successfully:"
-                printfn "  %A" pat
-                0
-            | Failure(errorMsg, _, _) ->
-                printfn "Pattern parse error: %s" errorMsg
-                1
-        else
-            match parseModule text with
-            | Result.Ok ast ->
-                printfn "Parsed successfully:"
-                ast |> List.iter (printfn "  %A")
-                0
-            | Result.Error err ->
-                printfn "Parse error: %s" err
-                1
-    else
-        printfn "Usage: NyxParser <file.nyx>"
-        1
