@@ -358,6 +358,75 @@ let ``Typecheck allows context members with annotation`` () =
     Assert.True(result.Diagnostics.IsEmpty)
 
 [<Fact>]
+let ``println is built in with type string -> unit`` () =
+    let result = Compiler.compile "def result = println(\"hi\")"
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    Assert.Equal(TyPrimitive "unit", result.Typed.Value.Types.["result"])
+
+[<Fact>]
+let ``println rejects a non-string argument`` () =
+    let result = Compiler.compile "println(42)"
+    Assert.False(result.Diagnostics.IsEmpty)
+
+[<Fact>]
+let ``A declared context member shadows the built-in println`` () =
+    let source =
+        "context Console = (println: string -> ())\n" +
+        "def main = { println(\"hi\") }"
+    let result = Compiler.compile source
+    let message = result.Diagnostics |> List.head |> fun diag -> diag.Message
+    Assert.Contains("Unknown function 'println'", message)
+
+[<Fact>]
+let ``Standard library import is accepted without a file`` () =
+    withTempDir (fun dir ->
+        let mainPath = Path.Combine(dir, "main.nyx")
+        File.WriteAllText(mainPath, "import nanyx/console\n\nprintln(\"Hello, Nanyx!\")\n")
+        let result = Compiler.compileFile mainPath
+        Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+        // The import is built in, so the backend never sees it.
+        let hasImport = result.Typed.Value.Module |> List.exists (function Import _ -> true | _ -> false)
+        Assert.False(hasImport))
+
+[<Fact>]
+let ``Unknown standard library module is an error`` () =
+    withTempDir (fun dir ->
+        let mainPath = Path.Combine(dir, "main.nyx")
+        File.WriteAllText(mainPath, "import nanyx/sockets\n")
+        let result = Compiler.compileFile mainPath
+        let message = result.Diagnostics |> List.head |> fun diag -> diag.Message
+        Assert.Contains("Unknown standard library module: nanyx/sockets", message))
+
+[<Fact>]
+let ``Entry attribute appends a call to the entry point`` () =
+    let source =
+        "module main\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  println(\"Hello, World!\")\n" +
+        "}\n"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    let entryCalls =
+        result.Typed.Value.Module
+        |> List.filter (function Expr (FunctionCall("main", _, [])) -> true | _ -> false)
+    Assert.Equal(1, entryCalls.Length)
+    let hasAttribute = result.Typed.Value.Module |> List.exists (function Attribute _ -> true | _ -> false)
+    Assert.False(hasAttribute)
+
+[<Fact>]
+let ``Unknown attribute is an error`` () =
+    let result = Compiler.compile "@inline\ndef f = { 1 }"
+    let message = result.Diagnostics |> List.head |> fun diag -> diag.Message
+    Assert.Contains("Unknown attribute '@inline'", message)
+
+[<Fact>]
+let ``Entry attribute must precede a definition`` () =
+    let result = Compiler.compile "@entry\n1 + 1"
+    let message = result.Diagnostics |> List.head |> fun diag -> diag.Message
+    Assert.Contains("must be followed by a definition", message)
+
+[<Fact>]
 let ``Typecheck rejects missing context members`` () =
     let source =
         "context Console = (println: string -> ())\n" +

@@ -1,5 +1,6 @@
 using Consolo;
 using Microsoft.FSharp.Collections;
+using Nanyx.Runtime;
 using NyxCompiler;
 using Transpiler.Wasm;
 
@@ -7,7 +8,8 @@ enum Target
 {
     Parse,
     Check,
-    Wasm
+    Wasm,
+    Run
 }
 
 internal static class CliCommands
@@ -16,7 +18,7 @@ internal static class CliCommands
     /// Compile a Nanyx source file.
     /// </summary>
     /// <param name="inputFile">The path to the .nyx file to compile.</param>
-    /// <param name="target">The compilation target: parse (print the AST), check or wasm.</param>
+    /// <param name="target">The compilation target: parse (print the AST), check, wasm (emit WebAssembly text) or run (compile and execute).</param>
     /// <param name="outputPath">Optional output path for generated artifacts.</param>
     [Consolo("")]
     public static void Run(
@@ -31,13 +33,13 @@ internal static class CliCommands
     {
         if (string.IsNullOrWhiteSpace(inputFile))
         {
-            Console.WriteLine("Input file is required.");
+            Console.Error.WriteLine("Input file is required.");
             return 2;
         }
 
         if (!File.Exists(inputFile))
         {
-            Console.WriteLine($"File not found: {inputFile}");
+            Console.Error.WriteLine($"File not found: {inputFile}");
             return 2;
         }
 
@@ -47,8 +49,16 @@ internal static class CliCommands
         }
 
         var result = Compiler.compileFile(inputFile);
+
+        // `run` is the user-facing command: its stdout belongs to the program, so compiler chatter is kept off it.
+        if (target == Target.Run)
+        {
+            PrintDiagnostics(result.Diagnostics, Console.Error);
+            return RunProgram(result);
+        }
+
         Console.WriteLine($"Phase: {result.Phase}");
-        PrintDiagnostics(result.Diagnostics);
+        PrintDiagnostics(result.Diagnostics, Console.Out);
 
         return target switch
         {
@@ -77,11 +87,15 @@ internal static class CliCommands
         return 0;
     }
 
-    private static void PrintDiagnostics(FSharpList<Diagnostic> diagnostics)
+    private static void PrintDiagnostics(FSharpList<Diagnostic> diagnostics, TextWriter writer)
     {
         if (diagnostics.IsEmpty)
         {
-            Console.WriteLine("No diagnostics.");
+            if (writer == Console.Out)
+            {
+                writer.WriteLine("No diagnostics.");
+            }
+
             return;
         }
 
@@ -96,7 +110,7 @@ internal static class CliCommands
                 rangeText = $"({range.Item1 + 1}:{range.Item2 + 1}) ";
             }
 
-            Console.WriteLine($"[{severity}] {rangeText}{diagnostic.Message}");
+            writer.WriteLine($"[{severity}] {rangeText}{diagnostic.Message}");
         }
     }
 
@@ -128,28 +142,63 @@ internal static class CliCommands
 
     private static int RunWasm(CompileResult result, string inputFile, string? outputPath)
     {
-        if (result.Typed is null)
+        if (!TryEmitWat(result, Console.Out, out var wat))
         {
             return 1;
         }
 
-        if (HasErrors(result.Diagnostics))
+        var finalOutputPath = string.IsNullOrWhiteSpace(outputPath) ? DefaultWasmOutputPath(inputFile) : outputPath!;
+        File.WriteAllText(finalOutputPath, wat);
+        Console.WriteLine($"WASM (WAT) emitted: {finalOutputPath}");
+        return 0;
+    }
+
+    private static int RunProgram(CompileResult result)
+    {
+        if (!TryEmitWat(result, Console.Error, out var wat))
         {
             return 1;
+        }
+
+        var outcome = WasmRunner.run(wat);
+        if (outcome.IsOk)
+        {
+            return 0;
+        }
+
+        switch (outcome.ErrorValue)
+        {
+            case RunError.InvalidModule invalid:
+                Console.Error.WriteLine($"Internal compiler error: the generated WebAssembly is invalid: {invalid.Item}");
+                return 1;
+            case RunError.Trapped trapped:
+                Console.Error.WriteLine($"Runtime error: {trapped.Item}");
+                return 1;
+            default:
+                Console.Error.WriteLine($"Run failed: {outcome.ErrorValue}");
+                return 1;
+        }
+    }
+
+    /// <summary>Lowers a successfully type-checked program to WebAssembly text, reporting failures to <paramref name="errors"/>.</summary>
+    private static bool TryEmitWat(CompileResult result, TextWriter errors, out string wat)
+    {
+        wat = string.Empty;
+
+        if (result.Typed is null || HasErrors(result.Diagnostics))
+        {
+            return false;
         }
 
         try
         {
-            var finalOutputPath = string.IsNullOrWhiteSpace(outputPath) ? DefaultWasmOutputPath(inputFile) : outputPath!;
-            var wat = CodeGen.transpileTypedModuleToWat(result.Typed.Value);
-            File.WriteAllText(finalOutputPath, wat);
-            Console.WriteLine($"WASM (WAT) emitted: {finalOutputPath}");
-            return 0;
+            wat = CodeGen.transpileTypedModuleToWat(result.Typed.Value);
+            return true;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"WASM emission failed: {ex.Message}");
-            return 1;
+            errors.WriteLine($"WASM emission failed: {ex.Message}");
+            return false;
         }
     }
 
@@ -175,7 +224,7 @@ internal static class CliCommands
 
     private static int UnsupportedTarget(string target)
     {
-        Console.WriteLine($"Unsupported target: {target}");
+        Console.Error.WriteLine($"Unsupported target: {target}");
         return 2;
     }
 }

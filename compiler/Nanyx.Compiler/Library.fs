@@ -355,41 +355,70 @@ module Compiler =
             | Expr expr -> Expr (desugarExpr expr)
             | other -> other)
 
+    /// The attribute that marks a definition as the program's entry point: `@entry def main = { ... }`.
+    let entryAttribute = "entry"
+
+    /// Resolves `@attribute` lines. `@entry` on a definition appends a call to that definition at the end
+    /// of the module, so it runs as the program's start function; any other attribute, or an attribute
+    /// that does not precede a value definition, is an error.
+    let applyAttributes (module': Module) : Result<Module, Diagnostic list> =
+        let rec loop (remaining: TopLevelItem list) (acc: TopLevelItem list) (entryCalls: TopLevelItem list) (errors: Diagnostic list) =
+            match remaining with
+            | [] -> List.rev acc @ List.rev entryCalls, List.rev errors
+            | Attribute name :: rest when name <> entryAttribute ->
+                loop rest acc entryCalls (Diagnostics.error $"Unknown attribute '@{name}'" :: errors)
+            | Attribute _ :: (Def (ValueDef(_, name, _, _)) as def) :: rest ->
+                loop rest (def :: acc) (Expr (FunctionCall(name, None, [])) :: entryCalls) errors
+            | Attribute name :: rest ->
+                loop rest acc entryCalls (Diagnostics.error $"Attribute '@{name}' must be followed by a definition" :: errors)
+            | item :: rest -> loop rest (item :: acc) entryCalls errors
+        match loop module' [] [] [] with
+        | items, [] -> Ok items
+        | _, errors -> Error errors
+
     let rec private typecheckFile (filePath: string) (visited: Set<string>) : Result<TypedModule, Diagnostic list> =
         let fullPath = Path.GetFullPath filePath
         if visited.Contains fullPath then
             Error [ Diagnostics.error ($"Import cycle detected for {fullPath}") ]
         else
             let source = File.ReadAllText fullPath
-            match parseWithDiagnostics source with
+            let resolved =
+                parseWithDiagnostics source
+                |> Result.bind (fun ast -> applyAttributes (desugar ast))
+            match resolved with
             | Result.Error diagnostics -> Error diagnostics
-            | Result.Ok ast ->
-                let desugared = desugar ast
+            | Result.Ok desugared ->
                 let imports = collectImports desugared
                 let baseDir = Path.GetDirectoryName fullPath
-                let mutable env = TypeEnv.empty
+                let mutable env = Builtins.typeEnvFor desugared
                 let mutable state = NyxCompiler.Infer.emptyState
                 let mutable errors: Diagnostic list = []
                 let mutable importedDefs: Module = []
                 for item in imports do
-                    match resolveImportPath baseDir item with
-                    | Error diag -> errors <- errors @ [ diag ]
-                    | Ok importPath ->
-                        match typecheckFile importPath (visited.Add fullPath) with
-                        | Error diags -> errors <- errors @ diags
-                        | Ok typed ->
-                            let qualifier = importQualifier item
-                            let exportedValues = exportedValueNames typed.Module
-                            let exportedTypes = exportedTypeNames typed.Module
-                            let filteredTypes =
-                                typed.Types
-                                |> Map.filter (fun name _ -> exportedValues.Contains name)
-                            let filteredTypeDefs =
-                                typed.TypeDefs
-                                |> Map.filter (fun name _ -> exportedTypes.Contains name)
-                            env <- extendEnvWithImport env qualifier filteredTypes
-                            state <- { state with TypeDefs = mergeTypeDefs state.TypeDefs filteredTypeDefs }
-                            importedDefs <- importedDefs @ (importedValueDefsForModule item typed)
+                    match Builtins.tryStandardLibraryModule item with
+                    | Some moduleName ->
+                        // Standard-library modules are built in: the import is accepted but contributes nothing yet.
+                        if not (Builtins.isStandardLibraryModule moduleName) then
+                            errors <- errors @ [ Diagnostics.error ($"Unknown standard library module: {moduleName}") ]
+                    | None ->
+                        match resolveImportPath baseDir item with
+                        | Error diag -> errors <- errors @ [ diag ]
+                        | Ok importPath ->
+                            match typecheckFile importPath (visited.Add fullPath) with
+                            | Error diags -> errors <- errors @ diags
+                            | Ok typed ->
+                                let qualifier = importQualifier item
+                                let exportedValues = exportedValueNames typed.Module
+                                let exportedTypes = exportedTypeNames typed.Module
+                                let filteredTypes =
+                                    typed.Types
+                                    |> Map.filter (fun name _ -> exportedValues.Contains name)
+                                let filteredTypeDefs =
+                                    typed.TypeDefs
+                                    |> Map.filter (fun name _ -> exportedTypes.Contains name)
+                                env <- extendEnvWithImport env qualifier filteredTypes
+                                state <- { state with TypeDefs = mergeTypeDefs state.TypeDefs filteredTypeDefs }
+                                importedDefs <- importedDefs @ (importedValueDefsForModule item typed)
                 if not errors.IsEmpty then
                     Error errors
                 else
@@ -459,7 +488,7 @@ module Compiler =
         | Result.Error err -> Error [ Diagnostics.error err ]
 
     let typecheck (desugared: Module) : Result<TypedModule, Diagnostic list> =
-        match NyxCompiler.Infer.inferModule desugared with
+        match NyxCompiler.Infer.inferModuleWithEnv (Builtins.typeEnvFor desugared) NyxCompiler.Infer.emptyState desugared with
         | Error diagnostics -> Error diagnostics
         | Ok (types, items, (state: NyxCompiler.Infer.InferState)) ->
             match Unifier.unify state.Constraints with
@@ -522,6 +551,15 @@ module Compiler =
                         | TypedDef (TypedTypeDef(name, modifiers, parameters, body)) ->
                             Def (TypeDef(name, modifiers, parameters, body))
                         | TypedExprItem expr -> Expr expr.Expr)
+                // Standard-library imports are built in, so they carry nothing for the backend.
+                let resolvedModule =
+                    resolvedModule
+                    |> List.choose (function
+                        | Import items ->
+                            match items |> List.filter (Builtins.tryStandardLibraryModule >> Option.isNone) with
+                            | [] -> None
+                            | remaining -> Some (Import remaining)
+                        | item -> Some item)
                 Ok { Module = resolvedModule
                      Types = resolvedTypes
                      TypeDefs = resolvedTypeDefs
@@ -553,13 +591,18 @@ module Compiler =
               Diagnostics = annotateDiagnosticsWithSource source diagnostics
               Typed = None }
         | Result.Ok ast ->
-            let desugared = desugar ast
-            match typecheck desugared with
+            match applyAttributes (desugar ast) with
             | Result.Error diagnostics ->
-                { Phase = Typed
+                { Phase = Desugared
                   Diagnostics = annotateDiagnosticsWithSource source diagnostics
                   Typed = None }
-            | Result.Ok typed ->
-                { Phase = Typed
-                  Diagnostics = []
-                  Typed = Some typed }
+            | Result.Ok desugared ->
+                match typecheck desugared with
+                | Result.Error diagnostics ->
+                    { Phase = Typed
+                      Diagnostics = annotateDiagnosticsWithSource source diagnostics
+                      Typed = None }
+                | Result.Ok typed ->
+                    { Phase = Typed
+                      Diagnostics = []
+                      Typed = Some typed }

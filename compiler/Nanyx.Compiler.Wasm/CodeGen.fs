@@ -7,7 +7,11 @@ open Parser.Program
 
 type private ContextFn = string * int * int
 
-type private TranspileEnv = { KnownFunctions: Set<string>; FunctionArities: Map<string, int>; FunctionContextRequirements: Map<string, string list>; Locals: Map<string, string>; DbgTempLocal: string option; TagIds: Map<string, int>; MatchTempNames: string list; NextMatchTemp: int; StringLiterals: Map<string, int>; ContextFunctions: Map<string, ContextFn>; ContextParams: Map<string, string>; PendingUseBindings: Map<string, ContextFn> list ref; RecordLayouts: Map<string, string list>; TypeLayouts: Map<string, string list>; TypeFieldTypes: Map<string, Map<string, string>>; RecordFieldTypes: Map<string, Map<string, string>>; ParamTypes: Map<string, string>; ValueTypes: Map<string, string> }
+type private TranspileEnv = { KnownFunctions: Set<string>; FunctionArities: Map<string, int>; FunctionContextRequirements: Map<string, string list>; Locals: Map<string, string>; DbgTempLocal: string option; TagIds: Map<string, int>; MatchTempNames: string list; NextMatchTemp: int; StringLiterals: Map<string, int>; ContextFunctions: Map<string, ContextFn>; ContextParams: Map<string, string>; PendingUseBindings: Map<string, ContextFn> list ref; RecordLayouts: Map<string, string list>; TypeLayouts: Map<string, string list>; TypeFieldTypes: Map<string, Map<string, string>>; RecordFieldTypes: Map<string, Map<string, string>>; ParamTypes: Map<string, string>; ValueTypes: Map<string, string>; BuiltinPrintln: bool }
+
+/// The built-in `println` (see NyxCompiler.Builtins). It is lowered onto the WASI prelude unless the
+/// module defines or context-binds its own `println`, in which case that one wins.
+let private printlnName = NyxCompiler.Builtins.printlnName
 
 let private ctxFnName (name: string, _, _) = name
 let private ctxFnSlot (_, slot: int, _) = slot
@@ -214,8 +218,10 @@ let private heapBaseOffset = 4096  // Start heap after string data region
 
 let private dbgDataBaseOffset = 128
 
-let private dbgDigitBufferOffset = dbgDataBaseOffset + 64  // dbg writes digits starting here (192)
-let private dbgStrNewlineOffset = dbgDigitBufferOffset + 32  // dbg_str newline at 224 (safe from dbg's buffer)
+// dbg writes an integer's sign and digits directly after the "dbg: " prefix (at 133), so that one
+// fd_write from the prefix to the end of the digits prints the whole line.
+let private dbgDigitBufferOffset = dbgDataBaseOffset + 5
+let private dbgStrNewlineOffset = dbgDataBaseOffset + 96  // newline byte at 224 (clear of dbg's buffer)
 
 let private escapeWasmData (bytes: byte array) =
     let sb = StringBuilder()
@@ -510,6 +516,58 @@ and countMatchArity (expr: Expression) : int =
     | UnitExpr
     | LiteralExpr _
     | IdentifierExpr _ -> 0
+
+/// True when `predicate` holds for `expr` or any expression nested inside it.
+let rec private existsExpr (predicate: Expression -> bool) (expr: Expression) : bool =
+    let recurse = existsExpr predicate
+    predicate expr
+    || match expr with
+       | FunctionCall(_, _, args) -> args |> List.exists recurse
+       | BinaryOp(_, left, right) -> recurse left || recurse right
+       | IfExpr(cond, thenExpr, elseExpr) -> recurse cond || recurse thenExpr || recurse elseExpr
+       | Block statements -> existsStatements predicate statements
+       | Lambda(_, body) -> recurse body
+       | Pipe(value, _, _, args) -> recurse value || (args |> List.exists recurse)
+       | TupleExpr items
+       | ListExpr items -> items |> List.exists recurse
+       | RecordExpr fields ->
+           fields
+           |> List.exists (function
+               | NamedField(_, value) -> recurse value
+               | PositionalField value -> recurse value)
+       | Match(values, arms) ->
+           (values |> List.exists recurse) || (arms |> List.exists (fun (_, armExpr) -> recurse armExpr))
+       | UseIn(_, body) -> recurse body
+       | MemberAccess(inner, _, _) -> recurse inner
+       | TagExpr(_, payload) -> payload |> Option.exists recurse
+       | InterpolatedString parts ->
+           parts
+           |> List.exists (function
+               | StringText _ -> false
+               | StringExpr inner -> recurse inner)
+       | WorkflowBindExpr(_, value)
+       | WorkflowReturnExpr value -> recurse value
+       | ContextMemberCall(_, _, args) -> args |> List.exists recurse
+       | ContextMemberAccess(_, _)
+       | UnitExpr
+       | LiteralExpr _
+       | IdentifierExpr _ -> false
+
+and private existsStatements (predicate: Expression -> bool) (statements: Statement list) : bool =
+    statements
+    |> List.exists (function
+        | DefStatement(_, _, _, rhs) -> existsExpr predicate rhs
+        | ExprStatement expr -> existsExpr predicate expr
+        | UseStatement (UseValue value)
+        | UseStatement (UseContextInstance(_, value)) -> existsExpr predicate value
+        | ImportStatement _
+        | TypeDefStatement _ -> false)
+
+let private containsPrintlnCallExpr (expr: Expression) : bool =
+    expr
+    |> existsExpr (function
+        | FunctionCall(name, _, _) when name = printlnName -> true
+        | _ -> false)
 
 let rec private containsDbgCallExpr (expr: Expression) : bool =
     match expr with
@@ -1306,6 +1364,11 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                     $"{slotCode}\n    call_indirect (type $ctx_fn_{ctxFnArity ctxFn})"
                 else
                     $"{prefix}\n    {slotCode}\n    call_indirect (type $ctx_fn_{ctxFnArity ctxFn})"
+            | None when name = printlnName && env.BuiltinPrintln ->
+                // Built-in println: write the string (the type checker guarantees a string) and a newline, then yield unit.
+                match argsCode with
+                | [argCode] -> $"{argCode}\n    call $println_str\n    i32.const 0"
+                | _ -> failwith "println expects a single string argument"
             | None ->
                 if not (env.KnownFunctions.Contains name) then
                     failwith $"Unsupported function call for WASM MVP backend: {name}"
@@ -1676,10 +1739,21 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                 else Some (name, contextFnNames))
         |> Map.ofList
 
-    let moduleUsesDbg = 
+    let moduleUsesDbg =
         (defs |> List.exists (fun (_, _, expr) -> containsDbgCallExpr expr)) ||
         (contextDefs |> List.exists (fun (_, _, expr) -> containsDbgCallExpr expr)) ||
         (topLevelExprs |> List.exists containsDbgCallExpr)
+    // A user-defined or context-bound `println` shadows the built-in one for the whole module.
+    let contextBoundNames =
+        [ yield! contextBindingsByDef |> Map.toList |> List.collect (snd >> List.collect (Map.toList >> List.map fst))
+          yield! functionContextRequirements |> Map.toList |> List.collect snd ]
+        |> Set.ofList
+    let moduleUsesBuiltinPrintln =
+        not (knownFunctions.Contains printlnName)
+        && not (contextBoundNames.Contains printlnName)
+        && ((defs |> List.exists (fun (_, _, expr) -> containsPrintlnCallExpr expr)) ||
+            (contextDefs |> List.exists (fun (_, _, expr) -> containsPrintlnCallExpr expr)) ||
+            (topLevelExprs |> List.exists containsPrintlnCallExpr))
     let moduleUsesRegularDbg = 
         (defs |> List.exists (fun (_, _, expr) -> containsRegularDbgExpr expr)) ||
         (contextDefs |> List.exists (fun (_, _, expr) -> containsRegularDbgExpr expr)) ||
@@ -1928,7 +2002,8 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                   TypeFieldTypes = typeFieldTypes
                   RecordFieldTypes = initialRecordFieldTypes
                   ParamTypes = initialParamTypes
-                  ValueTypes = initialValueTypes }
+                  ValueTypes = initialValueTypes
+                  BuiltinPrintln = moduleUsesBuiltinPrintln }
             let fn = sanitizeIdentifier name
             
             // Build parameter signature including context params
@@ -2047,7 +2122,8 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                   TypeFieldTypes = typeFieldTypes
                   RecordFieldTypes = Map.empty
                   ParamTypes = Map.empty
-                  ValueTypes = typedValueTypes }
+                  ValueTypes = typedValueTypes
+                  BuiltinPrintln = moduleUsesBuiltinPrintln }
             let bodyCode =
                 topLevelExprs
                 |> List.map (fun expr -> $"{transpileExpression env expr}\n    drop")
@@ -2058,15 +2134,45 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
             $"  (func $__nanyx_start{header}\n    {bodyCode}\n  )", "  (start $__nanyx_start)"
 
     let moduleUsesDbgHelpers = moduleUsesRegularDbg || moduleUsesDbgString
+    // Anything that writes to stdout shares the WASI import, the memory and the newline byte.
+    let moduleUsesIoHelpers = moduleUsesDbgHelpers || moduleUsesBuiltinPrintln
 
-    let dbgPrelude =
-        if moduleUsesDbgHelpers then
-            [ "  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))"
-              "  (memory 1)"
-              "  (export \"memory\" (memory 0))"
-              $"  (data (i32.const {dbgDataBaseOffset}) \"dbg: \")"
-              $"  (data (i32.const {dbgStrNewlineOffset}) \"\\0a\")"
-              "  (func $dbg (param $x i32)"
+    // Writes a length-prefixed string, then a newline, to stdout (fd 1). Each goes in its own fd_write
+    // with the iovec at 0 and nwritten at 8: WASI may write only the first iovec of a call.
+    let printlnFunction =
+        [ "  (func $println_str (param $ptr i32)"
+          "    i32.const 0"
+          "    local.get $ptr"
+          "    i32.store"
+          "    i32.const 4"
+          "    local.get $ptr"
+          "    i32.const 4"
+          "    i32.sub"
+          "    i32.load"
+          "    i32.store"
+          "    i32.const 1"
+          "    i32.const 0"
+          "    i32.const 1"
+          "    i32.const 8"
+          "    call $fd_write"
+          "    drop"
+          "    i32.const 0"
+          $"    i32.const {dbgStrNewlineOffset}"
+          "    i32.store"
+          "    i32.const 4"
+          "    i32.const 1"
+          "    i32.store"
+          "    i32.const 1"
+          "    i32.const 0"
+          "    i32.const 1"
+          "    i32.const 8"
+          "    call $fd_write"
+          "    drop"
+          "  )" ]
+
+    // The `dbg` helpers: `$dbg` prints an integer, `$dbg_str` a string, each prefixed with "dbg: ".
+    let dbgFunctions =
+            [ "  (func $dbg (param $x i32)"
               "    (local $n i32)"
               "    (local $isneg i32)"
               "    (local $pos i32)"
@@ -2234,6 +2340,19 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
               "    call $fd_write"
               "    drop"
               "  )" ]
+
+    let dbgPrelude =
+        if moduleUsesIoHelpers then
+            [ "  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))"
+              "  (memory 1)"
+              "  (export \"memory\" (memory 0))"
+              if moduleUsesDbgHelpers then
+                  $"  (data (i32.const {dbgDataBaseOffset}) \"dbg: \")"
+              $"  (data (i32.const {dbgStrNewlineOffset}) \"\\0a\")"
+              if moduleUsesDbgHelpers then
+                  yield! dbgFunctions
+              if moduleUsesBuiltinPrintln then
+                  yield! printlnFunction ]
             |> String.concat "\n"
         else
             ""
@@ -2292,7 +2411,7 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
         |> String.concat "\n"
 
     // Add memory if we have string literals or heap allocation, but no dbg helpers (dbgPrelude already includes memory)
-    let needsMemory = (not (List.isEmpty stringLiteralData) || moduleUsesHeap) && not moduleUsesDbgHelpers
+    let needsMemory = (not (List.isEmpty stringLiteralData) || moduleUsesHeap) && not moduleUsesIoHelpers
     let memorySection =
         if needsMemory then
             "  (memory 1)\n  (export \"memory\" (memory 0))"
@@ -2306,13 +2425,15 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
         else
             ""
 
+    // Imports must precede every function definition in a WebAssembly module, so the host imports for
+    // `dbg(#tag)` come before the prelude (which defines $dbg and friends).
     let allImports =
-        [ if not (String.IsNullOrWhiteSpace dbgPrelude) then dbgPrelude
+        [ yield! dbgTagImports
+          yield! dbgTagPayloadImports
+          if not (String.IsNullOrWhiteSpace dbgPrelude) then dbgPrelude
           if not (String.IsNullOrWhiteSpace memorySection) then memorySection
           if not (String.IsNullOrWhiteSpace heapSection) then heapSection
-          if not (String.IsNullOrWhiteSpace contextPrelude) then contextPrelude
-          yield! dbgTagImports
-          yield! dbgTagPayloadImports ]
+          if not (String.IsNullOrWhiteSpace contextPrelude) then contextPrelude ]
         |> List.filter (fun line -> not (String.IsNullOrWhiteSpace line))
         |> String.concat "\n\n"
 

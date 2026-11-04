@@ -14,11 +14,18 @@
     <Nullable>enable</Nullable>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <WarningsAsErrors>0025</WarningsAsErrors>
+    <!--
+      Wasmtime recovers from WebAssembly traps (e.g. `unreachable`) by restoring a context that the CET
+      shadow stack rejects, so a CET-compatible apphost fail-fasts (0xC0000409) instead of throwing
+      (bytecodealliance/wasmtime-dotnet#374). Keep the process off the shadow stack until that is fixed.
+    -->
+    <CetCompat>false</CetCompat>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Nanyx.Compiler\NanyxCompiler.fsproj" />
     <ProjectReference Include="..\Nanyx.Compiler.Wasm\Nanyx.Compiler.Wasm.fsproj" />
+    <ProjectReference Include="..\Nanyx.Compiler.Runtime\Nanyx.Compiler.Runtime.fsproj" />
   </ItemGroup>
 
   <ItemGroup>
