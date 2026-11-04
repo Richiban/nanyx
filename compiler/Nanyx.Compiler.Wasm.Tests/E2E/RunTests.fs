@@ -559,19 +559,19 @@ let ``Run - boolean keywords not, and, or`` () =
     runSource source |> assertRan "no\nyes\nno\nyes\nyes\nyes\n"
 [<Fact>]
 let ``Run - if-matching`` () =
-    // Regression: `if #some(v) = get(3) then ...` was a parse error (#42).
+    // Regression: `if get(3) is #some(v) then ...` was a parse error (#42).
     let source =
         "import nanyx/console\n" +
         "\n" +
         "def get: int -> #some(int) | #none = { n -> #some(n) }\n" +
         "def nothing: int -> #some(int) | #none = { n -> #none }\n" +
         "def describe: #some(int) | #none -> string = { r ->\n" +
-        "  if #some(v) = r then \"got {v}\" else \"nothing\"\n" +
+        "  if r is #some(v) then \"got {v}\" else \"nothing\"\n" +
         "}\n" +
         "@entry\n" +
         "def main = {\n" +
-        "  if #some(v) = get(3) then println(\"got {v}\")\n" +
-        "  if #some(v) = nothing(0) then println(\"unexpected {v}\")\n" +
+        "  if get(3) is #some(v) then println(\"got {v}\")\n" +
+        "  if nothing(0) is #some(v) then println(\"unexpected {v}\")\n" +
         "  println(describe(get(5)) ++ \" \" ++ describe(nothing(5)))\n" +
         "}\n"
     runSource source |> assertRan "got 3\ngot 5 nothing\n"

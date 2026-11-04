@@ -891,14 +891,15 @@ let tagExpr =
     | Some multiple -> preturn (TagExpr(tagName, Some (TupleExpr multiple)))  // Multiple values as tuple
 
 // If-expression parser: if condition then trueExpr else falseExpr
-// `if cond then a else b`, or if-matching: `if pattern = value then body [else other]` (see the
+// `if cond then a else b`, or if-matching: `if value is pattern then body [else other]` (see the
 // pattern-matching page), which is desugared to `match value | pattern -> body | _ -> other`, with `()` as
-// the other arm when there is no `else`.
+// the other arm when there is no `else`. `is` makes it plain that the pattern binds its names rather than
+// comparing against existing ones.
 let ifExpr =
     let keywordEnd = notFollowedBy (satisfy (fun c -> Char.IsLetterOrDigit c || c = '_'))
     let patternBinding =
-        attempt (pattern .>> ws .>> pstring "=" .>> notFollowedBy (pchar '=') .>> ws) .>>. expression
-        |>> Choice2Of2
+        attempt (expression .>> ws .>> pstring "is" .>> keywordEnd .>> ws) .>>. pattern
+        |>> fun (value, pat) -> Choice2Of2 (pat, value)
     let condition = expression |>> Choice1Of2
     pipe3
         (pstring "if" >>. keywordEnd >>. ws >>. (patternBinding <|> condition))

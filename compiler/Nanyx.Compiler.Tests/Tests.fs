@@ -1082,7 +1082,7 @@ let ``Typecheck leaves the scrutinee union open when a match has a catch-all arm
             "  | #some(v) -> v\n" +
             "  | _ -> 0\n" +
             "}\n" +
-            "def e = if #some(v) = get(1) then v else 0\n")
+            "def e = if get(1) is #some(v) then v else 0\n")
     Assert.True(result.Diagnostics.IsEmpty, sprintf "%A" result.Diagnostics)
 
 [<Fact>]

@@ -8,7 +8,7 @@ open System.IO
 
 [<Fact>]
 let ``if-matching desugars to a match with a unit wildcard arm`` () =
-    match parseModule "def x = if #some(v) = get(3) then v" with
+    match parseModule "def x = if get(3) is #some(v) then v" with
     | Result.Ok [ Def (ValueDef (_, "x", _, Match ([ FunctionCall ("get", _, _) ],
                                                    [ [ TagPattern ("some", Some (IdentifierPattern "v")) ], IdentifierExpr ("v", _)
                                                      [ WildcardPattern ], UnitExpr ]))) ] -> ()
@@ -17,7 +17,7 @@ let ``if-matching desugars to a match with a unit wildcard arm`` () =
 
 [<Fact>]
 let ``if-matching with else uses the else as the wildcard arm`` () =
-    match parseModule "def x = if (a, 0) = p then a else 0" with
+    match parseModule "def x = if p is (a, 0) then a else 0" with
     | Result.Ok [ Def (ValueDef (_, "x", _, Match ([ IdentifierExpr ("p", _) ],
                                                    [ [ TuplePattern [ IdentifierPattern "a"; LiteralPattern (IntLit 0) ] ], IdentifierExpr ("a", _)
                                                      [ WildcardPattern ], LiteralExpr (IntLit 0) ]))) ] -> ()
@@ -25,9 +25,13 @@ let ``if-matching with else uses the else as the wildcard arm`` () =
     | Result.Error err -> failwith $"Parse failed: {err}"
 
 [<Fact>]
-let ``== is a condition, not a pattern binding`` () =
+let ``a condition without is stays a plain if, and is must end the keyword`` () =
     match parseModule "def x = if a == b then 1 else 2" with
     | Result.Ok [ Def (ValueDef (_, "x", _, IfExpr (BinaryOp ("==", _, _), _, _))) ] -> ()
+    | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
+    | Result.Error err -> failwith $"Parse failed: {err}"
+    match parseModule "def y = if island then 1 else 2" with
+    | Result.Ok [ Def (ValueDef (_, "y", _, IfExpr (IdentifierExpr ("island", _), _, _))) ] -> ()
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
     | Result.Error err -> failwith $"Parse failed: {err}"
 
