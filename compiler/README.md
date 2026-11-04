@@ -47,6 +47,19 @@ compiler/
 └── README.md
 ```
 
+## Prerequisites
+
+To **run** a published `nanyx` binary (from a GitHub release or a `Compiler` workflow artifact)
+nothing needs to be installed: it is self-contained, and the Wasmtime engine that executes
+programs is embedded in it. Supported platforms are `win-x64`, `linux-x64`, `linux-arm64`,
+`osx-x64` and `osx-arm64`. On Linux and macOS, `chmod +x nanyx` after unpacking.
+
+To **build** the compiler from source you need the
+[.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0); `dotnet --version` should print
+`10.x`. The build restores everything else from NuGet, including the `Wasmtime` package that ships
+the native engine for every platform above, so no separate Wasmtime, wat2wasm or wasm runtime
+install is needed.
+
 ## Building
 
 ```powershell

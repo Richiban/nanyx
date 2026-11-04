@@ -185,15 +185,38 @@ Nanyx aims to feel small: few rules, few exceptions, and features that compose r
 | `examples/` | Example Nanyx programs |
 | `extension/` | VS Code extension |
 
-### Building from source
+### Compiling and running Nanyx programs
 
-Requires the .NET SDK.
+The `nanyx` command-line tool compiles a `.nyx` file to WebAssembly and runs it on an embedded
+[Wasmtime](https://wasmtime.dev) engine. Wasmtime is bundled: there is nothing else to install.
+
+There are two ways to get `nanyx`:
+
+- **A release binary.** Each `compiler/<version>` tag publishes a self-contained executable for
+  Windows (x64), Linux (x64, arm64) and macOS (x64, Apple Silicon) on the
+  [releases page](https://github.com/Richiban/nanyx/releases). It needs no .NET runtime. Unzip it,
+  on Linux and macOS run `chmod +x nanyx`, and put it on your `PATH`. The `Compiler` workflow also
+  attaches the same binaries to every CI run as artifacts.
+- **Building from source**, which needs the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
+  (the `dotnet` command). Everything else, including Wasmtime, is restored from NuGet by the build.
 
 ```bash
 cd compiler
-dotnet build Nanyx.Compiler.sln
-dotnet test Nanyx.Compiler.sln
+dotnet build Nyx.Compiler.slnx
+dotnet test Nyx.Compiler.slnx
+dotnet run --project Nanyx.Compiler.Cli/NanyxCompiler.Cli.csproj -- run hello.nyx
 ```
+
+Then, with either binary, given the `hello.nyx` from the [Hello, World!][hello] page:
+
+```bash
+nanyx run hello.nyx    # compile and execute: prints "Hello, Nanyx!"
+nanyx wasm hello.nyx   # emit hello.wat
+nanyx check hello.nyx  # type-check and print the inferred types
+```
+
+The compiler currently handles a small subset of the language described in the docs; see
+[`compiler/README.md`](compiler/README.md) for what works today.
 
 Nanyx is under active development and the language is still changing. Contributions, bug reports and documentation fixes are welcome.
 
