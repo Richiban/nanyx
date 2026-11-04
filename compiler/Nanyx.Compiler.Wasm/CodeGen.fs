@@ -1106,7 +1106,9 @@ let rec private tryGetExprTypeName (env: TranspileEnv) (expr: Expression) =
         tryGetExprTypeName env left |> Option.orElseWith (fun () -> tryGetExprTypeName env right)
     | ListExpr _ -> Some "list"
     | FunctionCall(name, _, _)
-    | Pipe(_, name, _, _) -> env.FunctionReturnTypes |> Map.tryFind name
+    | Pipe(_, name, _, _) ->
+        // A top-level function's declared result, or else what inference knows (a local closure's, say).
+        env.FunctionReturnTypes |> Map.tryFind name |> Option.orElseWith fromInferredType
     | IfExpr(_, thenExpr, elseExpr) ->
         tryGetExprTypeName env thenExpr |> Option.orElseWith (fun () -> tryGetExprTypeName env elseExpr)
     | Block statements ->
@@ -1510,7 +1512,8 @@ let rec private usesHeapAllocationExpr (expr: Expression) : bool =
     match expr with
     | TupleExpr _
     | ListExpr _
-    | RecordExpr _ -> true
+    | RecordExpr _
+    | FunctionCall("__closure", _, _) -> true
     | FunctionCall(_, _, args) -> flattenCallArgs args |> List.exists usesHeapAllocationExpr
     | BinaryOp(_, left, right) -> usesHeapAllocationExpr left || usesHeapAllocationExpr right
     | IfExpr(cond, thenExpr, elseExpr) ->
@@ -2378,6 +2381,14 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
             |> String.concat "\n    "
     | FunctionCall("__range", _, _) ->
         failwith "Unsupported for WASM MVP backend: a range is only supported as the iterable of a for loop"
+    | FunctionCall("__closure", _, fields) ->
+        // A closure block: the function's table slot followed by the values it captures.
+        allocateSlots fields
+    | FunctionCall("__slot", _, [ IdentifierExpr(name, _) ]) ->
+        // The table slot of a lifted function, for the first field of its closure block.
+        match env.FunctionArities |> Map.tryFind name with
+        | Some arity -> $"i32.const {functionValueSlot env name arity}"
+        | None -> failwith $"Internal error: no lifted function named {name}"
     | FunctionCall("__for", _, [ iterable; Lambda([ (parameter, _) ], body) ]) ->
         // `for iterable | arms`: a loop with the body inlined. The element goes into a local the body reads
         // through the lambda's parameter name; a range counts from its start to its end, a list walks its
@@ -2523,12 +2534,16 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                     $"{slotCode}\n    call_indirect (type $ctx_fn_{ctxFnArity ctxFn})"
                 else
                     $"{prefix}\n    {slotCode}\n    call_indirect (type $ctx_fn_{ctxFnArity ctxFn})"
-            | None when env.Locals.ContainsKey name ->
-                // Calling a parameter or local that holds a function value: its value is a table slot.
-                env.FunctionTable.IndirectArities.Add flatArgs.Length |> ignore
-                let callee = $"local.get ${env.Locals.[name]}\n    call_indirect (type $ctx_fn_{flatArgs.Length})"
-                let prefix = argsCode |> String.concat "\n    "
-                if prefix = "" then callee else $"{prefix}\n    {callee}"
+            | None when env.Locals.ContainsKey name || (env.KnownFunctions.Contains name && expectedArity = 0 && not flatArgs.IsEmpty) ->
+                // Calling a parameter, local or top-level value that holds a function value: a closure block
+                // whose first slot is the function's table slot. The block is passed as the environment.
+                let closureCode =
+                    match env.Locals |> Map.tryFind name with
+                    | Some localName -> $"local.get ${localName}"
+                    | None -> $"call ${sanitizeIdentifier name}"
+                env.FunctionTable.IndirectArities.Add (flatArgs.Length + 1) |> ignore
+                ([ closureCode ] @ argsCode @ [ closureCode; "i32.load"; $"call_indirect (type $ctx_fn_{flatArgs.Length + 1})" ])
+                |> String.concat "\n    "
             | None when NyxCompiler.Intrinsics.isIntrinsic name ->
                 // A compiler intrinsic (only the standard library can call these): a runtime helper of the same
                 // name. Every Nanyx expression leaves an i32, so a unit result is materialised as 0.
@@ -2713,9 +2728,15 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                                 RecordFieldTypes = env.RecordFieldTypes |> Map.add name typeFieldTypes
                                 ValueTypes = env.ValueTypes |> Map.add name typeName }
                         | _ ->
-                            match tryGetExprTypeName env rhs with
-                            | Some tyName -> { env with ValueTypes = env.ValueTypes |> Map.add name tyName }
-                            | None -> env
+                            let withSimpleType =
+                                match tryGetExprTypeName env rhs with
+                                | Some tyName -> { env with ValueTypes = env.ValueTypes |> Map.add name tyName }
+                                | None -> env
+                            // Carry the full inferred type too, so a record bound here (a captured one read
+                            // from a closure's environment, say) keeps its layout.
+                            match tryExprTy env rhs with
+                            | Some ty when not (env.ValueTys.ContainsKey name) -> { withSimpleType with ValueTys = env.ValueTys |> Map.add name ty }
+                            | _ -> withSimpleType
                     let restCode = transpileStatements updatedEnv tail
                     $"{rhsCode}\n    local.set ${localName}\n    {restCode}"
                 | None ->
@@ -2865,14 +2886,27 @@ module private LambdaLifting =
         | LiteralExpr _
         | IdentifierExpr _ -> []
 
-    /// `expr` with every reference to the function `from` (as a callee or a value) renamed to `to'`.
-    let rec private renameFunction (from: string) (to': string) (expr: Expression) : Expression =
-        let recur = renameFunction from to'
-        let rename name = if name = from then to' else name
+    /// The name of the environment parameter every lifted function takes first: the closure block itself.
+    let envParameter = "__env"
+
+    /// `expr` with every reference to the local function `from` redirected to its lifted form `to'`: a call
+    /// becomes a direct call that passes the environment on, and a use as a value is the environment itself
+    /// (the closure block).
+    let rec private redirectSelfReferences (from: string) (to': string) (expr: Expression) : Expression =
+        let recur = redirectSelfReferences from to'
+        let flatten (args: Expression list) =
+            match args with
+            | [ TupleExpr items ] -> items
+            | _ -> args
         match expr with
-        | IdentifierExpr(name, range) -> IdentifierExpr(rename name, range)
-        | FunctionCall(name, range, args) -> FunctionCall(rename name, range, args |> List.map recur)
-        | Pipe(value, name, range, args) -> Pipe(recur value, rename name, range, args |> List.map recur)
+        | IdentifierExpr(name, range) when name = from -> IdentifierExpr(envParameter, range)
+        | IdentifierExpr _ -> expr
+        | FunctionCall(name, range, args) when name = from ->
+            FunctionCall(to', range, [ TupleExpr (IdentifierExpr(envParameter, None) :: (flatten args |> List.map recur)) ])
+        | FunctionCall(name, range, args) -> FunctionCall(name, range, args |> List.map recur)
+        | Pipe(value, name, range, args) when name = from ->
+            FunctionCall(to', range, [ TupleExpr (IdentifierExpr(envParameter, None) :: recur value :: (flatten args |> List.map recur)) ])
+        | Pipe(value, name, range, args) -> Pipe(recur value, name, range, args |> List.map recur)
         | Lambda(args, body) -> Lambda(args, recur body)
         | BinaryOp(op, left, right) -> BinaryOp(op, recur left, recur right)
         | IfExpr(cond, thenExpr, elseExpr) -> IfExpr(recur cond, recur thenExpr, recur elseExpr)
@@ -2904,14 +2938,51 @@ module private LambdaLifting =
         | UnitExpr
         | LiteralExpr _ -> expr
 
-    /// Lifts the liftable lambdas of a module into top-level definitions appended at the end. Also returns, for
-    /// each lifted `rec` function, the top-level def it came from and its local name there, so the backend can
-    /// find the local's inferred type (lifting runs after type checking, so the lifted def has none of its own).
-    let lift (module': Module) : Module * Map<string, string * string> =
+    /// Where a lifted function came from: the top-level def it was written in, its local name there if it
+    /// was a `rec` def, and the names of the variables it captures, in the order they sit in its environment.
+    type LiftedOrigin = { Owner: string; LocalName: string option; Captured: string list }
+
+    /// Closure conversion. Every function value is a closure block: a tuple of the function's table slot
+    /// followed by the values it captures. A lifted function takes that block as its first parameter,
+    /// `__env`, and starts by binding each captured name to the matching field; a call through a value
+    /// passes the block as the environment and calls the slot it holds. A top-level function used as a
+    /// value gets a wrapper that takes and ignores an environment. Lifts the lambdas of a module into
+    /// top-level definitions appended at the end, and returns where each came from (lifting runs after
+    /// type checking, so the backend uses that to find the types of parameters and captures).
+    let lift (module': Module) : Module * Map<string, LiftedOrigin> =
         let lifted = System.Collections.Generic.List<TopLevelItem>()
-        let origins = System.Collections.Generic.Dictionary<string, string * string>()
+        let origins = System.Collections.Generic.Dictionary<string, LiftedOrigin>()
+        let wrappers = System.Collections.Generic.Dictionary<string, string>()
         let mutable owner = ""
         let mutable counter = 0
+
+        let topLevelFunctions =
+            module'
+            |> List.choose (function
+                | Def (ValueDef(_, name, _, Lambda(args, _))) when not args.IsEmpty -> Some (name, args.Length)
+                | _ -> None)
+            |> Map.ofList
+
+        /// The closure block for the lifted function `liftedName` over the given captured names. (A marker
+        /// call rather than a tuple, so that `f(closure)` is not flattened into one argument per field.)
+        let closureOf (liftedName: string) (captured: string list) =
+            FunctionCall("__closure", None,
+                FunctionCall("__slot", None, [ IdentifierExpr(liftedName, None) ])
+                :: (captured |> List.map (fun name -> IdentifierExpr(name, None))))
+
+        /// The lifted function's lambda: the environment parameter first, then the captured names bound
+        /// from the environment's fields ahead of the original body.
+        let liftedLambda (args: (string * TypeExpr option) list) (captured: string list) (body: Expression) =
+            let captureBindings =
+                captured
+                |> List.mapi (fun index name ->
+                    DefStatement(false, name, None, MemberAccess(IdentifierExpr(envParameter, None), string (index + 1), None)))
+            let bodyWithCaptures =
+                match captureBindings, body with
+                | [], _ -> body
+                | _, Block statements -> Block (captureBindings @ statements)
+                | _, _ -> Block (captureBindings @ [ ExprStatement body ])
+            Lambda((envParameter, None) :: args, bodyWithCaptures)
 
         // `scope` is every name the enclosing function binds; a lambda referring to one of them captures it.
         let rec liftExpr (scope: Set<string>) (expr: Expression) : Expression =
@@ -2924,19 +2995,32 @@ module private LambdaLifting =
             | Lambda(args, body) when not args.IsEmpty ->
                 let parameterNames = args |> List.map fst |> Set.ofList
                 let innerScope = Set.union parameterNames (boundNames body |> Set.ofList)
-                let liftedBody = liftExpr innerScope body
-                let free =
-                    referencedNames liftedBody
-                    |> Set.ofList
-                    |> fun names -> Set.difference names innerScope
-                if Set.intersect free scope |> Set.isEmpty then
-                    let name = $"__lambda_{counter}"
-                    counter <- counter + 1
-                    lifted.Add(Def (ValueDef(false, name, None, Lambda(args, liftedBody))))
-                    IdentifierExpr(name, None)
-                else
-                    Lambda(args, liftedBody)
+                // A lambda nested inside may capture what this one binds and what encloses this one alike;
+                // what it captures from outside is then referenced here, so this lambda captures it in turn.
+                let liftedBody = liftExpr (Set.union scope innerScope) body
+                let captured =
+                    Set.difference (referencedNames liftedBody |> Set.ofList) innerScope
+                    |> Set.intersect scope
+                    |> Set.toList
+                let name = $"__lambda_{counter}"
+                counter <- counter + 1
+                lifted.Add(Def (ValueDef(false, name, None, liftedLambda args captured liftedBody)))
+                origins.[name] <- { Owner = owner; LocalName = None; Captured = captured }
+                closureOf name captured
             | Lambda(args, body) -> Lambda(args, recur body)
+            // A top-level function used as a value: a closure over a wrapper that takes an environment.
+            | IdentifierExpr(name, _) when topLevelFunctions.ContainsKey name && not (scope.Contains name) ->
+                let wrapperName =
+                    match wrappers.TryGetValue name with
+                    | true, existing -> existing
+                    | _ ->
+                        let wrapperName = $"__fn_{sanitizeIdentifier name}"
+                        let parameters = [ for index in 1 .. topLevelFunctions.[name] -> $"__arg{index}" ]
+                        let call = FunctionCall(name, None, [ TupleExpr (parameters |> List.map (fun p -> IdentifierExpr(p, None))) ])
+                        lifted.Add(Def (ValueDef(false, wrapperName, None, Lambda((envParameter, None) :: (parameters |> List.map (fun p -> p, None)), call))))
+                        wrappers.[name] <- wrapperName
+                        wrapperName
+                closureOf wrapperName []
             | FunctionCall(name, range, args) -> FunctionCall(name, range, args |> List.map recur)
             | Pipe(value, name, range, args) -> Pipe(recur value, name, range, args |> List.map recur)
             | BinaryOp(op, left, right) -> BinaryOp(op, recur left, recur right)
@@ -2945,21 +3029,21 @@ module private LambdaLifting =
                 statements
                 |> List.map (function
                     // `rec name = { ... }`: a local function that calls itself. It is lifted under a fresh
-                    // name, with its self-references renamed to that name, and the local is bound to the
-                    // lifted function's value. (If it captures anything else it stays, and fails, as a lambda.)
-                    | DefStatement(isExport, name, typeOpt, FunctionCall("__rec", _, [ Lambda(args, body) ])) when not args.IsEmpty ->
+                    // name with its self-references redirected there (a self-call passes the environment on),
+                    // and the local is bound to its closure.
+                    | DefStatement(isExport, name, _, FunctionCall("__rec", _, [ Lambda(args, body) ])) when not args.IsEmpty ->
                         let liftedName = $"__rec_{sanitizeIdentifier name}_{counter}"
                         counter <- counter + 1
                         let parameterNames = args |> List.map fst |> Set.ofList
                         let innerScope = Set.union parameterNames (boundNames body |> Set.ofList) |> Set.add name
-                        let liftedBody = liftExpr innerScope body |> renameFunction name liftedName
-                        let free = Set.difference (referencedNames liftedBody |> Set.ofList) (innerScope |> Set.add liftedName)
-                        if Set.intersect free scope |> Set.isEmpty then
-                            lifted.Add(Def (ValueDef(false, liftedName, typeOpt, Lambda(args, liftedBody))))
-                            origins.[liftedName] <- (owner, name)
-                            DefStatement(isExport, name, None, IdentifierExpr(liftedName, None))
-                        else
-                            DefStatement(isExport, name, typeOpt, Lambda(args, liftedBody))
+                        let liftedBody = liftExpr (Set.union scope innerScope) body |> redirectSelfReferences name liftedName
+                        let captured =
+                            Set.difference (referencedNames liftedBody |> Set.ofList) (innerScope |> Set.add liftedName |> Set.add envParameter)
+                            |> Set.intersect scope
+                            |> Set.toList
+                        lifted.Add(Def (ValueDef(false, liftedName, None, liftedLambda args captured liftedBody)))
+                        origins.[liftedName] <- { Owner = owner; LocalName = Some name; Captured = captured }
+                        DefStatement(isExport, name, None, closureOf liftedName captured)
                     | DefStatement(isExport, name, typeOpt, FunctionCall("__rec", _, [ rhs ])) ->
                         DefStatement(isExport, name, typeOpt, recur rhs)
                     | DefStatement(isExport, name, typeOpt, rhs) -> DefStatement(isExport, name, typeOpt, recur rhs)
@@ -3532,14 +3616,41 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                 typedFunctionBodies
                 |> Map.tryFind name
                 |> Option.orElseWith (fun () ->
-                    // A lifted `rec` function: its type is that of the local it was, in the def it came from.
+                    // A lifted function has no typed body of its own. Its environment's type is a tuple of
+                    // the captured names' types in the def it came from, and a `rec` function's parameter
+                    // types are those of the local it was there.
                     liftedOrigins
                     |> Map.tryFind name
-                    |> Option.bind (fun (owner, localName) ->
+                    |> Option.bind (fun origin ->
                         typedFunctionBodies
-                        |> Map.tryFind owner
-                        |> Option.bind (fun ownerTyped -> collectTypedValueTys ownerTyped |> Map.tryFind localName))
-                    |> Option.map (fun ty -> { Expr = expr; Type = ty; Body = None; Statements = None; MatchArms = None }))
+                        |> Map.tryFind origin.Owner
+                        |> Option.map (fun ownerTyped ->
+                            let ownerTys = collectTypedValueTys ownerTyped
+                            let envTy =
+                                origin.Captured
+                                |> List.mapi (fun index captured -> string (index + 1), ownerTys |> Map.tryFind captured)
+                                |> List.choose (fun (key, tyOpt) -> tyOpt |> Option.map (fun ty -> key, ty))
+                                |> Map.ofList
+                                |> Map.add "0" (TyPrimitive "int")
+                                |> TyRecord
+                            let localTy = origin.LocalName |> Option.bind (fun localName -> ownerTys |> Map.tryFind localName)
+                            let parameterTys =
+                                match localTy with
+                                | Some (TyFunc(TyRecord fields, _)) ->
+                                    fields
+                                    |> Map.toList
+                                    |> List.choose (fun (key, ty) ->
+                                        match Int32.TryParse key with
+                                        | true, index -> Some (string (index + 1), ty)
+                                        | _ -> None)
+                                | Some (TyFunc(single, _)) -> [ "1", single ]
+                                | _ -> []
+                            let returnTy =
+                                match localTy with
+                                | Some (TyFunc(_, ret)) -> ret
+                                | _ -> TyVar { Id = -1; Name = None }
+                            let inputTy = TyRecord (Map.ofList (("0", envTy) :: parameterTys))
+                            { Expr = expr; Type = TyFunc(inputTy, returnTy); Body = None; Statements = None; MatchArms = None })))
             renderFunction name typeOpt expr typedExprOpt true pending)
 
     let renderedContextFunctions =
