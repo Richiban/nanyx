@@ -1125,7 +1125,10 @@ and private collectStringLiteralsExpr (expr: Expression) : string list =
             | PositionalField value -> collectStringLiteralsExpr value)
     | Match(values, arms) ->
         let valueStrings = values |> List.collect collectStringLiteralsExpr
-        let armStrings = arms |> List.collect (fun (_, armExpr) -> collectStringLiteralsExpr armExpr)
+        let armStrings =
+            arms
+            |> List.collect (fun (patterns, armExpr) ->
+                (patterns |> List.collect collectStringLiteralsPattern) @ collectStringLiteralsExpr armExpr)
         valueStrings @ armStrings
     | UseIn(_, body) -> collectStringLiteralsExpr body
     | MemberAccess(inner, _, _) -> collectStringLiteralsExpr inner
@@ -1138,6 +1141,27 @@ and private collectStringLiteralsExpr (expr: Expression) : string list =
     | UnitExpr
     | LiteralExpr _
     | IdentifierExpr _ -> []
+
+/// String literals that appear inside patterns (`| "Sat" -> ...`, `| #name("x") -> ...`) need data-segment
+/// offsets just like literals in expressions.
+and private collectStringLiteralsPattern (pattern: Pattern) : string list =
+    match pattern with
+    | LiteralPattern(StringLit value) -> [ value ]
+    | TagPattern(_, Some payload) -> collectStringLiteralsPattern payload
+    | TuplePattern patterns
+    | ListPattern(patterns, _) -> patterns |> List.collect collectStringLiteralsPattern
+    | ListSplatMiddle(beforePatterns, afterPatterns) ->
+        (beforePatterns |> List.collect collectStringLiteralsPattern)
+        @ (afterPatterns |> List.collect collectStringLiteralsPattern)
+    | RecordPattern(_, patterns) -> patterns |> List.collect collectStringLiteralsPattern
+    | RecordMemberPattern members -> members |> List.collect (fun (_, p) -> collectStringLiteralsPattern p)
+    | GuardPattern(_, value)
+    | RangePattern(value, _) -> collectStringLiteralsExpr value
+    | TagPattern(_, None)
+    | LiteralPattern _
+    | IdentifierPattern _
+    | WildcardPattern
+    | ElsePattern -> []
 
 and private collectStringLiteralsStatements (statements: Statement list) : string list =
     statements
@@ -1385,6 +1409,12 @@ and private collectTagNamesPattern (pattern: Pattern) : string list =
     | ElsePattern -> []
 
 let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : string =
+    /// The pointer to a string literal's bytes in the data section.
+    let stringLiteralCode (value: string) =
+        match env.StringLiterals |> Map.tryFind value with
+        | Some offset -> $"i32.const {offset}"
+        | None -> failwith $"Internal error: missing string literal offset for {value}"
+
     let renderStaticBytes bytes =
         bytes
         |> Array.toList
@@ -1443,10 +1473,7 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
         $"i32.const {value}"
     | LiteralExpr(BoolLit value) ->
         if value then "i32.const 1" else "i32.const 0"
-    | LiteralExpr(StringLit value) ->
-        match env.StringLiterals |> Map.tryFind value with
-        | Some offset -> $"i32.const {offset}"
-        | None -> failwith $"Internal error: missing string literal offset for {value}"
+    | LiteralExpr(StringLit value) -> stringLiteralCode value
     | InterpolatedString parts ->
         let lengthCode = parts |> List.map renderInterpolationPartLength |> String.concat "\n    "
         let writeCode = parts |> List.map renderInterpolationPartWrite |> String.concat "\n    "
@@ -1652,6 +1679,9 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
             | LiteralPattern(BoolLit value) ->
                 let asInt = if value then 1 else 0
                 $"local.get ${tempName}\n      i32.const {asInt}\n      i32.eq"
+            | LiteralPattern(StringLit value) ->
+                env.UsedHelpers.Add Helpers.stringEquals |> ignore
+                $"local.get ${tempName}\n      {stringLiteralCode value}\n      call ${Helpers.stringEquals}"
             | TagPattern(tagName, payloadOpt) ->
                 let tagBase =
                     match env.TagIds |> Map.tryFind tagName with
@@ -1666,6 +1696,11 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                 | Some (LiteralPattern(BoolLit payload)) ->
                     let payloadMasked = if payload then 1 else 0
                     $"local.get ${tempName}\n      i32.const {tagDiscriminantMask}\n      i32.and\n      i32.const {tagBase}\n      i32.eq\n      local.get ${tempName}\n      i32.const {tagPayloadMask}\n      i32.and\n      i32.const {payloadMasked}\n      i32.eq\n      i32.and"
+                | Some (LiteralPattern(StringLit payload)) ->
+                    // The payload is a string pointer; compare contents, not addresses. Only compare once
+                    // the discriminant matches: another tag's payload bits are not a valid pointer.
+                    env.UsedHelpers.Add Helpers.stringEquals |> ignore
+                    $"local.get ${tempName}\n      i32.const {tagDiscriminantMask}\n      i32.and\n      i32.const {tagBase}\n      i32.eq\n      (if (result i32)\n        (then\n          local.get ${tempName}\n          i32.const {tagPayloadMask}\n          i32.and\n          {stringLiteralCode payload}\n          call ${Helpers.stringEquals})\n        (else i32.const 0))"
                 | Some WildcardPattern
                 | Some ElsePattern ->
                     $"local.get ${tempName}\n      i32.const {tagDiscriminantMask}\n      i32.and\n      i32.const {tagBase}\n      i32.eq"
