@@ -61,6 +61,8 @@ module private Helpers =
     let listConcat = "__nanyx_list_concat"
     let recordSet = "__nanyx_record_set"
     let recordCopy = "__nanyx_record_copy"
+    let floatBox = "__nanyx_float_box"
+    let floatToString = "__nanyx_float_to_string"
     let writeStdout = NyxCompiler.Intrinsics.writeStdout
     let stringLength = NyxCompiler.Intrinsics.stringLength
     let stringByteAt = NyxCompiler.Intrinsics.stringByteAt
@@ -364,6 +366,209 @@ let private runtimeHelpers : Map<string, string> =
             $"  call ${Helpers.copyBytes}"
             "  local.get $dst"
             ")" ]
+      // A float is boxed: an 8-byte block holding the f64, passed around by pointer like every other
+      // value, so locals, record slots and calls stay 32-bit.
+      Helpers.floatBox,
+      lines
+          [ $"(func ${Helpers.floatBox} (param $value f64) (result i32)"
+            "  (local $box i32)"
+            "  i32.const 8"
+            $"  call ${Helpers.alloc}"
+            "  local.set $box"
+            "  local.get $box"
+            "  local.get $value"
+            "  f64.store"
+            "  local.get $box"
+            ")" ]
+      // Formats a boxed float as `-?int.frac` with the fraction rounded to six digits and trailing zeros
+      // dropped (keeping one): 6.28, 4.0, -1.5, 0.333333.
+      Helpers.floatToString,
+      lines
+          [ $"(func ${Helpers.floatToString} (param $box i32) (result i32)"
+            "  (local $x f64)"
+            "  (local $base i32)"
+            "  (local $cursor i32)"
+            "  (local $int i64)"
+            "  (local $frac i64)"
+            "  (local $tmp i64)"
+            "  (local $count i32)"
+            "  (local $pos i32)"
+            "  (local $scale i64)"
+            "  local.get $box"
+            "  f64.load"
+            "  local.set $x"
+            "  ;; 4 length bytes, a sign, up to 20 integer digits, the point, 6 digits and a terminator"
+            "  i32.const 36"
+            $"  call ${Helpers.alloc}"
+            "  local.set $base"
+            "  local.get $base"
+            "  i32.const 4"
+            "  i32.add"
+            "  local.set $cursor"
+            "  local.get $x"
+            "  f64.const 0"
+            "  f64.lt"
+            "  if"
+            "    local.get $cursor"
+            "    i32.const 45"
+            "    i32.store8"
+            "    local.get $cursor"
+            "    i32.const 1"
+            "    i32.add"
+            "    local.set $cursor"
+            "    local.get $x"
+            "    f64.neg"
+            "    local.set $x"
+            "  end"
+            "  local.get $x"
+            "  i64.trunc_sat_f64_u"
+            "  local.set $int"
+            "  local.get $x"
+            "  local.get $int"
+            "  f64.convert_i64_u"
+            "  f64.sub"
+            "  f64.const 1000000"
+            "  f64.mul"
+            "  f64.const 0.5"
+            "  f64.add"
+            "  i64.trunc_sat_f64_u"
+            "  local.set $frac"
+            "  local.get $frac"
+            "  i64.const 1000000"
+            "  i64.ge_u"
+            "  if"
+            "    local.get $int"
+            "    i64.const 1"
+            "    i64.add"
+            "    local.set $int"
+            "    i64.const 0"
+            "    local.set $frac"
+            "  end"
+            "  ;; integer digits: count them, then write them back to front"
+            "  i32.const 0"
+            "  local.set $count"
+            "  local.get $int"
+            "  local.set $tmp"
+            "  loop $count_digits"
+            "    local.get $count"
+            "    i32.const 1"
+            "    i32.add"
+            "    local.set $count"
+            "    local.get $tmp"
+            "    i64.const 10"
+            "    i64.div_u"
+            "    local.set $tmp"
+            "    local.get $tmp"
+            "    i64.const 0"
+            "    i64.ne"
+            "    br_if $count_digits"
+            "  end"
+            "  local.get $cursor"
+            "  local.get $count"
+            "  i32.add"
+            "  i32.const 1"
+            "  i32.sub"
+            "  local.set $pos"
+            "  local.get $int"
+            "  local.set $tmp"
+            "  loop $write_digits"
+            "    local.get $pos"
+            "    local.get $tmp"
+            "    i64.const 10"
+            "    i64.rem_u"
+            "    i32.wrap_i64"
+            "    i32.const 48"
+            "    i32.add"
+            "    i32.store8"
+            "    local.get $pos"
+            "    i32.const 1"
+            "    i32.sub"
+            "    local.set $pos"
+            "    local.get $tmp"
+            "    i64.const 10"
+            "    i64.div_u"
+            "    local.set $tmp"
+            "    local.get $tmp"
+            "    i64.const 0"
+            "    i64.ne"
+            "    br_if $write_digits"
+            "  end"
+            "  local.get $cursor"
+            "  local.get $count"
+            "  i32.add"
+            "  local.set $cursor"
+            "  local.get $cursor"
+            "  i32.const 46"
+            "  i32.store8"
+            "  local.get $cursor"
+            "  i32.const 1"
+            "  i32.add"
+            "  local.set $cursor"
+            "  ;; six fraction digits, most significant first"
+            "  i64.const 100000"
+            "  local.set $scale"
+            "  loop $write_frac"
+            "    local.get $cursor"
+            "    local.get $frac"
+            "    local.get $scale"
+            "    i64.div_u"
+            "    i64.const 10"
+            "    i64.rem_u"
+            "    i32.wrap_i64"
+            "    i32.const 48"
+            "    i32.add"
+            "    i32.store8"
+            "    local.get $cursor"
+            "    i32.const 1"
+            "    i32.add"
+            "    local.set $cursor"
+            "    local.get $scale"
+            "    i64.const 10"
+            "    i64.div_u"
+            "    local.set $scale"
+            "    local.get $scale"
+            "    i64.const 0"
+            "    i64.ne"
+            "    br_if $write_frac"
+            "  end"
+            "  ;; drop trailing zeros, keeping one digit after the point"
+            "  block $trim_done"
+            "    loop $trim"
+            "      local.get $cursor"
+            "      i32.const 1"
+            "      i32.sub"
+            "      i32.load8_u"
+            "      i32.const 48"
+            "      i32.ne"
+            "      br_if $trim_done"
+            "      local.get $cursor"
+            "      i32.const 2"
+            "      i32.sub"
+            "      i32.load8_u"
+            "      i32.const 46"
+            "      i32.eq"
+            "      br_if $trim_done"
+            "      local.get $cursor"
+            "      i32.const 1"
+            "      i32.sub"
+            "      local.set $cursor"
+            "      br $trim"
+            "    end"
+            "  end"
+            "  local.get $base"
+            "  local.get $cursor"
+            "  local.get $base"
+            "  i32.const 4"
+            "  i32.add"
+            "  i32.sub"
+            "  i32.store"
+            "  local.get $cursor"
+            "  i32.const 0"
+            "  i32.store8"
+            "  local.get $base"
+            "  i32.const 4"
+            "  i32.add"
+            ")" ]
       Helpers.listCons,
       lines
           [ $"(func ${Helpers.listCons} (param $head i32) (param $tail i32) (result i32)"
@@ -478,6 +683,27 @@ let private sanitizeIdentifier (name: string) =
     if String.IsNullOrWhiteSpace sanitized then "_"
     elif Char.IsDigit sanitized.[0] then "_" + sanitized
     else sanitized
+
+/// The f64 instruction for an operator on floats; comparisons leave an i32, arithmetic an f64 to box.
+let private wasmFloatInstruction op =
+    match op with
+    | "+" -> Some "f64.add"
+    | "-" -> Some "f64.sub"
+    | "*" -> Some "f64.mul"
+    | "/" -> Some "f64.div"
+    | "==" -> Some "f64.eq"
+    | "!=" -> Some "f64.ne"
+    | "<" -> Some "f64.lt"
+    | "<=" -> Some "f64.le"
+    | ">" -> Some "f64.gt"
+    | ">=" -> Some "f64.ge"
+    | _ -> None
+
+let private wasmFloatConst (value: float) =
+    if System.Double.IsNaN value then "nan"
+    elif System.Double.IsPositiveInfinity value then "inf"
+    elif System.Double.IsNegativeInfinity value then "-inf"
+    else value.ToString("R", System.Globalization.CultureInfo.InvariantCulture)
 
 let private wasmBinaryInstruction op =
     match op with
@@ -693,6 +919,7 @@ let private trySimpleTypeName (ty: Ty) =
     | TyPrimitive "string" -> Some "string"
     | TyPrimitive "int" -> Some "int"
     | TyPrimitive "bool" -> Some "bool"
+    | TyPrimitive "float" -> Some "float"
     | TyApply("list", _) -> Some "list"
     | _ -> None
 
@@ -860,6 +1087,7 @@ let rec private tryGetExprTypeName (env: TranspileEnv) (expr: Expression) =
     match expr with
     | LiteralExpr(StringLit _) -> Some "string"
     | LiteralExpr(IntLit _) -> Some "int"
+    | LiteralExpr(FloatLit _) -> Some "float"
     | LiteralExpr(BoolLit _) -> Some "bool"
     | InterpolatedString _ -> Some "string"
     | IdentifierExpr(name, _) ->
@@ -1695,12 +1923,20 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
     // output buffer, which is only reserved once the whole string has been written.
     let interpolationHoleType inner =
         match tryGetExprTypeName env inner with
-        | Some ("string" | "int" | "bool" as typeName) -> typeName
+        | Some ("string" | "int" | "bool" | "float" as typeName) -> typeName
         | Some other -> failwith $"Unsupported interpolated value type for WASM MVP backend: {other}"
         | None -> failwith $"Unable to determine interpolated value type for WASM MVP backend: {inner}"
 
+    // A float hole is formatted to a string here, in the evaluation pass, since formatting allocates and
+    // the length and write passes must not.
     let renderInterpolationHoleEval (index: int) (inner: Expression) =
-        $"{transpileExpression env inner}\n    local.set ${interpolationHoleLocalName index}"
+        let valueCode =
+            match interpolationHoleType inner with
+            | "float" ->
+                env.UsedHelpers.Add Helpers.floatToString |> ignore
+                $"{transpileExpression env inner}\n    call ${Helpers.floatToString}"
+            | _ -> transpileExpression env inner
+        $"{valueCode}\n    local.set ${interpolationHoleLocalName index}"
 
     let renderInterpolationPartLength (part, holeIndex) =
         match part with
@@ -1710,7 +1946,7 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
         | StringExpr inner ->
             let valueCode = $"local.get ${interpolationHoleLocalName holeIndex}"
             match interpolationHoleType inner with
-            | "string" ->
+            | "string" | "float" ->
                 $"{valueCode}\n    i32.const 4\n    i32.sub\n    i32.load\n    local.get $__interp_len\n    i32.add\n    local.set $__interp_len"
             | "int" -> renderIntLength valueCode
             | _ -> renderBoolLength valueCode
@@ -1721,7 +1957,7 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
         | StringExpr inner ->
             let valueCode = $"local.get ${interpolationHoleLocalName holeIndex}"
             match interpolationHoleType inner with
-            | "string" -> renderStringCopy valueCode
+            | "string" | "float" -> renderStringCopy valueCode
             | "int" -> renderIntWrite valueCode
             | _ -> renderBoolWrite valueCode
 
@@ -1730,6 +1966,9 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
         "i32.const 0"
     | LiteralExpr(IntLit value) ->
         $"i32.const {value}"
+    | LiteralExpr(FloatLit value) ->
+        env.UsedHelpers.Add Helpers.floatBox |> ignore
+        $"f64.const {wasmFloatConst value}\n    call ${Helpers.floatBox}"
     | LiteralExpr(BoolLit value) ->
         if value then "i32.const 1" else "i32.const 0"
     | LiteralExpr(StringLit value) -> stringLiteralCode value
@@ -1803,6 +2042,20 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
         | _ ->
             env.UsedHelpers.Add Helpers.stringEquals |> ignore
             $"{leftCode}\n    {rightCode}\n    call ${Helpers.stringEquals}\n    i32.eqz"
+    | BinaryOp(op, left, right) when tryGetExprTypeName env left = Some "float" || tryGetExprTypeName env right = Some "float" ->
+        // Floats are boxed: unbox both operands, compute in f64, and box an arithmetic result.
+        match wasmFloatInstruction op with
+        | Some instr ->
+            let leftCode = transpileExpression env left
+            let rightCode = transpileExpression env right
+            let compute = $"{leftCode}\n    f64.load\n    {rightCode}\n    f64.load\n    {instr}"
+            if instr.EndsWith "eq" || instr.EndsWith "ne" || instr.EndsWith "lt" || instr.EndsWith "le" || instr.EndsWith "gt" || instr.EndsWith "ge" then
+                compute
+            else
+                env.UsedHelpers.Add Helpers.floatBox |> ignore
+                $"{compute}\n    call ${Helpers.floatBox}"
+        | None ->
+            failwith $"Unsupported binary operator on floats for WASM MVP backend: {op}"
     | BinaryOp(op, left, right) ->
         match wasmBinaryInstruction op with
         | Some instr ->
@@ -2141,6 +2394,9 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
         | TagExpr _ -> argCode
         | LiteralExpr(StringLit _) -> $"{argCode}\n    local.tee ${dbgLocal}\n    call $dbg_str\n    local.get ${dbgLocal}"
         | _ when isStringTypedExpr argExpr -> $"{argCode}\n    local.tee ${dbgLocal}\n    call $dbg_str\n    local.get ${dbgLocal}"
+        | _ when tryGetExprTypeName env argExpr = Some "float" ->
+            env.UsedHelpers.Add Helpers.floatToString |> ignore
+            $"{argCode}\n    local.tee ${dbgLocal}\n    call ${Helpers.floatToString}\n    call $dbg_str\n    local.get ${dbgLocal}"
         | _ -> $"{argCode}\n    local.tee ${dbgLocal}\n    call $dbg\n    local.get ${dbgLocal}"
     | FunctionCall(name, _, args) ->
         // Check if this is a type constructor call (e.g., Person(...))
@@ -2346,6 +2602,7 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                         match expr with
                         | LiteralExpr(StringLit _) -> "string"
                         | LiteralExpr(IntLit _) -> "int"
+                        | LiteralExpr(FloatLit _) -> "float"
                         | LiteralExpr(BoolLit _) -> "bool"
                         | _ -> "unknown"
 
@@ -3241,6 +3498,8 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
           Helpers.listCons, [ Helpers.alloc ]
           Helpers.recordSet, []
           Helpers.recordCopy, [ Helpers.alloc; Helpers.copyBytes ]
+          Helpers.floatBox, [ Helpers.alloc ]
+          Helpers.floatToString, [ Helpers.alloc ]
           Helpers.listLength, []
           Helpers.listConcat, [ Helpers.listCons ] ]
     let rec closeHelpers (acc: Set<string>) (pending: string list) =

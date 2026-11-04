@@ -439,6 +439,24 @@ let private recordFieldsSoFar (state: InferState) (ty: Ty) : Map<string, Ty> opt
     | TyNominal(_, TyRecord fields, _) -> Some fields
     | _ -> None
 
+/// `ty` as far as the constraints gathered so far determine it; a type variable stays one when nothing does.
+let private resolveSoFar (state: InferState) (ty: Ty) : Ty =
+    match ty with
+    | TyVar _ ->
+        match Unifier.unify state.Constraints with
+        | Ok subst -> Unifier.apply subst ty
+        | Error _ -> ty
+    | _ -> ty
+
+/// Arithmetic and ordering work on `int` and `float`. Without numeric type classes yet, an operation is on
+/// floats when either operand is already known to be one, and defaults to `int` otherwise.
+let private numericOperandType (state: InferState) (leftTy: Ty) (rightTy: Ty) =
+    let isFloat ty =
+        match resolveSoFar state ty with
+        | TyPrimitive "float" -> true
+        | _ -> false
+    if isFloat leftTy || isFloat rightTy then TyPrimitive "float" else numericType
+
 let private argTypesFromExpected (state: InferState) (args: (Identifier * TypeExpr option) list) (expectedInput: Ty) =
     let mutable current = state
     let argTys =
@@ -685,12 +703,12 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                 | BinaryOp(op, _, _) when ["+"; "-"; "*"; "/"] |> List.contains op ->
                     let numericConstrained =
                         constrained
-                        |> addConstraint leftExpr.Type numericType
+                        |> addConstraint leftExpr.Type (numericOperandType constrained leftExpr.Type rightExpr.Type)
                     Ok (mkTypedExpr expr leftExpr.Type None None None, numericConstrained)
                 | BinaryOp(op, _, _) when ["<"; ">"; "<="; ">="] |> List.contains op ->
                     let numericConstrained =
                         constrained
-                        |> addConstraint leftExpr.Type numericType
+                        |> addConstraint leftExpr.Type (numericOperandType constrained leftExpr.Type rightExpr.Type)
                     Ok (mkTypedExpr expr (TyPrimitive "bool") None None None, numericConstrained)
                 | BinaryOp(op, _, _) when ["=="; "!="] |> List.contains op ->
                     Ok (mkTypedExpr expr (TyPrimitive "bool") None None None, constrained)

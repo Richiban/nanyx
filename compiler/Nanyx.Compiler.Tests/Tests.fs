@@ -1084,6 +1084,22 @@ let ``Typecheck leaves the scrutinee union open when a match has a catch-all arm
             "}\n" +
             "def e = if get(1) is #some(v) then v else 0\n")
     Assert.True(result.Diagnostics.IsEmpty, sprintf "%A" result.Diagnostics)
+[<Fact>]
+let ``Typecheck accepts arithmetic and comparison on floats`` () =
+    // #36: `+ - * /` and `< > <= >=` used to pin their operands to int.
+    let ok =
+        Compiler.compile (
+            "def pi = 3.14\n" +
+            "def d = pi * 2.0\n" +
+            "def e: float = 1.5 + 2.5\n" +
+            "def half = { x -> x / 2.0 }\n" +
+            "def big = 2.5 > 1.0\n" +
+            "def sum: (float, float) -> float = { a, b -> a + b }\n")
+    Assert.True(ok.Diagnostics.IsEmpty, sprintf "%A" ok.Diagnostics)
+    let mixed = Compiler.compile "def m = 1 + 2.0"
+    Assert.False(mixed.Diagnostics.IsEmpty, "int + float should not type-check")
+    let stillInt = Compiler.compile "def n: float = 1 + 2"
+    Assert.False(stillInt.Diagnostics.IsEmpty, "int arithmetic is still int")
 
 [<Fact>]
 let ``Typecheck rejects boolean keywords on non-booleans`` () =

@@ -543,6 +543,25 @@ let ``Run - nested record field access`` () =
     // The last line covers #31: a record built through a type constructor at the top level.
     runSource source |> assertRan "dbg: 3\ndbg: 4\ndeep\ndbg: 0\ndbg: 2\n"
 [<Fact>]
+let ``Run - float arithmetic and printing`` () =
+    // Regression: float literals parsed but `pi * 2.0` was "Type mismatch: float vs int" and the backend had
+    // no f64 support at all (#36). Floats are boxed f64 values.
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def half: float -> float = { x -> x / 2.0 }\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  def pi = 3.14\n" +
+        "  def d = pi * 2.0\n" +
+        "  println(\"{d}\")\n" +
+        "  println(\"{2.0 * 2.0} {0.0 - 1.5} {1.0 / 3.0} {half(5.0)} {1234567.25 + 0.0}\")\n" +
+        "  println(if 2.5 > 1.0 and 1.5 <= 1.5 and 0.1 + 0.2 != 0.3 then \"cmp ok\" else \"cmp wrong\")\n" +
+        "  dbg(1.5 + 2.25)\n" +
+        "}\n"
+    runSource source |> assertRan "6.28\n4.0 -1.5 0.333333 2.5 1234567.25\ncmp ok\ndbg: 3.75\n"
+
+[<Fact>]
 let ``Run - boolean keywords not, and, or`` () =
     // #39: the docs make boolean operations keywords; `not` had no spelling at all.
     let source =
