@@ -944,12 +944,16 @@ let useInExpr =
 // Version without trailing whitespace consumption (for use in block contexts)
 
 // Context member access: C(T).field or C(T).field(args) - qualified access to context functions
-// ONLY matches when type parameters are present (parens required)
+// ONLY matches when type parameters are present (parens required). Context names are capitalised, which is
+// what tells `ToString(a).toString(x)` apart from a member of a call's result such as `openFile(path).contents`.
 let contextMemberAccess =
+    let contextName =
+        identifierNoWs >>= fun name ->
+            if Char.IsUpper name.[0] then preturn name else fail "context name (capitalised)"
     // Parse a context type application with required type args: C(T)
-    let contextTypeApply = 
+    let contextTypeApply =
         pipe2
-            identifierNoWs
+            contextName
             (between (pstring "(") (pstring ")") (sepBy1 (ws >>. typeExpr) (pstring "," .>> ws)))
             (fun name args -> TypeApply(name, args))
     // Parse args as tuple-like: (expr, expr, ...)

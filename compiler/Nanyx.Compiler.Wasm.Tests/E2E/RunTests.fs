@@ -486,6 +486,9 @@ let ``Run - tuple destructuring with def`` () =
 [<Fact>]
 let ``Run - with record update`` () =
     // Regression: `alice with age = 31` was a parse error (#40).
+[<Fact>]
+let ``Run - member access on the result of a call`` () =
+    // Regression: `shift(...)` returned a Point but `q.x` on it was "Record 'q' has no member 'x'" (#60).
     let source =
         "import nanyx/console\n" +
         "\n" +
@@ -500,6 +503,18 @@ let ``Run - with record update`` () =
         "  println(\"{shiftedX(Point(x = 3, y = 4))}\")\n" +
         "}\n"
     runSource source |> assertRan "31 30 Alice 32\n4\n"
+[<Fact>]
+        "def shift: Point -> Point = { q -> Point(x = q.x + 1, y = q.y + 1) }\n" +
+        "def pair: (string, string) -> (first: string, second: string) = { a, b -> (first = a, second = b) }\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  def q = shift(Point(x = 3, y = 4))\n" +
+        "  println(\"{q.x} {q.y} {shift(q).x}\")\n" +
+        "  def r = shift(shift(q))\n" +
+        "  println(\"{r.x} {r.y}\")\n" +
+        "  println(pair(\"a\", \"b\").second ++ pair(\"c\", \"d\").first)\n" +
+        "}\n"
+    runSource source |> assertRan "4 5 5\n6 7\nbc\n"
 
 [<Fact>]
 let ``Run - nested record field access`` () =
