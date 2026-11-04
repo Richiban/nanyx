@@ -7,6 +7,17 @@ open Parser.Program
 
 type private ContextFn = string * int * int
 
+/// The module's function table (`$ctx_table`), as far as functions used as values are concerned: a top-level
+/// function referenced without being called, or a lifted lambda, gets a slot here and is called through
+/// `call_indirect`. Shared by every function of a module and read when the table is rendered.
+type private FunctionTable =
+    { /// Function name -> (WebAssembly name, slot, arity).
+      Values: System.Collections.Generic.Dictionary<string, ContextFn>
+      /// The next free slot; starts after the slots the context machinery assigned.
+      mutable NextSlot: int
+      /// The arities of every indirect call made through a local, so a `$ctx_fn_N` type exists for each.
+      IndirectArities: System.Collections.Generic.HashSet<int> }
+
 type private TranspileEnv =
     { KnownFunctions: Set<string>
       FunctionArities: Map<string, int>
@@ -36,7 +47,8 @@ type private TranspileEnv =
       /// not only on locals the backend saw being assigned a record literal.
       ValueTys: Map<string, Ty>
       /// The runtime helpers (see `runtimeHelpers`) the lowered code calls; shared by every function of a module.
-      UsedHelpers: System.Collections.Generic.HashSet<string> }
+      UsedHelpers: System.Collections.Generic.HashSet<string>
+      FunctionTable: FunctionTable }
 
 /// The names of the WebAssembly helper functions the backend emits on demand (see `runtimeHelpers`).
 module private Helpers =
@@ -474,6 +486,16 @@ let private flattenCallArgs (args: Expression list) =
     match args with
     | [TupleExpr items] -> items
     | _ -> args
+
+/// The function-table slot of a top-level function used as a value, assigning one on first use.
+let private functionValueSlot (env: TranspileEnv) (name: string) (arity: int) : int =
+    match env.FunctionTable.Values.TryGetValue name with
+    | true, ctxFn -> ctxFnSlot ctxFn
+    | _ ->
+        let slot = env.FunctionTable.NextSlot
+        env.FunctionTable.NextSlot <- slot + 1
+        env.FunctionTable.Values.[name] <- (sanitizeIdentifier name, slot, arity)
+        slot
 
 let rec private collectExprLocalNames (expr: Expression) : string list =
     match expr with
@@ -1713,7 +1735,16 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
     | IdentifierExpr(name, _) ->
         match env.Locals |> Map.tryFind name with
         | Some localName -> $"local.get ${localName}"
-        | None when env.KnownFunctions.Contains name -> $"call ${sanitizeIdentifier name}"
+        | None when env.KnownFunctions.Contains name ->
+            match env.FunctionArities |> Map.tryFind name with
+            | Some arity when arity > 0 ->
+                // A function with parameters, referenced rather than called: the value is its table slot.
+                if env.FunctionContextRequirements.ContainsKey name then
+                    failwith $"Unsupported for WASM MVP backend: '{name}' requires contexts and cannot be used as a value"
+                $"i32.const {functionValueSlot env name arity}"
+            | _ ->
+                // A top-level value (or a parameterless function): evaluate it.
+                $"call ${sanitizeIdentifier name}"
         | None -> failwith $"Unsupported identifier for WASM MVP backend: {name}"
     | TagExpr(name, None) ->
         match env.TagIds |> Map.tryFind name with
@@ -2117,6 +2148,12 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                     $"{slotCode}\n    call_indirect (type $ctx_fn_{ctxFnArity ctxFn})"
                 else
                     $"{prefix}\n    {slotCode}\n    call_indirect (type $ctx_fn_{ctxFnArity ctxFn})"
+            | None when env.Locals.ContainsKey name ->
+                // Calling a parameter or local that holds a function value: its value is a table slot.
+                env.FunctionTable.IndirectArities.Add flatArgs.Length |> ignore
+                let callee = $"local.get ${env.Locals.[name]}\n    call_indirect (type $ctx_fn_{flatArgs.Length})"
+                let prefix = argsCode |> String.concat "\n    "
+                if prefix = "" then callee else $"{prefix}\n    {callee}"
             | None when NyxCompiler.Intrinsics.isIntrinsic name ->
                 // A compiler intrinsic (only the standard library can call these): a runtime helper of the same
                 // name. Every Nanyx expression leaves an i32, so a unit result is materialised as 0.
@@ -2323,6 +2360,205 @@ let private defBodyAndParameters (expr: Expression) =
     | Lambda(args, body) -> args, body
     | _ -> [], expr
 
+/// Lambda lifting. A lambda with parameters that appears as a value (a call or pipe argument, the right-hand
+/// side of a local `def`, ...) becomes a top-level function `__lambda_N`, and the expression becomes a reference
+/// to that name, so the rest of the backend only ever meets lambdas as definitions. Only a lambda that captures
+/// nothing from its enclosing function is lifted; a capturing one is left in place and reported as unsupported
+/// when it is lowered (closures are not supported yet).
+module private LambdaLifting =
+    /// Every name an expression refers to: identifiers, callees and pipe targets.
+    let rec private referencedNames (expr: Expression) : string list =
+        match expr with
+        | IdentifierExpr(name, _) -> [ name ]
+        | FunctionCall(name, _, args) -> name :: (args |> List.collect referencedNames)
+        | Pipe(value, name, _, args) -> name :: referencedNames value @ (args |> List.collect referencedNames)
+        | Lambda(_, body) -> referencedNames body
+        | BinaryOp(_, left, right) -> referencedNames left @ referencedNames right
+        | IfExpr(cond, thenExpr, elseExpr) -> referencedNames cond @ referencedNames thenExpr @ referencedNames elseExpr
+        | Block statements -> statements |> List.collect referencedNamesStatement
+        | Match(values, arms) ->
+            (values |> List.collect referencedNames)
+            @ (arms |> List.collect (fun (patterns, body) -> (patterns |> List.collect referencedNamesPattern) @ referencedNames body))
+        | TupleExpr items
+        | ListExpr items -> items |> List.collect referencedNames
+        | RecordExpr fields ->
+            fields |> List.collect (function NamedField(_, value) | PositionalField value -> referencedNames value)
+        | TagExpr(_, payload) -> payload |> Option.map referencedNames |> Option.defaultValue []
+        | MemberAccess(inner, _, _) -> referencedNames inner
+        | UseIn(binding, body) -> referencedNamesBinding binding @ referencedNames body
+        | WorkflowBindExpr(_, value)
+        | WorkflowReturnExpr value -> referencedNames value
+        | InterpolatedString parts ->
+            parts |> List.collect (function StringExpr value -> referencedNames value | StringText _ -> [])
+        | ContextMemberCall(_, _, args) -> args |> List.collect referencedNames
+        | ContextMemberAccess _
+        | UnitExpr
+        | LiteralExpr _ -> []
+
+    and private referencedNamesStatement (statement: Statement) : string list =
+        match statement with
+        | DefStatement(_, _, _, rhs) -> referencedNames rhs
+        | ExprStatement value -> referencedNames value
+        | UseStatement binding -> referencedNamesBinding binding
+        | ImportStatement _
+        | TypeDefStatement _ -> []
+
+    and private referencedNamesBinding (binding: UseBinding) : string list =
+        match binding with
+        | UseValue value
+        | UseContextInstance(_, value) -> referencedNames value
+
+    and private referencedNamesPattern (pattern: Pattern) : string list =
+        match pattern with
+        | GuardPattern(_, value) -> referencedNames value
+        | RangePattern(startValue, endValue) -> referencedNames startValue @ referencedNames endValue
+        | TagPattern(_, Some payload) -> referencedNamesPattern payload
+        | TuplePattern patterns
+        | ListPattern(patterns, _) -> patterns |> List.collect referencedNamesPattern
+        | ListSplatMiddle(before, after) -> (before @ after) |> List.collect referencedNamesPattern
+        | RecordPattern(_, patterns) -> patterns |> List.collect referencedNamesPattern
+        | RecordMemberPattern members -> members |> List.collect (snd >> referencedNamesPattern)
+        | TagPattern(_, None)
+        | LiteralPattern _
+        | IdentifierPattern _
+        | WildcardPattern
+        | ElsePattern -> []
+
+    /// Every name a pattern binds.
+    let rec private boundNamesPattern (pattern: Pattern) : string list =
+        match pattern with
+        | IdentifierPattern name -> [ name ]
+        | TagPattern(_, Some payload) -> boundNamesPattern payload
+        | TuplePattern patterns -> patterns |> List.collect boundNamesPattern
+        | ListPattern(patterns, rest) ->
+            (patterns |> List.collect boundNamesPattern) @ (rest |> Option.map boundNamesPattern |> Option.defaultValue [])
+        | ListSplatMiddle(before, after) -> (before @ after) |> List.collect boundNamesPattern
+        | RecordPattern(_, patterns) -> patterns |> List.collect boundNamesPattern
+        | RecordMemberPattern members -> members |> List.collect (fun (name, p) -> name :: boundNamesPattern p)
+        | TagPattern(_, None)
+        | LiteralPattern _
+        | GuardPattern _
+        | RangePattern _
+        | WildcardPattern
+        | ElsePattern -> []
+
+    /// Every name bound anywhere inside an expression: local defs, lambda parameters and pattern variables.
+    /// (An over-approximation of what a nested lambda could capture, which errs on the side of not lifting.)
+    let rec private boundNames (expr: Expression) : string list =
+        match expr with
+        | Lambda(args, body) -> (args |> List.map fst) @ boundNames body
+        | Block statements ->
+            statements
+            |> List.collect (function
+                | DefStatement(_, name, _, rhs) -> name :: boundNames rhs
+                | ExprStatement value -> boundNames value
+                | UseStatement _
+                | ImportStatement _
+                | TypeDefStatement _ -> [])
+        | Match(values, arms) ->
+            (values |> List.collect boundNames)
+            @ (arms |> List.collect (fun (patterns, body) -> (patterns |> List.collect boundNamesPattern) @ boundNames body))
+        | FunctionCall(_, _, args)
+        | ContextMemberCall(_, _, args) -> args |> List.collect boundNames
+        | Pipe(value, _, _, args) -> boundNames value @ (args |> List.collect boundNames)
+        | BinaryOp(_, left, right) -> boundNames left @ boundNames right
+        | IfExpr(cond, thenExpr, elseExpr) -> boundNames cond @ boundNames thenExpr @ boundNames elseExpr
+        | TupleExpr items
+        | ListExpr items -> items |> List.collect boundNames
+        | RecordExpr fields -> fields |> List.collect (function NamedField(_, value) | PositionalField value -> boundNames value)
+        | TagExpr(_, payload) -> payload |> Option.map boundNames |> Option.defaultValue []
+        | MemberAccess(inner, _, _) -> boundNames inner
+        | UseIn(_, body) -> boundNames body
+        | WorkflowBindExpr(name, value) -> name :: boundNames value
+        | WorkflowReturnExpr value -> boundNames value
+        | InterpolatedString parts -> parts |> List.collect (function StringExpr value -> boundNames value | StringText _ -> [])
+        | ContextMemberAccess _
+        | UnitExpr
+        | LiteralExpr _
+        | IdentifierExpr _ -> []
+
+    /// Lifts the liftable lambdas of a module into top-level definitions appended at the end.
+    let lift (module': Module) : Module =
+        let lifted = System.Collections.Generic.List<TopLevelItem>()
+        let mutable counter = 0
+
+        // `scope` is every name the enclosing function binds; a lambda referring to one of them captures it.
+        let rec liftExpr (scope: Set<string>) (expr: Expression) : Expression =
+            let recur = liftExpr scope
+            match expr with
+            | Lambda(args, body) when not args.IsEmpty ->
+                let parameterNames = args |> List.map fst |> Set.ofList
+                let innerScope = Set.union parameterNames (boundNames body |> Set.ofList)
+                let liftedBody = liftExpr innerScope body
+                let free =
+                    referencedNames liftedBody
+                    |> Set.ofList
+                    |> fun names -> Set.difference names innerScope
+                if Set.intersect free scope |> Set.isEmpty then
+                    let name = $"__lambda_{counter}"
+                    counter <- counter + 1
+                    lifted.Add(Def (ValueDef(false, name, None, Lambda(args, liftedBody))))
+                    IdentifierExpr(name, None)
+                else
+                    Lambda(args, liftedBody)
+            | Lambda(args, body) -> Lambda(args, recur body)
+            | FunctionCall(name, range, args) -> FunctionCall(name, range, args |> List.map recur)
+            | Pipe(value, name, range, args) -> Pipe(recur value, name, range, args |> List.map recur)
+            | BinaryOp(op, left, right) -> BinaryOp(op, recur left, recur right)
+            | IfExpr(cond, thenExpr, elseExpr) -> IfExpr(recur cond, recur thenExpr, recur elseExpr)
+            | Block statements ->
+                statements
+                |> List.map (function
+                    | DefStatement(isExport, name, typeOpt, rhs) -> DefStatement(isExport, name, typeOpt, recur rhs)
+                    | ExprStatement value -> ExprStatement(recur value)
+                    // `use` bindings are hoisted by the context machinery; leave them to it.
+                    | other -> other)
+                |> Block
+            | Match(values, arms) -> Match(values |> List.map recur, arms |> List.map (fun (patterns, body) -> patterns, recur body))
+            | TupleExpr items -> TupleExpr(items |> List.map recur)
+            | ListExpr items -> ListExpr(items |> List.map recur)
+            | RecordExpr fields ->
+                fields
+                |> List.map (function
+                    // A record of lambdas is how a context instance is written (`use (f = { ... })`), and the
+                    // context machinery hoists those lambdas itself: leave them in place, lift inside only.
+                    | NamedField(name, Lambda(args, body)) ->
+                        let innerScope = Set.union (args |> List.map fst |> Set.ofList) (boundNames body |> Set.ofList)
+                        NamedField(name, Lambda(args, liftExpr (Set.union scope innerScope) body))
+                    | NamedField(name, value) -> NamedField(name, recur value)
+                    | PositionalField value -> PositionalField(recur value))
+                |> RecordExpr
+            | TagExpr(name, payload) -> TagExpr(name, payload |> Option.map recur)
+            | MemberAccess(inner, field, range) -> MemberAccess(recur inner, field, range)
+            | UseIn(binding, body) -> UseIn(binding, recur body)
+            | WorkflowBindExpr(name, value) -> WorkflowBindExpr(name, recur value)
+            | WorkflowReturnExpr value -> WorkflowReturnExpr(recur value)
+            | InterpolatedString parts ->
+                parts
+                |> List.map (function
+                    | StringExpr value -> StringExpr(recur value)
+                    | text -> text)
+                |> InterpolatedString
+            | ContextMemberCall(ctx, name, args) -> ContextMemberCall(ctx, name, args |> List.map recur)
+            | ContextMemberAccess _
+            | UnitExpr
+            | LiteralExpr _
+            | IdentifierExpr _ -> expr
+
+        let liftItem (item: TopLevelItem) : TopLevelItem =
+            match item with
+            // A definition's own lambda is the function being defined; lift inside its body only.
+            | Def (ValueDef(isExport, name, typeOpt, Lambda(args, body))) ->
+                let scope = Set.union (args |> List.map fst |> Set.ofList) (boundNames body |> Set.ofList)
+                Def (ValueDef(isExport, name, typeOpt, Lambda(args, liftExpr scope body)))
+            | Def (ValueDef(isExport, name, typeOpt, rhs)) ->
+                Def (ValueDef(isExport, name, typeOpt, liftExpr (boundNames rhs |> Set.ofList) rhs))
+            | Expr expr -> Expr (liftExpr (boundNames expr |> Set.ofList) expr)
+            | other -> other
+
+        let items = module' |> List.map liftItem
+        items @ List.ofSeq lifted
+
 let private extractTypeLayouts (module': Module) : Map<string, string list> * Map<string, Map<string, string>> =
     let rec typeExprToTypeString (t: TypeExpr) : string =
         match t with
@@ -2387,6 +2623,7 @@ let private getLayoutFromTypeExpr (typeLayouts: Map<string, string list>) (typeF
     | _ -> None
 
 let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map<string, TypedExpr>) (typedValueTypes: Map<string, string>) (typedReturnTypes: Map<string, string>) (typedTopLevelTys: Map<string, Ty>) : string =
+    let module' = LambdaLifting.lift module'
     let defs =
         module'
         |> List.choose (function
@@ -2508,6 +2745,12 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                 contextFnList <- contextFnList @ [ ctxFn ]
                 memberName, ctxFn))
         |> Map.ofList
+
+    // Functions used as values take the table slots after the ones the context machinery assigned.
+    let functionTable: FunctionTable =
+        { Values = System.Collections.Generic.Dictionary<string, ContextFn>()
+          NextSlot = nextContextIndex
+          IndirectArities = System.Collections.Generic.HashSet<int>() }
 
     // The result types the backend can read off definitions' annotations, plus what inference told it.
     let functionReturnTypes =
@@ -2779,7 +3022,8 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                   ParamTypes = initialParamTypes
                   ValueTypes = initialValueTypes
                   ValueTys = valueTys
-                  UsedHelpers = usedHelpers }
+                  UsedHelpers = usedHelpers
+                  FunctionTable = functionTable }
             let fn = sanitizeIdentifier name
             
             // Build parameter signature including context params
@@ -2902,7 +3146,8 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                   ParamTypes = Map.empty
                   ValueTypes = typedValueTypes
                   ValueTys = typedTopLevelTys
-                  UsedHelpers = usedHelpers }
+                  UsedHelpers = usedHelpers
+                  FunctionTable = functionTable }
             let bodyCode =
                 topLevelExprs
                 |> List.map (fun expr -> $"{transpileExpression env expr}\n    drop")
@@ -3137,9 +3382,11 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
         else
             ""
 
+    // Every function body has been rendered by now, so the function-value slots are final: add them to the table.
+    contextFnList <- contextFnList @ (functionTable.Values.Values |> Seq.toList)
+
     let contextTypeDefs =
-        contextFnList
-        |> List.map ctxFnArity
+        (contextFnList |> List.map ctxFnArity) @ (functionTable.IndirectArities |> Seq.toList)
         |> Set.ofList
         |> Set.toList
         |> List.sort
