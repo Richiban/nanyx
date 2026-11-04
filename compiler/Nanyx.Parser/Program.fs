@@ -961,9 +961,16 @@ opp.AddOperator(InfixOperator(">=", ws, 4, Associativity.Left, fun x y -> Binary
 opp.AddOperator(InfixOperator("==", ws, 3, Associativity.Left, fun x y -> BinaryOp("==", x, y)))
 opp.AddOperator(InfixOperator("!=", ws, 3, Associativity.Left, fun x y -> BinaryOp("!=", x, y)))
 
-// Logical operators (lowest precedence)
-opp.AddOperator(InfixOperator("&&", ws, 2, Associativity.Left, fun x y -> BinaryOp("&&", x, y)))
-opp.AddOperator(InfixOperator("||", ws, 1, Associativity.Left, fun x y -> BinaryOp("||", x, y)))
+// Boolean operations are the keywords `not`, `and` and `or` (lowest precedence; see the operators page of
+// the docs). A keyword operator must not swallow the start of an identifier such as `order` or `android`.
+// `not` binds tighter than every infix operator, so `not a == b` is `(not a) == b`, as `!` does elsewhere.
+// The symbolic `&&` and `||` predate the keywords and are kept as aliases that build the same tree.
+let private keywordOperatorEnd = notFollowedBy (satisfy (fun c -> Char.IsLetterOrDigit c || c = '_')) >>. ws
+opp.AddOperator(PrefixOperator("not", keywordOperatorEnd, 8, true, fun x -> FunctionCall("not", None, [ x ])))
+opp.AddOperator(InfixOperator("and", keywordOperatorEnd, 2, Associativity.Left, fun x y -> BinaryOp("and", x, y)))
+opp.AddOperator(InfixOperator("or", keywordOperatorEnd, 1, Associativity.Left, fun x y -> BinaryOp("or", x, y)))
+opp.AddOperator(InfixOperator("&&", ws, 2, Associativity.Left, fun x y -> BinaryOp("and", x, y)))
+opp.AddOperator(InfixOperator("||", ws, 1, Associativity.Left, fun x y -> BinaryOp("or", x, y)))
 
 // Note: Comma is NOT an operator in the OPP
 // Commas are handled explicitly in tuple/record literals and function calls
