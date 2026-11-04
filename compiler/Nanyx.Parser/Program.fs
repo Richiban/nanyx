@@ -948,6 +948,9 @@ opp.AddOperator(InfixOperator("%", ws, 7, Associativity.Left, fun x y -> BinaryO
 opp.AddOperator(InfixOperator("+", ws, 6, Associativity.Left, fun x y -> BinaryOp("+", x, y)))
 opp.AddOperator(InfixOperator("-", ws, 6, Associativity.Left, fun x y -> BinaryOp("-", x, y)))
 
+// Concatenation (strings, lists): binds looser than arithmetic, tighter than comparison
+opp.AddOperator(InfixOperator("++", ws, 5, Associativity.Right, fun x y -> BinaryOp("++", x, y)))
+
 // Comparison operators (lower precedence)
 opp.AddOperator(InfixOperator("<", ws, 4, Associativity.Left, fun x y -> BinaryOp("<", x, y)))
 opp.AddOperator(InfixOperator(">", ws, 4, Associativity.Left, fun x y -> BinaryOp(">", x, y)))
@@ -993,6 +996,7 @@ oppInline.AddOperator(InfixOperator("/", wsInline, 7, Associativity.Left, fun x 
 
 oppInline.AddOperator(InfixOperator("+", wsInline, 6, Associativity.Left, fun x y -> BinaryOp("+", x, y)))
 oppInline.AddOperator(InfixOperator("-", wsInline, 6, Associativity.Left, fun x y -> BinaryOp("-", x, y)))
+oppInline.AddOperator(InfixOperator("++", wsInline, 5, Associativity.Right, fun x y -> BinaryOp("++", x, y)))
 
 oppInline.AddOperator(InfixOperator("<", wsInline, 4, Associativity.Left, fun x y -> BinaryOp("<", x, y)))
 oppInline.AddOperator(InfixOperator(">", wsInline, 4, Associativity.Left, fun x y -> BinaryOp(">", x, y)))
@@ -1066,7 +1070,8 @@ do
     
     // Shorthand lambda: { * } means { x, y -> x * y }
     let shorthandBinaryOp =
-        let operators = ["*"; "/"; "+"; "-"; "<"; ">"; "<="; ">="; "=="; "!="]
+        // "++" before "+" so the longer operator wins
+        let operators = ["*"; "/"; "++"; "+"; "-"; "<"; ">"; "<="; ">="; "=="; "!="]
         choice (operators |> List.map (fun op ->
             pstring op >>. ws >>. notFollowedBy (skipAnyOf "0123456789.\"'([{") >>% Lambda([("x", None); ("y", None)], BinaryOp(op, IdentifierExpr("x", None), IdentifierExpr("y", None)))
         ))
@@ -1075,7 +1080,7 @@ do
     // Also supports comparison operators: { > 10 } means { x -> x > 10 }
     let shorthandUnaryOp =
         let operators = [
-            ("*", "*"); ("/", "/"); ("+", "+"); ("-", "-");
+            ("*", "*"); ("/", "/"); ("++", "++"); ("+", "+"); ("-", "-");
             ("<=", "<="); (">=", ">="); ("<", "<"); (">", ">");
             ("==", "=="); ("!=", "!=")
         ]

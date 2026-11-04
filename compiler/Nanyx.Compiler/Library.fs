@@ -1,4 +1,4 @@
-﻿namespace NyxCompiler
+namespace NyxCompiler
 
 open System
 open System.IO
@@ -16,6 +16,25 @@ type CompileResult =
     { Phase: CompilationPhase
       Diagnostics: Diagnostic list
       Typed: TypedModule option }
+
+/// Where a module's source came from, which decides how its imports are resolved and what is in scope.
+type private ModuleOrigin =
+    /// A file on disk: imports by path are relative to its directory.
+    | SourceFile of fullPath: string
+    /// A module of the embedded standard library, checkedModule with the compiler intrinsics in scope.
+    | StandardLibraryModule of name: string
+    /// Source given directly (e.g. by tests): only standard-library imports can be resolved.
+    | InMemory
+
+/// A type-checkedModule module together with what an importer needs from it.
+type private CheckedModule =
+    { Typed: TypedModule
+      /// The module's own items (imports removed), as the backend will see them.
+      Own: Module
+      /// Items inlined from the modules it imports, already renamed and ready for the backend.
+      Inlined: TopLevelItem list
+      /// The declared module name, if any.
+      Name: string option }
 
 module Compiler =
     let private normalizeSource (source: string) =
@@ -92,31 +111,34 @@ module Compiler =
             | _ -> None)
         |> List.collect id
 
-    let private exportedValueDefs (module': Module) =
-        module'
-        |> List.choose (function
-            | Def (ValueDef(true, name, typeOpt, expr)) -> Some (name, typeOpt, expr)
-            | _ -> None)
-
     let private removeImportStatements (module': Module) =
         module'
         |> List.filter (function
             | Import _ -> false
             | _ -> true)
 
-    let private renameQualifiedMembersInExpr (alias: string) (expr: Expression) : Expression =
+    let private declaredModuleName (module': Module) =
+        module'
+        |> List.tryPick (function
+            | ModuleDecl name -> Some name
+            | _ -> None)
+
+    /// Renames every reference to a name in `renames` throughout an expression. Used when a module is
+    /// inlined into its importer, so that its definitions keep pointing at each other under their new names.
+    /// (Lambda parameters and local definitions that shadow a renamed name are not accounted for.)
+    let private renameReferencesInExpr (renames: Map<string, string>) (expr: Expression) : Expression =
+        let rename (name: string) = renames |> Map.tryFind name |> Option.defaultValue name
         let rec mapExpr current =
             match current with
-            | MemberAccess(IdentifierExpr(baseName, rangeOpt), fieldName, memberRangeOpt) when baseName = alias ->
-                IdentifierExpr($"{alias}.{fieldName}", memberRangeOpt |> Option.orElse rangeOpt)
+            | IdentifierExpr(name, rangeOpt) -> IdentifierExpr(rename name, rangeOpt)
             | FunctionCall(name, rangeOpt, args) ->
-                FunctionCall(name, rangeOpt, args |> List.map mapExpr)
+                FunctionCall(rename name, rangeOpt, args |> List.map mapExpr)
             | Lambda(parameters, body) ->
                 Lambda(parameters, mapExpr body)
             | BinaryOp(op, left, right) ->
                 BinaryOp(op, mapExpr left, mapExpr right)
             | Pipe(value, name, rangeOpt, args) ->
-                Pipe(mapExpr value, name, rangeOpt, args |> List.map mapExpr)
+                Pipe(mapExpr value, rename name, rangeOpt, args |> List.map mapExpr)
             | Block statements ->
                 Block(statements |> List.map mapStatement)
             | Match(values, arms) ->
@@ -138,11 +160,7 @@ module Compiler =
             | ContextMemberCall(ctxType, memberName, args) ->
                 ContextMemberCall(ctxType, memberName, args |> List.map mapExpr)
             | UseIn(binding, body) ->
-                let mappedBinding =
-                    match binding with
-                    | UseValue valueExpr -> UseValue(mapExpr valueExpr)
-                    | UseContextInstance(ctxType, valueExpr) -> UseContextInstance(ctxType, mapExpr valueExpr)
-                UseIn(mappedBinding, mapExpr body)
+                UseIn(mapBinding binding, mapExpr body)
             | InterpolatedString parts ->
                 InterpolatedString(
                     parts
@@ -153,31 +171,56 @@ module Compiler =
             | WorkflowReturnExpr value -> WorkflowReturnExpr(mapExpr value)
             | ContextMemberAccess _
             | UnitExpr
-            | LiteralExpr _
-            | IdentifierExpr _ -> current
+            | LiteralExpr _ -> current
+        and mapBinding binding =
+            match binding with
+            | UseValue valueExpr -> UseValue(mapExpr valueExpr)
+            | UseContextInstance(ctxType, valueExpr) -> UseContextInstance(ctxType, mapExpr valueExpr)
         and mapStatement statement =
             match statement with
             | DefStatement(isExport, name, typeOpt, value) -> DefStatement(isExport, name, typeOpt, mapExpr value)
             | ExprStatement value -> ExprStatement(mapExpr value)
-            | UseStatement binding ->
-                match binding with
-                | UseValue valueExpr -> UseStatement(UseValue(mapExpr valueExpr))
-                | UseContextInstance(ctxType, valueExpr) -> UseStatement(UseContextInstance(ctxType, mapExpr valueExpr))
+            | UseStatement binding -> UseStatement(mapBinding binding)
             | ImportStatement _
             | TypeDefStatement _ -> statement
         mapExpr expr
 
-    let private importedValueDefsForModule (item: ImportItem) (typed: TypedModule) : Module =
-        let exportedDefs = exportedValueDefs typed.Module
-        match item.Alias with
-        | None ->
-            exportedDefs
-            |> List.map (fun (name, typeOpt, expr) -> Def (ValueDef(false, name, typeOpt, expr)))
-        | Some qualifier ->
-            exportedDefs
-            |> List.map (fun (name, typeOpt, expr) ->
-                let renamedExpr = renameQualifiedMembersInExpr qualifier expr
-                Def (ValueDef(false, $"{qualifier}.{name}", typeOpt, renamedExpr)))
+    /// The items an importer inlines for the backend from a module it imports: the module's own value
+    /// definitions and type definitions (plus whatever that module inlined itself). Exported definitions keep
+    /// their names, or take the import's alias as a qualifier; private ones are qualified with the module's own
+    /// name so they cannot collide with anything in the importer.
+    let private inlinedItemsForImport (item: ImportItem) (checkedModule: CheckedModule) : TopLevelItem list =
+        let qualifier = importQualifier item
+        let moduleName =
+            checkedModule.Name
+            |> Option.map sanitizeIdentifier
+            |> Option.defaultValue "import"
+        let renames =
+            checkedModule.Own
+            |> List.choose (function
+                | Def (ValueDef(true, name, _, _)) ->
+                    qualifier |> Option.map (fun q -> name, $"{q}.{name}")
+                | Def (ValueDef(false, name, _, _)) -> Some (name, $"{moduleName}.{name}")
+                | _ -> None)
+            |> Map.ofList
+        let rename (name: string) = renames |> Map.tryFind name |> Option.defaultValue name
+        let ownItems =
+            checkedModule.Own
+            |> List.choose (function
+                | Def (ValueDef(_, name, typeOpt, expr)) ->
+                    Some (Def (ValueDef(false, rename name, typeOpt, renameReferencesInExpr renames expr)))
+                | Def (TypeDef _) as typeDef -> Some typeDef
+                | _ -> None)
+        checkedModule.Inlined @ ownItems
+
+    /// Keeps the first definition of each name, so a module inlined along two import paths appears once.
+    let private distinctDefinitions (items: TopLevelItem list) : TopLevelItem list =
+        let seen = System.Collections.Generic.HashSet<string>()
+        items
+        |> List.filter (function
+            | Def (ValueDef(_, name, _, _)) -> seen.Add("value:" + name)
+            | Def (TypeDef(name, _, _, _)) -> seen.Add("type:" + name)
+            | _ -> true)
 
     let private exportedValueNames (module': Module) =
         module'
@@ -358,13 +401,25 @@ module Compiler =
     /// The attribute that marks a definition as the program's entry point: `@entry def main = { ... }`.
     let entryAttribute = "entry"
 
+    /// The standard-library module the entry point runs inside: `@entry` is called by the runtime with its
+    /// `Console` instance, so the module that declares the entry point sees `nanyx/console` without importing it.
+    let entryContextModule = StandardLibrary.importPrefix + "console"
+
+    let private importsModule (moduleName: string) (module': Module) =
+        collectImports module'
+        |> List.exists (fun item ->
+            match item.Source with
+            | ModuleImport name -> name = moduleName
+            | PathImport _ -> false)
+
     /// Resolves `@attribute` lines. `@entry` on a definition appends a call to that definition at the end
-    /// of the module, so it runs as the program's start function; any other attribute, or an attribute
-    /// that does not precede a value definition, is an error.
+    /// of the module, so it runs as the program's start function, and imports `nanyx/console` for the module
+    /// (the context the runtime supplies to the entry point); any other attribute, or an attribute that does
+    /// not precede a value definition, is an error.
     let applyAttributes (module': Module) : Result<Module, Diagnostic list> =
         let rec loop (remaining: TopLevelItem list) (acc: TopLevelItem list) (entryCalls: TopLevelItem list) (errors: Diagnostic list) =
             match remaining with
-            | [] -> List.rev acc @ List.rev entryCalls, List.rev errors
+            | [] -> List.rev acc, List.rev entryCalls, List.rev errors
             | Attribute name :: rest when name <> entryAttribute ->
                 loop rest acc entryCalls (Diagnostics.error $"Unknown attribute '@{name}'" :: errors)
             | Attribute _ :: (Def (ValueDef(_, name, _, _)) as def) :: rest ->
@@ -373,236 +428,193 @@ module Compiler =
                 loop rest acc entryCalls (Diagnostics.error $"Attribute '@{name}' must be followed by a definition" :: errors)
             | item :: rest -> loop rest (item :: acc) entryCalls errors
         match loop module' [] [] [] with
-        | items, [] -> Ok items
-        | _, errors -> Error errors
+        | items, entryCalls, [] ->
+            let entryImport =
+                if not entryCalls.IsEmpty && not (importsModule entryContextModule items) then
+                    [ Import [ { Source = ModuleImport entryContextModule; Alias = None } ] ]
+                else
+                    []
+            Ok (entryImport @ items @ entryCalls)
+        | _, _, errors -> Error errors
 
-    let rec private typecheckFile (filePath: string) (visited: Set<string>) : Result<TypedModule, Diagnostic list> =
-        let fullPath = Path.GetFullPath filePath
-        if visited.Contains fullPath then
-            Error [ Diagnostics.error ($"Import cycle detected for {fullPath}") ]
+    /// Applies the substitution found by unification to everything inference produced.
+    let private resolveTypes (subst: Subst) (types: Map<string, Ty>) (typeDefs: Map<string, TypeDefInfo>) (items: TypedTopLevelItem list) =
+        let resolvedTypes = types |> Map.map (fun _ ty -> Unifier.apply subst ty)
+        let resolvedTypeDefs =
+            typeDefs
+            |> Map.map (fun _ info -> { info with Underlying = Unifier.apply subst info.Underlying })
+        let rec applyTypedExpr (typedExpr: TypedExpr) =
+            { typedExpr with
+                Type = Unifier.apply subst typedExpr.Type
+                Body = typedExpr.Body |> Option.map applyTypedExpr
+                Statements = typedExpr.Statements |> Option.map (List.map applyTypedStatement)
+                MatchArms = typedExpr.MatchArms |> Option.map (List.map applyTypedMatchArm) }
+        and applyTypedStatement statement =
+            match statement with
+            | TypedDefStatement(isExport, name, typeOpt, expr) ->
+                TypedDefStatement(isExport, name, typeOpt, applyTypedExpr expr)
+            | TypedExprStatement expr -> TypedExprStatement (applyTypedExpr expr)
+            | TypedUseStatement(binding, exprOpt) ->
+                TypedUseStatement(binding, exprOpt |> Option.map applyTypedExpr)
+            | TypedImportStatement _
+            | TypedTypeDefStatement _ -> statement
+        and applyTypedMatchArm (patterns, expr) =
+            let mappedPatterns =
+                patterns |> List.map (fun pattern -> { pattern with Type = Unifier.apply subst pattern.Type })
+            (mappedPatterns, applyTypedExpr expr)
+        let resolvedItems =
+            items
+            |> List.map (fun item ->
+                match item with
+                | TypedExprItem expr -> TypedExprItem (applyTypedExpr expr)
+                | TypedDef (TypedValueDef(isExport, name, typeOpt, expr)) ->
+                    TypedDef (TypedValueDef(isExport, name, typeOpt, applyTypedExpr expr))
+                | TypedDef (TypedTypeDef _)
+                | TypedImport _
+                | TypedModuleDecl _ -> item)
+        resolvedTypes, resolvedTypeDefs, resolvedItems
+
+    /// The module as the backend will see it: the typed items turned back into syntax (so that, for
+    /// example, pipes to attached functions carry their resolved names), without import statements.
+    let private moduleFromTypedItems (items: TypedTopLevelItem list) : Module =
+        items
+        |> List.choose (function
+            | TypedModuleDecl name -> Some (ModuleDecl name)
+            | TypedImport _ -> None
+            | TypedDef (TypedValueDef(isExport, name, typeOpt, expr)) ->
+                Some (Def (ValueDef(isExport, name, typeOpt, expr.Expr)))
+            | TypedDef (TypedTypeDef(name, modifiers, parameters, body)) ->
+                Some (Def (TypeDef(name, modifiers, parameters, body)))
+            | TypedExprItem expr -> Some (Expr expr.Expr))
+
+    let private originKey (origin: ModuleOrigin) =
+        match origin with
+        | SourceFile fullPath -> fullPath
+        | StandardLibraryModule name -> StandardLibrary.importPrefix + name
+        | InMemory -> "<source>"
+
+    /// Parses, desugars and type-checks one module, resolving and checking the modules it imports first. An
+    /// error says which phase it came from.
+    let rec private typecheckModule (origin: ModuleOrigin) (source: string) (visited: Set<string>) : Result<CheckedModule, CompilationPhase * Diagnostic list> =
+        let key = originKey origin
+        if visited.Contains key then
+            Error (Typed, [ Diagnostics.error ($"Import cycle detected for {key}") ])
         else
-            let source = File.ReadAllText fullPath
             let resolved =
                 parseWithDiagnostics source
-                |> Result.bind (fun ast -> applyAttributes (desugar ast))
+                |> Result.mapError (fun diagnostics -> Parsed, diagnostics)
+                |> Result.bind (fun ast ->
+                    applyAttributes (desugar ast)
+                    |> Result.mapError (fun diagnostics -> Desugared, diagnostics))
             match resolved with
-            | Result.Error diagnostics -> Error diagnostics
+            | Result.Error failure -> Error failure
             | Result.Ok desugared ->
                 let imports = collectImports desugared
-                let baseDir = Path.GetDirectoryName fullPath
-                let mutable env = Builtins.typeEnvFor desugared
+                let mutable env =
+                    match origin with
+                    | StandardLibraryModule _ -> Intrinsics.typeEnv
+                    | SourceFile _
+                    | InMemory -> TypeEnv.empty
                 let mutable state = NyxCompiler.Infer.emptyState
                 let mutable errors: Diagnostic list = []
-                let mutable importedDefs: Module = []
+                let mutable inlined: TopLevelItem list = []
+                let mergeImport (item: ImportItem) (imported: CheckedModule) =
+                    let qualifier = importQualifier item
+                    let exportedValues = exportedValueNames imported.Own
+                    let exportedTypes = exportedTypeNames imported.Own
+                    let exportedValueTypes =
+                        imported.Typed.Types |> Map.filter (fun name _ -> exportedValues.Contains name)
+                    let exportedTypeDefs =
+                        imported.Typed.TypeDefs |> Map.filter (fun name _ -> exportedTypes.Contains name)
+                    env <- extendEnvWithImport env qualifier exportedValueTypes
+                    state <- { state with TypeDefs = mergeTypeDefs state.TypeDefs exportedTypeDefs }
+                    inlined <- inlined @ inlinedItemsForImport item imported
                 for item in imports do
-                    match Builtins.tryStandardLibraryModule item with
+                    match StandardLibrary.tryModuleName item with
                     | Some moduleName ->
-                        // Standard-library modules are built in: the import is accepted but contributes nothing yet.
-                        if not (Builtins.isStandardLibraryModule moduleName) then
-                            errors <- errors @ [ Diagnostics.error ($"Unknown standard library module: {moduleName}") ]
+                        match StandardLibrary.tryLoadSource moduleName with
+                        | None ->
+                            let available = String.concat ", " (StandardLibrary.moduleNames |> List.map (fun name -> StandardLibrary.importPrefix + name))
+                            errors <- errors @ [ Diagnostics.error ($"Unknown standard library module '{StandardLibrary.importPrefix}{moduleName}' (available: {available})") ]
+                        | Some moduleSource ->
+                            match typecheckModule (StandardLibraryModule moduleName) moduleSource (visited.Add key) with
+                            | Error (_, diags) -> errors <- errors @ diags
+                            | Ok imported when imported.Name <> Some moduleName ->
+                                let declared = imported.Name |> Option.defaultValue "(none)"
+                                errors <- errors @ [ Diagnostics.error ($"Standard library module '{StandardLibrary.importPrefix}{moduleName}' declares the module name '{declared}'") ]
+                            | Ok imported -> mergeImport item imported
                     | None ->
-                        match resolveImportPath baseDir item with
-                        | Error diag -> errors <- errors @ [ diag ]
-                        | Ok importPath ->
-                            match typecheckFile importPath (visited.Add fullPath) with
-                            | Error diags -> errors <- errors @ diags
-                            | Ok typed ->
-                                let qualifier = importQualifier item
-                                let exportedValues = exportedValueNames typed.Module
-                                let exportedTypes = exportedTypeNames typed.Module
-                                let filteredTypes =
-                                    typed.Types
-                                    |> Map.filter (fun name _ -> exportedValues.Contains name)
-                                let filteredTypeDefs =
-                                    typed.TypeDefs
-                                    |> Map.filter (fun name _ -> exportedTypes.Contains name)
-                                env <- extendEnvWithImport env qualifier filteredTypes
-                                state <- { state with TypeDefs = mergeTypeDefs state.TypeDefs filteredTypeDefs }
-                                importedDefs <- importedDefs @ (importedValueDefsForModule item typed)
+                        match origin with
+                        | SourceFile fullPath ->
+                            match resolveImportPath (Path.GetDirectoryName fullPath) item with
+                            | Error diag -> errors <- errors @ [ diag ]
+                            | Ok importPath ->
+                                match typecheckModule (SourceFile importPath) (File.ReadAllText importPath) (visited.Add key) with
+                                | Error (_, diags) -> errors <- errors @ diags
+                                | Ok imported -> mergeImport item imported
+                        | StandardLibraryModule name ->
+                            errors <- errors @ [ Diagnostics.error ($"Standard library module '{name}' may only import other standard library modules") ]
+                        | InMemory ->
+                            let shown =
+                                match item.Source with
+                                | PathImport path -> path
+                                | ModuleImport name -> name
+                            errors <- errors @ [ Diagnostics.error ($"Import not found: {shown} (only standard library modules can be imported here)") ]
                 if not errors.IsEmpty then
-                    Error errors
+                    Error (Typed, errors)
                 else
-                    let moduleForCodegen = importedDefs @ (removeImportStatements desugared)
                     match NyxCompiler.Infer.inferModuleWithEnv env state desugared with
-                    | Error diagnostics -> Error diagnostics
+                    | Error diagnostics -> Error (Typed, diagnostics)
                     | Ok (types, items, (state: NyxCompiler.Infer.InferState)) ->
                         match Unifier.unify state.Constraints with
+                        | Error message -> Error (Typed, [ Diagnostics.error message ])
                         | Ok subst ->
-                            let resolvedTypes =
-                                types
-                                |> Map.map (fun _ ty -> Unifier.apply subst ty)
-                            let resolvedTypeDefs =
-                                state.TypeDefs
-                                |> Map.map (fun _ info ->
-                                    let resolvedUnderlying = Unifier.apply subst info.Underlying
-                                    { info with Underlying = resolvedUnderlying })
-                            let rec applyTypedExpr (typedExpr: TypedExpr) =
-                                let mappedBody = typedExpr.Body |> Option.map applyTypedExpr
-                                let mappedStatements =
-                                    typedExpr.Statements
-                                    |> Option.map (List.map applyTypedStatement)
-                                let mappedMatchArms =
-                                    typedExpr.MatchArms
-                                    |> Option.map (List.map applyTypedMatchArm)
-                                { typedExpr with
-                                    Type = Unifier.apply subst typedExpr.Type
-                                    Body = mappedBody
-                                    Statements = mappedStatements
-                                    MatchArms = mappedMatchArms }
-                            and applyTypedStatement statement =
-                                match statement with
-                                | TypedDefStatement(isExport, name, typeOpt, expr) ->
-                                    TypedDefStatement(isExport, name, typeOpt, applyTypedExpr expr)
-                                | TypedExprStatement expr -> TypedExprStatement (applyTypedExpr expr)
-                                | TypedUseStatement(binding, exprOpt) ->
-                                    let mappedExpr = exprOpt |> Option.map applyTypedExpr
-                                    TypedUseStatement(binding, mappedExpr)
-                                | TypedImportStatement _
-                                | TypedTypeDefStatement _ -> statement
-                            and applyTypedMatchArm (patterns, expr) =
-                                let mappedPatterns =
-                                    patterns
-                                    |> List.map (fun pattern ->
-                                        { pattern with Type = Unifier.apply subst pattern.Type })
-                                (mappedPatterns, applyTypedExpr expr)
+                            let resolvedTypes, resolvedTypeDefs, resolvedItems = resolveTypes subst types state.TypeDefs items
+                            let own = moduleFromTypedItems resolvedItems
+                            // The module's own definitions win over imported ones of the same name.
+                            let ownNames = exportedValueNames own |> Set.union (own |> List.choose (function Def (ValueDef(false, name, _, _)) -> Some name | _ -> None) |> Set.ofList)
+                            let inlined =
+                                inlined
+                                |> List.filter (function
+                                    | Def (ValueDef(_, name, _, _)) -> not (ownNames.Contains name)
+                                    | _ -> true)
+                                |> distinctDefinitions
+                            Ok { Typed =
+                                    { Module = inlined @ own
+                                      Types = resolvedTypes
+                                      TypeDefs = resolvedTypeDefs
+                                      Items = resolvedItems }
+                                 Own = own
+                                 Inlined = inlined
+                                 Name = declaredModuleName desugared }
 
-                            let resolvedItems =
-                                items
-                                |> List.map (fun item ->
-                                    match item with
-                                    | TypedExprItem expr -> TypedExprItem (applyTypedExpr expr)
-                                    | TypedDef (TypedValueDef(isExport, name, typeOpt, expr)) ->
-                                        TypedDef (TypedValueDef(isExport, name, typeOpt, applyTypedExpr expr))
-                                    | TypedDef (TypedTypeDef _)
-                                    | TypedImport _
-                                    | TypedModuleDecl _ -> item)
-                            Ok { Module = moduleForCodegen
-                                 Types = resolvedTypes
-                                 TypeDefs = resolvedTypeDefs
-                                 Items = resolvedItems }
-                        | Error message ->
-                            Error [ Diagnostics.error message ]
     let parse (source: string) : Result<Module, Diagnostic list> =
         match parseModule source with
         | Result.Ok ast -> Ok ast
         | Result.Error err -> Error [ Diagnostics.error err ]
 
-    let typecheck (desugared: Module) : Result<TypedModule, Diagnostic list> =
-        match NyxCompiler.Infer.inferModuleWithEnv (Builtins.typeEnvFor desugared) NyxCompiler.Infer.emptyState desugared with
-        | Error diagnostics -> Error diagnostics
-        | Ok (types, items, (state: NyxCompiler.Infer.InferState)) ->
-            match Unifier.unify state.Constraints with
-            | Ok subst ->
-                let resolvedTypes =
-                    types
-                    |> Map.map (fun _ ty -> Unifier.apply subst ty)
-                let rec applyTypedExpr (typedExpr: TypedExpr) =
-                    let mappedBody = typedExpr.Body |> Option.map applyTypedExpr
-                    let mappedStatements =
-                        typedExpr.Statements
-                        |> Option.map (List.map applyTypedStatement)
-                    let mappedMatchArms =
-                        typedExpr.MatchArms
-                        |> Option.map (List.map applyTypedMatchArm)
-                    { typedExpr with
-                        Type = Unifier.apply subst typedExpr.Type
-                        Body = mappedBody
-                        Statements = mappedStatements
-                        MatchArms = mappedMatchArms }
-                and applyTypedStatement statement =
-                    match statement with
-                    | TypedDefStatement(isExport, name, typeOpt, expr) ->
-                        TypedDefStatement(isExport, name, typeOpt, applyTypedExpr expr)
-                    | TypedExprStatement expr -> TypedExprStatement (applyTypedExpr expr)
-                    | TypedUseStatement(binding, exprOpt) ->
-                        let mappedExpr = exprOpt |> Option.map applyTypedExpr
-                        TypedUseStatement(binding, mappedExpr)
-                    | TypedImportStatement _
-                    | TypedTypeDefStatement _ -> statement
-                and applyTypedMatchArm (patterns, expr) =
-                    let mappedPatterns =
-                        patterns
-                        |> List.map (fun pattern ->
-                            { pattern with Type = Unifier.apply subst pattern.Type })
-                    (mappedPatterns, applyTypedExpr expr)
+    let private compileWith (origin: ModuleOrigin) (source: string) : CompileResult =
+        match typecheckModule origin source Set.empty with
+        | Result.Error (phase, diagnostics) ->
+            { Phase = phase
+              Diagnostics = annotateDiagnosticsWithSource source diagnostics
+              Typed = None }
+        | Result.Ok checkedModule ->
+            { Phase = Typed
+              Diagnostics = []
+              Typed = Some checkedModule.Typed }
 
-                let resolvedTypeDefs =
-                    state.TypeDefs
-                    |> Map.map (fun _ info ->
-                        let resolvedUnderlying = Unifier.apply subst info.Underlying
-                        { info with Underlying = resolvedUnderlying })
-                let resolvedItems =
-                    items
-                    |> List.map (fun item ->
-                        match item with
-                        | TypedExprItem expr -> TypedExprItem (applyTypedExpr expr)
-                        | TypedDef (TypedValueDef(isExport, name, typeOpt, expr)) ->
-                            TypedDef (TypedValueDef(isExport, name, typeOpt, applyTypedExpr expr))
-                        | TypedDef (TypedTypeDef _)
-                        | TypedImport _
-                        | TypedModuleDecl _ -> item)
-                let resolvedModule =
-                    resolvedItems
-                    |> List.map (function
-                        | TypedModuleDecl name -> ModuleDecl name
-                        | TypedImport items -> Import items
-                        | TypedDef (TypedValueDef(isExport, name, typeOpt, expr)) ->
-                            Def (ValueDef(isExport, name, typeOpt, expr.Expr))
-                        | TypedDef (TypedTypeDef(name, modifiers, parameters, body)) ->
-                            Def (TypeDef(name, modifiers, parameters, body))
-                        | TypedExprItem expr -> Expr expr.Expr)
-                // Standard-library imports are built in, so they carry nothing for the backend.
-                let resolvedModule =
-                    resolvedModule
-                    |> List.choose (function
-                        | Import items ->
-                            match items |> List.filter (Builtins.tryStandardLibraryModule >> Option.isNone) with
-                            | [] -> None
-                            | remaining -> Some (Import remaining)
-                        | item -> Some item)
-                Ok { Module = resolvedModule
-                     Types = resolvedTypes
-                     TypeDefs = resolvedTypeDefs
-                     Items = resolvedItems }
-            | Error message ->
-                Error [ Diagnostics.error message ]
-
+    /// Compiles the file at `filePath` up to the typed module, resolving its imports (standard-library modules
+    /// from the embedded library, everything else relative to the file).
     let compileFile (filePath: string) : CompileResult =
         if not (File.Exists filePath) then
             { Phase = Parsed
               Diagnostics = [ Diagnostics.error ($"File not found: {filePath}") ]
               Typed = None }
         else
-            let source = File.ReadAllText filePath
-            match typecheckFile filePath Set.empty with
-            | Result.Error diagnostics ->
-                { Phase = Typed
-                  Diagnostics = annotateDiagnosticsWithSource source diagnostics
-                  Typed = None }
-            | Result.Ok typed ->
-                { Phase = Typed
-                  Diagnostics = []
-                  Typed = Some typed }
+            compileWith (SourceFile (Path.GetFullPath filePath)) (File.ReadAllText filePath)
 
+    /// Compiles source given directly, up to the typed module. Standard-library imports are resolved; imports by
+    /// path cannot be, since there is no file for them to be relative to.
     let compile (source: string) : CompileResult =
-        match parse source with
-        | Result.Error diagnostics ->
-            { Phase = Parsed
-              Diagnostics = annotateDiagnosticsWithSource source diagnostics
-              Typed = None }
-        | Result.Ok ast ->
-            match applyAttributes (desugar ast) with
-            | Result.Error diagnostics ->
-                { Phase = Desugared
-                  Diagnostics = annotateDiagnosticsWithSource source diagnostics
-                  Typed = None }
-            | Result.Ok desugared ->
-                match typecheck desugared with
-                | Result.Error diagnostics ->
-                    { Phase = Typed
-                      Diagnostics = annotateDiagnosticsWithSource source diagnostics
-                      Typed = None }
-                | Result.Ok typed ->
-                    { Phase = Typed
-                      Diagnostics = []
-                      Typed = Some typed }
+        compileWith InMemory source

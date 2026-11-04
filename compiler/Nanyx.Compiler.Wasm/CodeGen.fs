@@ -7,11 +7,380 @@ open Parser.Program
 
 type private ContextFn = string * int * int
 
-type private TranspileEnv = { KnownFunctions: Set<string>; FunctionArities: Map<string, int>; FunctionContextRequirements: Map<string, string list>; Locals: Map<string, string>; DbgTempLocal: string option; TagIds: Map<string, int>; MatchTempNames: string list; NextMatchTemp: int; StringLiterals: Map<string, int>; ContextFunctions: Map<string, ContextFn>; ContextParams: Map<string, string>; PendingUseBindings: Map<string, ContextFn> list ref; RecordLayouts: Map<string, string list>; TypeLayouts: Map<string, string list>; TypeFieldTypes: Map<string, Map<string, string>>; RecordFieldTypes: Map<string, Map<string, string>>; ParamTypes: Map<string, string>; ValueTypes: Map<string, string>; BuiltinPrintln: bool }
+type private TranspileEnv =
+    { KnownFunctions: Set<string>
+      FunctionArities: Map<string, int>
+      FunctionContextRequirements: Map<string, string list>
+      /// The simple result type ("string", "int" or "bool") of the functions whose annotation or inferred type says.
+      FunctionReturnTypes: Map<string, string>
+      Locals: Map<string, string>
+      DbgTempLocal: string option
+      TagIds: Map<string, int>
+      MatchTempNames: string list
+      NextMatchTemp: int
+      StringLiterals: Map<string, int>
+      ContextFunctions: Map<string, ContextFn>
+      ContextParams: Map<string, string>
+      /// Module-level functions that stand in for a context member of the same name when a callee needs a
+      /// context and nothing in scope supplies it: the ambient instance (e.g. the runtime's `Console`).
+      AmbientContextFunctions: Map<string, ContextFn>
+      PendingUseBindings: Map<string, ContextFn> list ref
+      RecordLayouts: Map<string, string list>
+      TypeLayouts: Map<string, string list>
+      TypeFieldTypes: Map<string, Map<string, string>>
+      RecordFieldTypes: Map<string, Map<string, string>>
+      ParamTypes: Map<string, string>
+      ValueTypes: Map<string, string>
+      /// The runtime helpers (see `runtimeHelpers`) the lowered code calls; shared by every function of a module.
+      UsedHelpers: System.Collections.Generic.HashSet<string> }
 
-/// The built-in `println` (see NyxCompiler.Builtins). It is lowered onto the WASI prelude unless the
-/// module defines or context-binds its own `println`, in which case that one wins.
-let private printlnName = NyxCompiler.Builtins.printlnName
+/// The names of the WebAssembly helper functions the backend emits on demand (see `runtimeHelpers`).
+module private Helpers =
+    let alloc = "__nanyx_alloc"
+    let copyBytes = "__nanyx_copy_bytes"
+    let stringAlloc = "__nanyx_string_alloc"
+    let stringConcat = "__nanyx_string_concat"
+    let stringEquals = "__nanyx_string_equals"
+    let listLength = "__nanyx_list_length"
+    let listConcat = "__nanyx_list_concat"
+    let writeStdout = NyxCompiler.Intrinsics.writeStdout
+    let stringLength = NyxCompiler.Intrinsics.stringLength
+    let stringByteAt = NyxCompiler.Intrinsics.stringByteAt
+    let stringSlice = NyxCompiler.Intrinsics.stringSlice
+    let stringFromByte = NyxCompiler.Intrinsics.stringFromByte
+    let listCons = NyxCompiler.Intrinsics.listCons
+
+/// The WebAssembly helper functions, keyed by name. The ones named after a compiler intrinsic implement
+/// that intrinsic; the rest back language operators (`+` and `==` on strings, list literals and patterns)
+/// and the allocator they share. Only the helpers a module uses are emitted.
+///
+/// Memory model: a string is a pointer to its UTF-8 bytes, with its byte length in the 4 bytes before the
+/// pointer and a 0 byte after; a list is 0 (empty) or a pointer to an 8-byte cell of (head, tail). The heap is
+/// a bump allocator from `$heap_ptr` that grows the memory when it runs out; nothing is ever freed.
+let private runtimeHelpers : Map<string, string> =
+    let lines (items: string list) = items |> List.map (fun line -> "  " + line) |> String.concat "\n"
+    [ Helpers.alloc,
+      lines
+          [ $"(func ${Helpers.alloc} (param $size i32) (result i32)"
+            "  (local $ptr i32)"
+            "  global.get $heap_ptr"
+            "  local.set $ptr"
+            "  local.get $ptr"
+            "  local.get $size"
+            "  i32.add"
+            "  global.set $heap_ptr"
+            "  block $fits"
+            "    loop $grow"
+            "      global.get $heap_ptr"
+            "      memory.size"
+            "      i32.const 65536"
+            "      i32.mul"
+            "      i32.le_u"
+            "      br_if $fits"
+            "      i32.const 1"
+            "      memory.grow"
+            "      i32.const -1"
+            "      i32.eq"
+            "      if"
+            "        unreachable"
+            "      end"
+            "      br $grow"
+            "    end"
+            "  end"
+            "  local.get $ptr"
+            ")" ]
+      Helpers.copyBytes,
+      lines
+          [ $"(func ${Helpers.copyBytes} (param $dst i32) (param $src i32) (param $len i32)"
+            "  (local $i i32)"
+            "  block $done"
+            "    loop $copy"
+            "      local.get $i"
+            "      local.get $len"
+            "      i32.ge_s"
+            "      br_if $done"
+            "      local.get $dst"
+            "      local.get $i"
+            "      i32.add"
+            "      local.get $src"
+            "      local.get $i"
+            "      i32.add"
+            "      i32.load8_u"
+            "      i32.store8"
+            "      local.get $i"
+            "      i32.const 1"
+            "      i32.add"
+            "      local.set $i"
+            "      br $copy"
+            "    end"
+            "  end"
+            ")" ]
+      Helpers.stringLength,
+      lines
+          [ $"(func ${Helpers.stringLength} (param $s i32) (result i32)"
+            "  local.get $s"
+            "  i32.const 4"
+            "  i32.sub"
+            "  i32.load"
+            ")" ]
+      Helpers.stringAlloc,
+      lines
+          [ $"(func ${Helpers.stringAlloc} (param $len i32) (result i32)"
+            "  (local $base i32)"
+            "  local.get $len"
+            "  i32.const 5"
+            "  i32.add"
+            $"  call ${Helpers.alloc}"
+            "  local.set $base"
+            "  local.get $base"
+            "  local.get $len"
+            "  i32.store"
+            "  local.get $base"
+            "  i32.const 4"
+            "  i32.add"
+            "  local.get $len"
+            "  i32.add"
+            "  i32.const 0"
+            "  i32.store8"
+            "  local.get $base"
+            "  i32.const 4"
+            "  i32.add"
+            ")" ]
+      Helpers.stringByteAt,
+      lines
+          [ $"(func ${Helpers.stringByteAt} (param $s i32) (param $i i32) (result i32)"
+            "  local.get $i"
+            "  i32.const 0"
+            "  i32.lt_s"
+            "  local.get $i"
+            "  local.get $s"
+            $"  call ${Helpers.stringLength}"
+            "  i32.ge_s"
+            "  i32.or"
+            "  if (result i32)"
+            "    i32.const -1"
+            "  else"
+            "    local.get $s"
+            "    local.get $i"
+            "    i32.add"
+            "    i32.load8_u"
+            "  end"
+            ")" ]
+      Helpers.stringSlice,
+      lines
+          [ $"(func ${Helpers.stringSlice} (param $s i32) (param $start i32) (param $len i32) (result i32)"
+            "  (local $total i32)"
+            "  (local $out i32)"
+            "  local.get $s"
+            $"  call ${Helpers.stringLength}"
+            "  local.set $total"
+            "  local.get $start"
+            "  i32.const 0"
+            "  i32.lt_s"
+            "  if"
+            "    i32.const 0"
+            "    local.set $start"
+            "  end"
+            "  local.get $start"
+            "  local.get $total"
+            "  i32.gt_s"
+            "  if"
+            "    local.get $total"
+            "    local.set $start"
+            "  end"
+            "  local.get $len"
+            "  i32.const 0"
+            "  i32.lt_s"
+            "  if"
+            "    i32.const 0"
+            "    local.set $len"
+            "  end"
+            "  local.get $len"
+            "  local.get $total"
+            "  local.get $start"
+            "  i32.sub"
+            "  i32.gt_s"
+            "  if"
+            "    local.get $total"
+            "    local.get $start"
+            "    i32.sub"
+            "    local.set $len"
+            "  end"
+            "  local.get $len"
+            $"  call ${Helpers.stringAlloc}"
+            "  local.set $out"
+            "  local.get $out"
+            "  local.get $s"
+            "  local.get $start"
+            "  i32.add"
+            "  local.get $len"
+            $"  call ${Helpers.copyBytes}"
+            "  local.get $out"
+            ")" ]
+      Helpers.stringFromByte,
+      lines
+          [ $"(func ${Helpers.stringFromByte} (param $byte i32) (result i32)"
+            "  (local $out i32)"
+            "  i32.const 1"
+            $"  call ${Helpers.stringAlloc}"
+            "  local.set $out"
+            "  local.get $out"
+            "  local.get $byte"
+            "  i32.store8"
+            "  local.get $out"
+            ")" ]
+      Helpers.stringConcat,
+      lines
+          [ $"(func ${Helpers.stringConcat} (param $a i32) (param $b i32) (result i32)"
+            "  (local $lenA i32)"
+            "  (local $lenB i32)"
+            "  (local $out i32)"
+            "  local.get $a"
+            $"  call ${Helpers.stringLength}"
+            "  local.set $lenA"
+            "  local.get $b"
+            $"  call ${Helpers.stringLength}"
+            "  local.set $lenB"
+            "  local.get $lenA"
+            "  local.get $lenB"
+            "  i32.add"
+            $"  call ${Helpers.stringAlloc}"
+            "  local.set $out"
+            "  local.get $out"
+            "  local.get $a"
+            "  local.get $lenA"
+            $"  call ${Helpers.copyBytes}"
+            "  local.get $out"
+            "  local.get $lenA"
+            "  i32.add"
+            "  local.get $b"
+            "  local.get $lenB"
+            $"  call ${Helpers.copyBytes}"
+            "  local.get $out"
+            ")" ]
+      Helpers.stringEquals,
+      lines
+          [ $"(func ${Helpers.stringEquals} (param $a i32) (param $b i32) (result i32)"
+            "  (local $len i32)"
+            "  (local $i i32)"
+            "  local.get $a"
+            $"  call ${Helpers.stringLength}"
+            "  local.set $len"
+            "  local.get $len"
+            "  local.get $b"
+            $"  call ${Helpers.stringLength}"
+            "  i32.ne"
+            "  if"
+            "    i32.const 0"
+            "    return"
+            "  end"
+            "  block $done"
+            "    loop $compare"
+            "      local.get $i"
+            "      local.get $len"
+            "      i32.ge_s"
+            "      br_if $done"
+            "      local.get $a"
+            "      local.get $i"
+            "      i32.add"
+            "      i32.load8_u"
+            "      local.get $b"
+            "      local.get $i"
+            "      i32.add"
+            "      i32.load8_u"
+            "      i32.ne"
+            "      if"
+            "        i32.const 0"
+            "        return"
+            "      end"
+            "      local.get $i"
+            "      i32.const 1"
+            "      i32.add"
+            "      local.set $i"
+            "      br $compare"
+            "    end"
+            "  end"
+            "  i32.const 1"
+            ")" ]
+      // Writes a string to stdout (fd 1) with the iovec at 0 and nwritten at 8, like the dbg helpers.
+      Helpers.writeStdout,
+      lines
+          [ $"(func ${Helpers.writeStdout} (param $s i32)"
+            "  i32.const 0"
+            "  local.get $s"
+            "  i32.store"
+            "  i32.const 4"
+            "  local.get $s"
+            $"  call ${Helpers.stringLength}"
+            "  i32.store"
+            "  i32.const 1"
+            "  i32.const 0"
+            "  i32.const 1"
+            "  i32.const 8"
+            "  call $fd_write"
+            "  drop"
+            ")" ]
+      Helpers.listCons,
+      lines
+          [ $"(func ${Helpers.listCons} (param $head i32) (param $tail i32) (result i32)"
+            "  (local $cell i32)"
+            "  i32.const 8"
+            $"  call ${Helpers.alloc}"
+            "  local.set $cell"
+            "  local.get $cell"
+            "  local.get $head"
+            "  i32.store"
+            "  local.get $cell"
+            "  i32.const 4"
+            "  i32.add"
+            "  local.get $tail"
+            "  i32.store"
+            "  local.get $cell"
+            ")" ]
+      Helpers.listLength,
+      lines
+          [ $"(func ${Helpers.listLength} (param $list i32) (result i32)"
+            "  (local $count i32)"
+            "  block $done"
+            "    loop $walk"
+            "      local.get $list"
+            "      i32.eqz"
+            "      br_if $done"
+            "      local.get $count"
+            "      i32.const 1"
+            "      i32.add"
+            "      local.set $count"
+            "      local.get $list"
+            "      i32.const 4"
+            "      i32.add"
+            "      i32.load"
+            "      local.set $list"
+            "      br $walk"
+            "    end"
+            "  end"
+            "  local.get $count"
+            ")" ]
+      // a ++ b copies the cells of a in front of b (b itself is shared, lists being immutable).
+      Helpers.listConcat,
+      lines
+          [ $"(func ${Helpers.listConcat} (param $a i32) (param $b i32) (result i32)"
+            "  local.get $a"
+            "  i32.eqz"
+            "  if (result i32)"
+            "    local.get $b"
+            "  else"
+            "    local.get $a"
+            "    i32.load"
+            "    local.get $a"
+            "    i32.const 4"
+            "    i32.add"
+            "    i32.load"
+            "    local.get $b"
+            $"    call ${Helpers.listConcat}"
+            $"    call ${Helpers.listCons}"
+            "  end"
+            ")" ] ]
+    |> Map.ofList
 
 let private ctxFnName (name: string, _, _) = name
 let private ctxFnSlot (_, slot: int, _) = slot
@@ -152,13 +521,29 @@ and private collectStatementLocalNames (statements: Statement list) : string lis
 let private collectBlockLocalNames (statements: Statement list) =
     collectStatementLocalNames statements |> List.distinct
 
+/// The identifiers a pattern binds that live in `__payload_<name>` locals: tag payloads, list elements and list
+/// rests. (Plain identifier patterns alias the scrutinee local and need no local of their own.)
+let private patternBoundIdentifiers (pattern: Pattern) : string list =
+    match pattern with
+    | TagPattern(_, Some (IdentifierPattern ident)) -> [ ident ]
+    | ListPattern(elements, restOpt) ->
+        let elementIdents =
+            elements
+            |> List.choose (function
+                | IdentifierPattern ident -> Some ident
+                | _ -> None)
+        let restIdents =
+            match restOpt with
+            | Some (IdentifierPattern ident) -> [ ident ]
+            | _ -> []
+        elementIdents @ restIdents
+    | _ -> []
+
 let rec private collectPayloadLocalsExpr expr =
     match expr with
     | Match(_, arms) ->
         arms |> List.collect (fun (patterns, armExpr) ->
-            let payloads = patterns |> List.choose (function
-                | TagPattern(_, Some (IdentifierPattern ident)) -> Some ident
-                | _ -> None)
+            let payloads = patterns |> List.collect patternBoundIdentifiers
             List.append payloads (collectPayloadLocalsExpr armExpr))
     | FunctionCall(_, _, args) -> args |> List.collect collectPayloadLocalsExpr
     | BinaryOp(_, left, right) -> List.append (collectPayloadLocalsExpr left) (collectPayloadLocalsExpr right)
@@ -252,9 +637,24 @@ let private trySimpleTypeName (ty: Ty) =
     | TyPrimitive "string" -> Some "string"
     | TyPrimitive "int" -> Some "int"
     | TyPrimitive "bool" -> Some "bool"
+    | TyApply("list", _) -> Some "list"
     | _ -> None
 
+/// The simple types inference found for a function's parameters and the locals of its body.
 let private collectTypedValueTypes (typedExpr: TypedExpr) =
+    let parameterTypes =
+        match typedExpr.Expr, typedExpr.Type with
+        | Lambda([ (name, _) ], _), TyFunc(inputTy, _) ->
+            trySimpleTypeName inputTy |> Option.map (fun tyName -> name, tyName) |> Option.toList
+        | Lambda(parameters, _), TyFunc(TyRecord fields, _) ->
+            parameters
+            |> List.mapi (fun index (name, _) ->
+                fields
+                |> Map.tryFind (string index)
+                |> Option.bind trySimpleTypeName
+                |> Option.map (fun tyName -> name, tyName))
+            |> List.choose id
+        | _ -> []
     let rec collectExpr (acc: Map<string, string>) (expr: TypedExpr) =
         let accWithBody =
             match expr.Body with
@@ -282,9 +682,11 @@ let private collectTypedValueTypes (typedExpr: TypedExpr) =
             | None -> acc
         | TypedImportStatement _
         | TypedTypeDefStatement _ -> acc
-    collectExpr Map.empty typedExpr
+    collectExpr (Map.ofList parameterTypes) typedExpr
 
-let private tryGetExprTypeName (env: TranspileEnv) (expr: Expression) =
+/// The simple type ("string", "int" or "bool") of an expression, when the backend can tell. Strings matter most:
+/// `+` and `==` are lowered differently when an operand is known to be a string.
+let rec private tryGetExprTypeName (env: TranspileEnv) (expr: Expression) =
     match expr with
     | LiteralExpr(StringLit _) -> Some "string"
     | LiteralExpr(IntLit _) -> Some "int"
@@ -297,7 +699,22 @@ let private tryGetExprTypeName (env: TranspileEnv) (expr: Expression) =
         match env.RecordFieldTypes |> Map.tryFind varName with
         | Some fieldTypes -> fieldTypes |> Map.tryFind fieldName
         | None -> None
+    | BinaryOp(op, _, _) when [ "=="; "!="; "<"; "<="; ">"; ">="; "&&"; "||" ] |> List.contains op -> Some "bool"
+    | BinaryOp(_, left, right) ->
+        tryGetExprTypeName env left |> Option.orElseWith (fun () -> tryGetExprTypeName env right)
+    | ListExpr _ -> Some "list"
+    | FunctionCall(name, _, _)
+    | Pipe(_, name, _, _) -> env.FunctionReturnTypes |> Map.tryFind name
+    | IfExpr(_, thenExpr, elseExpr) ->
+        tryGetExprTypeName env thenExpr |> Option.orElseWith (fun () -> tryGetExprTypeName env elseExpr)
+    | Block statements ->
+        match List.tryLast statements with
+        | Some (ExprStatement last) -> tryGetExprTypeName env last
+        | _ -> None
     | _ -> None
+
+let private isStringExpr (env: TranspileEnv) (expr: Expression) =
+    tryGetExprTypeName env expr = Some "string"
 
 let private collectInterpolatedStringExpr (expr: Expression) : bool =
     match expr with
@@ -562,12 +979,6 @@ and private existsStatements (predicate: Expression -> bool) (statements: Statem
         | UseStatement (UseContextInstance(_, value)) -> existsExpr predicate value
         | ImportStatement _
         | TypeDefStatement _ -> false)
-
-let private containsPrintlnCallExpr (expr: Expression) : bool =
-    expr
-    |> existsExpr (function
-        | FunctionCall(name, _, _) when name = printlnName -> true
-        | _ -> false)
 
 let rec private containsDbgCallExpr (expr: Expression) : bool =
     match expr with
@@ -1056,6 +1467,32 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
             | None -> failwith $"Internal error: missing tag discriminant for #{name}"
         let payloadCode = transpileExpression env payloadExpr
         $"{payloadCode}\n    i32.const {tagPayloadMask}\n    i32.and\n    i32.const {tagBase}\n    i32.or"
+    | BinaryOp("++", left, right) ->
+        // Concatenation: the backend has to know whether it is joining strings or lists.
+        let leftCode = transpileExpression env left
+        let rightCode = transpileExpression env right
+        let operandType =
+            tryGetExprTypeName env left |> Option.orElseWith (fun () -> tryGetExprTypeName env right)
+        match operandType with
+        | Some "string" ->
+            env.UsedHelpers.Add Helpers.stringConcat |> ignore
+            $"{leftCode}\n    {rightCode}\n    call ${Helpers.stringConcat}"
+        | Some "list" ->
+            env.UsedHelpers.Add Helpers.listConcat |> ignore
+            $"{leftCode}\n    {rightCode}\n    call ${Helpers.listConcat}"
+        | Some other -> failwith $"Unsupported operand type for ++ in WASM MVP backend: {other}"
+        | None -> failwith $"Unable to tell whether ++ joins strings or lists for WASM MVP backend: {expr}"
+    | BinaryOp(op, left, right) when (op = "==" || op = "!=") && (isStringExpr env left || isStringExpr env right) ->
+        // Strings are pointers, so equality calls into the runtime helper instead of comparing the pointers.
+        let leftCode = transpileExpression env left
+        let rightCode = transpileExpression env right
+        match op with
+        | "==" ->
+            env.UsedHelpers.Add Helpers.stringEquals |> ignore
+            $"{leftCode}\n    {rightCode}\n    call ${Helpers.stringEquals}"
+        | _ ->
+            env.UsedHelpers.Add Helpers.stringEquals |> ignore
+            $"{leftCode}\n    {rightCode}\n    call ${Helpers.stringEquals}\n    i32.eqz"
     | BinaryOp(op, left, right) ->
         match wasmBinaryInstruction op with
         | Some instr ->
@@ -1064,6 +1501,13 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
             $"{leftCode}\n    {rightCode}\n    {instr}"
         | None ->
             failwith $"Unsupported binary operator for WASM MVP backend: {op}"
+    | ListExpr items ->
+        // A list is 0 (empty) or a pointer to a cell of (head, tail). Evaluate the items left to right, push
+        // the empty list, then cons from the back.
+        env.UsedHelpers.Add Helpers.listCons |> ignore
+        let itemCodes = items |> List.map (transpileExpression env)
+        let consCalls = items |> List.map (fun _ -> $"call ${Helpers.listCons}")
+        (itemCodes @ [ "i32.const 0" ] @ consCalls) |> String.concat "\n    "
     | IfExpr(cond, thenExpr, elseExpr) ->
         let condCode = transpileExpression env cond
         let thenCode = transpileExpression env thenExpr
@@ -1169,8 +1613,40 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
             | IdentifierPattern _ -> true
             | _ -> false
 
+        // The code that loads element `index` of the list in `tempName`; `listTailCode` the tail after `count` cells.
+        let listTailCode tempName count =
+            $"local.get ${tempName}" + String.replicate count "\n      i32.const 4\n      i32.add\n      i32.load"
+        let listElementCode tempName index =
+            $"{listTailCode tempName index}\n      i32.load"
+
         let patternCondition pattern tempName =
             match pattern with
+            | ListPattern(elements, restOpt) ->
+                env.UsedHelpers.Add Helpers.listLength |> ignore
+                let lengthInstr = if restOpt.IsSome then "i32.ge_s" else "i32.eq"
+                let lengthCheck =
+                    $"local.get ${tempName}\n      call ${Helpers.listLength}\n      i32.const {elements.Length}\n      {lengthInstr}"
+                let elementChecks =
+                    elements
+                    |> List.mapi (fun index element ->
+                        match element with
+                        | IdentifierPattern _
+                        | WildcardPattern
+                        | ElsePattern -> None
+                        | LiteralPattern(IntLit value) ->
+                            Some $"{listElementCode tempName index}\n      i32.const {value}\n      i32.eq"
+                        | LiteralPattern(BoolLit value) ->
+                            Some $"{listElementCode tempName index}\n      i32.const {(if value then 1 else 0)}\n      i32.eq"
+                        | other -> failwith $"Unsupported list element pattern for WASM MVP backend: {other}")
+                    |> List.choose id
+                match restOpt with
+                | None
+                | Some (IdentifierPattern _)
+                | Some WildcardPattern
+                | Some ElsePattern -> ()
+                | Some other -> failwith $"Unsupported list rest pattern for WASM MVP backend: {other}"
+                (lengthCheck :: elementChecks) |> String.concat "\n      " |> fun code ->
+                    code + String.replicate elementChecks.Length "\n      i32.and"
             | LiteralPattern(IntLit value) ->
                 $"local.get ${tempName}\n      i32.const {value}\n      i32.eq"
             | LiteralPattern(BoolLit value) ->
@@ -1227,27 +1703,38 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                         let n = many.Length
                         many |> String.concat "\n      " |> fun s -> $"{s}\n      " + (List.init (n - 1) (fun _ -> "i32.and") |> String.concat "\n      ")
                 // Add identifier payloads to envForNested.Locals before binding
-                let payloadIdents =
-                    patterns
-                    |> List.choose (function
-                        | TagPattern(_, Some (IdentifierPattern ident)) -> Some ident
-                        | _ -> None)
+                let payloadIdents = patterns |> List.collect patternBoundIdentifiers
                 let envWithPayloadLocals =
                     payloadIdents
                     |> List.fold (fun acc ident ->
                         let localName = $"__payload_{ident}"
                         { acc with Locals = acc.Locals |> Map.add ident localName }) envForNested
+                let payloadLocal ident =
+                    match envWithPayloadLocals.Locals |> Map.tryFind ident with
+                    | Some localName -> localName
+                    | None -> failwith $"Internal error: missing local for payload variable {ident}"
                 let patternPayloadBinds =
                     List.zip patterns matchTempNames
-                    |> List.choose (fun (pat, temp) ->
+                    |> List.collect (fun (pat, temp) ->
                         match pat with
                         | TagPattern(_, Some (IdentifierPattern ident)) ->
-                            let payloadLocal =
-                                match envWithPayloadLocals.Locals |> Map.tryFind ident with
-                                | Some localName -> localName
-                                | None -> failwith $"Internal error: missing local for payload variable {ident}"
-                            Some $"local.get ${temp}\n        i32.const {tagPayloadMask}\n        i32.and\n        local.set ${payloadLocal}"
-                        | _ -> None)
+                            [ $"local.get ${temp}\n        i32.const {tagPayloadMask}\n        i32.and\n        local.set ${payloadLocal ident}" ]
+                        | ListPattern(elements, restOpt) ->
+                            let elementBinds =
+                                elements
+                                |> List.mapi (fun index element ->
+                                    match element with
+                                    | IdentifierPattern ident ->
+                                        Some $"{listElementCode temp index}\n        local.set ${payloadLocal ident}"
+                                    | _ -> None)
+                                |> List.choose id
+                            let restBinds =
+                                match restOpt with
+                                | Some (IdentifierPattern ident) ->
+                                    [ $"{listTailCode temp elements.Length}\n        local.set ${payloadLocal ident}" ]
+                                | _ -> []
+                            elementBinds @ restBinds
+                        | _ -> [])
                     |> String.concat "\n    "
                 let armCode =
                     if patternPayloadBinds = "" then
@@ -1364,11 +1851,13 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                     $"{slotCode}\n    call_indirect (type $ctx_fn_{ctxFnArity ctxFn})"
                 else
                     $"{prefix}\n    {slotCode}\n    call_indirect (type $ctx_fn_{ctxFnArity ctxFn})"
-            | None when name = printlnName && env.BuiltinPrintln ->
-                // Built-in println: write the string (the type checker guarantees a string) and a newline, then yield unit.
-                match argsCode with
-                | [argCode] -> $"{argCode}\n    call $println_str\n    i32.const 0"
-                | _ -> failwith "println expects a single string argument"
+            | None when NyxCompiler.Intrinsics.isIntrinsic name ->
+                // A compiler intrinsic (only the standard library can call these): a runtime helper of the same
+                // name. Every Nanyx expression leaves an i32, so a unit result is materialised as 0.
+                env.UsedHelpers.Add name |> ignore
+                let unitResult = if NyxCompiler.Intrinsics.returnsUnit name then "\n    i32.const 0" else ""
+                let prefix = argsCode |> String.concat "\n    "
+                if prefix = "" then $"call ${name}{unitResult}" else $"{prefix}\n    call ${name}{unitResult}"
             | None ->
                 if not (env.KnownFunctions.Contains name) then
                     failwith $"Unsupported function call for WASM MVP backend: {name}"
@@ -1422,13 +1911,15 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                                     | Some paramName -> $"local.get ${paramName}"
                                     | None -> failwith $"Context function {resolvedName} not found"
                                 | None ->
-                                    // Not in ContextFunctions - check ContextParams
-                                    match env.ContextParams |> Map.tryFind resolvedName with
-                                    | Some paramName -> $"local.get ${paramName}"
-                                    | None -> 
-                                        let available = 
+                                    // Not in ContextFunctions - check ContextParams, then the ambient instance
+                                    match env.ContextParams |> Map.tryFind resolvedName, env.AmbientContextFunctions |> Map.tryFind resolvedName with
+                                    | Some paramName, _ -> $"local.get ${paramName}"
+                                    | None, Some ambientFn -> $"i32.const {ctxFnSlot ambientFn}"
+                                    | None, None ->
+                                        let available =
                                             (env.ContextFunctions |> Map.toList |> List.map fst) @
-                                            (env.ContextParams |> Map.toList |> List.map fst)
+                                            (env.ContextParams |> Map.toList |> List.map fst) @
+                                            (env.AmbientContextFunctions |> Map.toList |> List.map fst)
                                         let availableStr = String.concat ", " available
                                         failwith $"Context function {ctxFnName} not available in current scope. Available: [{availableStr}]"
                             (codeAcc @ [code], usedCtxs.Add resolvedName)) ([], Set.empty)
@@ -1472,23 +1963,9 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                     $"{prefix}\n    i32.const {slot}\n    call_indirect (type $ctx_fn_{ctxFnArity ctxFn})"
             | None ->
                 failwith $"Context member {memberName} from {ctxKey} not found in scope. Available: {env.ContextParams |> Map.toList |> List.map fst}, {env.ContextFunctions |> Map.toList |> List.map fst}"
-    | Pipe(value, funcName, _, args) ->
-        // Pipe x \f(a, b) translates to f(x, a, b)
-        let valueCode = transpileExpression env value
-        let argsCode =
-            flattenCallArgs args
-            |> List.map (transpileExpression env)
-        let allArgsCode = valueCode :: argsCode
-        match env.ContextFunctions |> Map.tryFind funcName with
-        | Some ctxFn ->
-            let prefix = allArgsCode |> String.concat "\n    "
-            $"{prefix}\n    i32.const {ctxFnSlot ctxFn}\n    call_indirect (type $ctx_fn_{ctxFnArity ctxFn})"
-        | None ->
-            if not (env.KnownFunctions.Contains funcName) then
-                failwith $"Unsupported pipe target for WASM MVP backend: {funcName}"
-            else
-                let prefix = allArgsCode |> String.concat "\n    "
-                $"{prefix}\n    call ${sanitizeIdentifier funcName}"
+    | Pipe(value, funcName, rangeOpt, args) ->
+        // Pipe x \f(a, b) is the call f(x, a, b), with everything a call gets (contexts, intrinsics, ...).
+        transpileExpression env (FunctionCall(funcName, rangeOpt, value :: flattenCallArgs args))
     | Lambda(args, body) when args.IsEmpty ->
         transpileExpression env body
     | Block statements ->
@@ -1643,7 +2120,7 @@ let private getLayoutFromTypeExpr (typeLayouts: Map<string, string list>) (typeF
         Some (fieldNames, fieldTypes)
     | _ -> None
 
-let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map<string, TypedExpr>) (typedValueTypes: Map<string, string>) : string =
+let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map<string, TypedExpr>) (typedValueTypes: Map<string, string>) (typedReturnTypes: Map<string, string>) : string =
     let defs =
         module'
         |> List.choose (function
@@ -1739,22 +2216,62 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                 else Some (name, contextFnNames))
         |> Map.ofList
 
+    // The ambient context instance: a module-level function named like a member of a declared context stands
+    // in for that member whenever a callee requires the context and the caller has nothing else to supply.
+    // This is how the runtime-provided `Console` (the functions `nanyx/console` exports) reaches `@entry`.
+    let contextMemberNames =
+        module'
+        |> List.collect (function
+            | Def (TypeDef(_, modifiers, _, TypeRecord fields)) when modifiers |> List.contains Context ->
+                fields
+                |> List.map (function
+                    | TypeField(fieldName, _, _, _, _) -> fieldName
+                    | TypeMember(fieldName, _) -> fieldName)
+            | _ -> [])
+        |> List.distinct
+    let ambientContextFunctions =
+        // Only worth table slots when some function actually takes contexts.
+        if functionContextRequirements.IsEmpty then [] else contextMemberNames
+        |> List.choose (fun memberName ->
+            defs
+            |> List.tryFind (fun (defName, _, _) -> defName = memberName && not (functionContextRequirements.ContainsKey defName))
+            |> Option.map (fun (defName, _, expr) ->
+                let parameters, _ = defBodyAndParameters expr
+                let ctxFn: ContextFn = sanitizeIdentifier defName, nextContextIndex, parameters.Length
+                nextContextIndex <- nextContextIndex + 1
+                contextFnList <- contextFnList @ [ ctxFn ]
+                memberName, ctxFn))
+        |> Map.ofList
+
+    // The result types the backend can read off definitions' annotations, plus what inference told it.
+    let functionReturnTypes =
+        let fromAnnotations =
+            defs
+            |> List.choose (fun (name, typeOpt, _) ->
+                match unwrapContextType typeOpt with
+                | Some (TypeFunc(_, TypeName "string")) -> Some (name, "string")
+                | Some (TypeFunc(_, TypeName "int")) -> Some (name, "int")
+                | Some (TypeFunc(_, TypeName "bool")) -> Some (name, "bool")
+                | Some (TypeFunc(_, TypeApply("list", _))) -> Some (name, "list")
+                | _ -> None)
+            |> Map.ofList
+        let fromIntrinsics =
+            [ Helpers.stringLength, "int"
+              Helpers.stringByteAt, "int"
+              Helpers.stringSlice, "string"
+              Helpers.stringFromByte, "string" ]
+            |> Map.ofList
+        typedReturnTypes
+        |> Map.fold (fun acc key value -> acc |> Map.add key value) fromAnnotations
+        |> Map.fold (fun acc key value -> acc |> Map.add key value) fromIntrinsics
+
+    let usedHelpers = System.Collections.Generic.HashSet<string>()
+
     let moduleUsesDbg =
         (defs |> List.exists (fun (_, _, expr) -> containsDbgCallExpr expr)) ||
         (contextDefs |> List.exists (fun (_, _, expr) -> containsDbgCallExpr expr)) ||
         (topLevelExprs |> List.exists containsDbgCallExpr)
-    // A user-defined or context-bound `println` shadows the built-in one for the whole module.
-    let contextBoundNames =
-        [ yield! contextBindingsByDef |> Map.toList |> List.collect (snd >> List.collect (Map.toList >> List.map fst))
-          yield! functionContextRequirements |> Map.toList |> List.collect snd ]
-        |> Set.ofList
-    let moduleUsesBuiltinPrintln =
-        not (knownFunctions.Contains printlnName)
-        && not (contextBoundNames.Contains printlnName)
-        && ((defs |> List.exists (fun (_, _, expr) -> containsPrintlnCallExpr expr)) ||
-            (contextDefs |> List.exists (fun (_, _, expr) -> containsPrintlnCallExpr expr)) ||
-            (topLevelExprs |> List.exists containsPrintlnCallExpr))
-    let moduleUsesRegularDbg = 
+    let moduleUsesRegularDbg =
         (defs |> List.exists (fun (_, _, expr) -> containsRegularDbgExpr expr)) ||
         (contextDefs |> List.exists (fun (_, _, expr) -> containsRegularDbgExpr expr)) ||
         (topLevelExprs |> List.exists containsRegularDbgExpr)
@@ -1885,8 +2402,10 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                 | TypeFunc(param, ret) -> param :: extractParamTypes ret
                 | _ -> []
 
+            // `(a, b) -> r` annotates a two-parameter function with one tuple type: split it over the parameters.
             let defParamTypes =
-                match defTypeOpt with
+                match unwrapContextType defTypeOpt with
+                | Some (TypeFunc(TypeTuple items, _)) when items.Length = parameterNames.Length -> items
                 | Some t -> extractParamTypes t
                 | None -> []
 
@@ -1919,6 +2438,7 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                 | TypeName "string" -> Some "string"
                 | TypeName "int" -> Some "int"
                 | TypeName "bool" -> Some "bool"
+                | TypeApply("list", _) -> Some "list"
                 | TypeTuple _ -> Some "tuple"
                 | TypeRecord _ -> Some "record"
                 | TypeFunc _ -> Some "func"
@@ -1988,6 +2508,7 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                 { KnownFunctions = knownFunctions
                   FunctionArities = functionArities
                   FunctionContextRequirements = functionContextRequirements
+                  FunctionReturnTypes = functionReturnTypes
                   Locals = locals
                   DbgTempLocal = dbgLocalName
                   TagIds = tagIdMap
@@ -1996,6 +2517,7 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                   StringLiterals = stringLiteralMap
                   ContextFunctions = contextFunctionsFromParams
                   ContextParams = contextParamsMap
+                  AmbientContextFunctions = ambientContextFunctions
                   PendingUseBindings = ref pendingUseBindings
                   RecordLayouts = initialRecordLayouts
                   TypeLayouts = typeLayouts
@@ -2003,7 +2525,7 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                   RecordFieldTypes = initialRecordFieldTypes
                   ParamTypes = initialParamTypes
                   ValueTypes = initialValueTypes
-                  BuiltinPrintln = moduleUsesBuiltinPrintln }
+                  UsedHelpers = usedHelpers }
             let fn = sanitizeIdentifier name
             
             // Build parameter signature including context params
@@ -2108,6 +2630,7 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                 { KnownFunctions = knownFunctions
                   FunctionArities = functionArities
                   FunctionContextRequirements = functionContextRequirements
+                  FunctionReturnTypes = functionReturnTypes
                   Locals = localMap
                   DbgTempLocal = dbgLocalName
                   TagIds = tagIdMap
@@ -2116,6 +2639,7 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                   StringLiterals = stringLiteralMap
                   ContextFunctions = Map.empty
                   ContextParams = Map.empty
+                  AmbientContextFunctions = ambientContextFunctions
                   PendingUseBindings = ref []
                   RecordLayouts = Map.empty
                   TypeLayouts = typeLayouts
@@ -2123,7 +2647,7 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                   RecordFieldTypes = Map.empty
                   ParamTypes = Map.empty
                   ValueTypes = typedValueTypes
-                  BuiltinPrintln = moduleUsesBuiltinPrintln }
+                  UsedHelpers = usedHelpers }
             let bodyCode =
                 topLevelExprs
                 |> List.map (fun expr -> $"{transpileExpression env expr}\n    drop")
@@ -2134,41 +2658,44 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
             $"  (func $__nanyx_start{header}\n    {bodyCode}\n  )", "  (start $__nanyx_start)"
 
     let moduleUsesDbgHelpers = moduleUsesRegularDbg || moduleUsesDbgString
-    // Anything that writes to stdout shares the WASI import, the memory and the newline byte.
-    let moduleUsesIoHelpers = moduleUsesDbgHelpers || moduleUsesBuiltinPrintln
 
-    // Writes a length-prefixed string, then a newline, to stdout (fd 1). Each goes in its own fd_write
-    // with the iovec at 0 and nwritten at 8: WASI may write only the first iovec of a call.
-    let printlnFunction =
-        [ "  (func $println_str (param $ptr i32)"
-          "    i32.const 0"
-          "    local.get $ptr"
-          "    i32.store"
-          "    i32.const 4"
-          "    local.get $ptr"
-          "    i32.const 4"
-          "    i32.sub"
-          "    i32.load"
-          "    i32.store"
-          "    i32.const 1"
-          "    i32.const 0"
-          "    i32.const 1"
-          "    i32.const 8"
-          "    call $fd_write"
-          "    drop"
-          "    i32.const 0"
-          $"    i32.const {dbgStrNewlineOffset}"
-          "    i32.store"
-          "    i32.const 4"
-          "    i32.const 1"
-          "    i32.store"
-          "    i32.const 1"
-          "    i32.const 0"
-          "    i32.const 1"
-          "    i32.const 8"
-          "    call $fd_write"
-          "    drop"
-          "  )" ]
+    // The runtime helpers the lowered code asked for, closed over what they call themselves.
+    let helperDependencies =
+        [ Helpers.alloc, []
+          Helpers.copyBytes, []
+          Helpers.stringLength, []
+          Helpers.stringAlloc, [ Helpers.alloc ]
+          Helpers.stringByteAt, [ Helpers.stringLength ]
+          Helpers.stringSlice, [ Helpers.stringLength; Helpers.stringAlloc; Helpers.copyBytes ]
+          Helpers.stringFromByte, [ Helpers.stringAlloc ]
+          Helpers.stringConcat, [ Helpers.stringLength; Helpers.stringAlloc; Helpers.copyBytes ]
+          Helpers.stringEquals, [ Helpers.stringLength ]
+          Helpers.writeStdout, [ Helpers.stringLength ]
+          Helpers.listCons, [ Helpers.alloc ]
+          Helpers.listLength, []
+          Helpers.listConcat, [ Helpers.listCons ] ]
+    let rec closeHelpers (acc: Set<string>) (pending: string list) =
+        match pending with
+        | [] -> acc
+        | name :: rest when acc.Contains name -> closeHelpers acc rest
+        | name :: rest ->
+            let deps =
+                helperDependencies
+                |> List.tryFind (fun (helper, _) -> helper = name)
+                |> Option.map snd
+                |> Option.defaultValue []
+            closeHelpers (acc.Add name) (deps @ rest)
+    let usedHelperSet = closeHelpers Set.empty (usedHelpers |> Seq.toList)
+    let moduleUsesWriteStdout = usedHelperSet.Contains Helpers.writeStdout
+    // Anything that writes to stdout shares the WASI import, the memory and the newline byte.
+    let moduleUsesIoHelpers = moduleUsesDbgHelpers || moduleUsesWriteStdout
+    let moduleUsesHeap = moduleUsesHeap || usedHelperSet.Contains Helpers.alloc
+    let renderedHelpers =
+        helperDependencies
+        |> List.map fst
+        |> List.filter usedHelperSet.Contains
+        |> List.map (fun name -> runtimeHelpers |> Map.find name)
+        |> String.concat "\n"
 
     // The `dbg` helpers: `$dbg` prints an integer, `$dbg_str` a string, each prefixed with "dbg: ".
     let dbgFunctions =
@@ -2348,11 +2875,8 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
               "  (export \"memory\" (memory 0))"
               if moduleUsesDbgHelpers then
                   $"  (data (i32.const {dbgDataBaseOffset}) \"dbg: \")"
-              $"  (data (i32.const {dbgStrNewlineOffset}) \"\\0a\")"
-              if moduleUsesDbgHelpers then
-                  yield! dbgFunctions
-              if moduleUsesBuiltinPrintln then
-                  yield! printlnFunction ]
+                  $"  (data (i32.const {dbgStrNewlineOffset}) \"\\0a\")"
+                  yield! dbgFunctions ]
             |> String.concat "\n"
         else
             ""
@@ -2433,6 +2957,7 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
           if not (String.IsNullOrWhiteSpace dbgPrelude) then dbgPrelude
           if not (String.IsNullOrWhiteSpace memorySection) then memorySection
           if not (String.IsNullOrWhiteSpace heapSection) then heapSection
+          if not (String.IsNullOrWhiteSpace renderedHelpers) then renderedHelpers
           if not (String.IsNullOrWhiteSpace contextPrelude) then contextPrelude ]
         |> List.filter (fun line -> not (String.IsNullOrWhiteSpace line))
         |> String.concat "\n\n"
@@ -2450,7 +2975,7 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
         $"(module\n{body}\n)"
 
 let transpileModuleToWat (module': Module) : string =
-    transpileModuleToWatCore module' Map.empty Map.empty
+    transpileModuleToWatCore module' Map.empty Map.empty Map.empty
 
 let transpileTypedModuleToWat (typed: TypedModule) : string =
     let typedBodies =
@@ -2464,4 +2989,12 @@ let transpileTypedModuleToWat (typed: TypedModule) : string =
         |> Map.toList
         |> List.choose (fun (name, ty) -> trySimpleTypeName ty |> Option.map (fun tyName -> name, tyName))
         |> Map.ofList
-    transpileModuleToWatCore typed.Module typedBodies typedValueTypes
+    let typedReturnTypes =
+        typed.Types
+        |> Map.toList
+        |> List.choose (fun (name, ty) ->
+            match ty with
+            | TyFunc(_, returnTy) -> trySimpleTypeName returnTy |> Option.map (fun tyName -> name, tyName)
+            | _ -> None)
+        |> Map.ofList
+    transpileModuleToWatCore typed.Module typedBodies typedValueTypes typedReturnTypes

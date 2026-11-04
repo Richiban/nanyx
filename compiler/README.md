@@ -25,7 +25,7 @@ Currently supports parsing:
   - Simple: `x \f` → `f(x)`
   - With arguments: `x \f(y, z)` → `f(x, y, z)`
   - Chaining: `x \f \g \h` → `h(g(f(x)))`
-- **Binary operators**: `+`, `-`, `*`, `/`, `<`, `>`, `<=`, `>=`, `==`, `!=`
+- **Binary operators**: `++` (concatenation), `+`, `-`, `*`, `/`, `<`, `>`, `<=`, `>=`, `==`, `!=`
   - With correct precedence (multiplication/division before addition/subtraction)
 - **Parenthesized expressions**: `(1 + 2) * 3`
 - **Whitespace handling**: Flexible whitespace and newlines
@@ -45,6 +45,8 @@ compiler/
 ├── Nanyx.Compiler.Cli/        # The `nanyx` executable (C#, Consolo)
 ├── Nyx.Compiler.slnx          # Solution covering all projects
 └── README.md
+
+stdlib/nanyx/                  # The standard library (Nanyx source, embedded into the compiler)
 ```
 
 ## Prerequisites
@@ -139,8 +141,46 @@ the exit code is 0 on success, 1 when the program fails to compile or traps, and
 The project form (`module main` with `@entry def main = { ... }`) runs the same way: `@entry` marks the
 definition the program starts at.
 
-The standard library does not exist yet. `import nanyx/console` is accepted and does nothing, and
-`println` (`string -> unit`) is built in, unless the module declares a context member of that name.
+`println` comes from the standard library's `nanyx/console` module (see below). A script imports it
+explicitly; the module that declares `@entry` gets it implicitly, because the runtime calls the entry
+point inside its `Console` context.
+
+## The standard library
+
+The standard library is an ordinary package named `nanyx`, written in Nanyx, with one module per file
+under [`stdlib/nanyx/`](../stdlib/nanyx) at the repository root. A program imports its modules like any
+other package's: `import nanyx/console`, `import nanyx/text`, or `import nanyx/text as t` for
+qualified access.
+
+It ships inside the compiler. `NanyxCompiler.fsproj` embeds every `stdlib/nanyx/*.nyx` file as a
+resource named `nanyx/<module>.nyx`, so the published single-file `nanyx` binary carries the library
+and reads nothing from disk. `import nanyx/<module>` reads that resource (`StandardLibrary` in
+`Nanyx.Compiler/Builtins.fs`), compiles the module together with the program, and inlines its
+definitions into the program the backend sees; importing a module the library does not have is a
+compile error that lists the ones it does.
+
+| Module          | What it holds                                                                                     |
+| --------------- | ------------------------------------------------------------------------------------------------- |
+| `nanyx/console` | The `Console` context (`print`, `println`) and the instance the runtime supplies to the entry point |
+| `nanyx/text`    | `length`, `substring`, `startsWith`, `endsWith`, `contains`, `toUpper`, `toLower`, `trim`, `repeat`, `split`, `join`, `concat` |
+
+The library is written over a handful of **compiler intrinsics**: operations that cannot be expressed in
+Nanyx itself, such as writing to standard output or reading a byte of a string. They are listed with
+their types in one place, `Intrinsics` in `Nanyx.Compiler/Builtins.fs`, are only in scope while a
+standard-library module is being checked (user code cannot call them), and are lowered by the backend
+onto helper functions it emits with the module (`runtimeHelpers` in `Nanyx.Compiler.Wasm/CodeGen.fs`).
+Their names all start with `__nanyx_`.
+
+Strings are UTF-8 and this first slice of `nanyx/text` works byte by byte: `length` counts bytes,
+`toUpper`/`toLower` only change ASCII letters and `trim` only strips ASCII whitespace. `++` (concatenation) and `==`
+on strings are language operators, lowered by the backend. (The language docs describe this module as
+`string` with `uppercase`/`lowercase`; the module is called `text` and the functions `toUpper`/`toLower`.)
+
+To add a module: create `stdlib/nanyx/<name>.nyx` declaring `module <name>`, mark what it offers with
+`export`, and rebuild; the glob picks it up and `import nanyx/<name>` resolves. Definitions inside a
+module must be written before the definitions that use them (self-recursion is fine). Add an intrinsic
+only when a function genuinely cannot be written in Nanyx: give it a name and type in `Intrinsics`, and
+a WebAssembly body of the same name in `runtimeHelpers`.
 
 ## WebAssembly (MVP)
 
@@ -154,8 +194,13 @@ Current WASM backend support is intentionally minimal and focused on bootstrappi
 - function calls to known module defs
 - simple expression blocks with local `def` assignments (`local.set`/`local.get`)
 - top-level expressions (and the `@entry` definition) run from a WebAssembly start function
-- `println(...)` and `dbg(...)` of integers and strings write to stdout through WASI `fd_write`
+- strings are pointers to length-prefixed UTF-8 bytes; `++` and `==` on strings call emitted helpers
+- list literals, `++` on lists, and list patterns (`[]`, `[x, ...rest]`, `[1, y]`) over cons cells on a bump-allocated heap
+- `dbg(...)` of integers and strings, and `nanyx/console`, write to stdout through WASI `fd_write`
 - `dbg(#tag)` calls a host import `(import "env" "dbg_tag_<tag>" (func))`, which the runtime provides
+- a function that requires a context (`[Console]`) takes its members as function-table slots; a
+  `use` binding supplies them, otherwise a module-level function of the member's name does (that is how
+  the runtime's `Console` reaches `@entry`)
 
 Other language constructs will currently fail fast with an explicit "Unsupported ... for WASM MVP backend" message.
 

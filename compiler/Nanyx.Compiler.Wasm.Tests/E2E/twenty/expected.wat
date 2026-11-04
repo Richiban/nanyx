@@ -173,6 +173,115 @@
     drop
   )
 
+  (global $heap_ptr (mut i32) (i32.const 4096))
+
+  (func $__nanyx_alloc (param $size i32) (result i32)
+    (local $ptr i32)
+    global.get $heap_ptr
+    local.set $ptr
+    local.get $ptr
+    local.get $size
+    i32.add
+    global.set $heap_ptr
+    block $fits
+      loop $grow
+        global.get $heap_ptr
+        memory.size
+        i32.const 65536
+        i32.mul
+        i32.le_u
+        br_if $fits
+        i32.const 1
+        memory.grow
+        i32.const -1
+        i32.eq
+        if
+          unreachable
+        end
+        br $grow
+      end
+    end
+    local.get $ptr
+  )
+  (func $__nanyx_copy_bytes (param $dst i32) (param $src i32) (param $len i32)
+    (local $i i32)
+    block $done
+      loop $copy
+        local.get $i
+        local.get $len
+        i32.ge_s
+        br_if $done
+        local.get $dst
+        local.get $i
+        i32.add
+        local.get $src
+        local.get $i
+        i32.add
+        i32.load8_u
+        i32.store8
+        local.get $i
+        i32.const 1
+        i32.add
+        local.set $i
+        br $copy
+      end
+    end
+  )
+  (func $__nanyx_string_length (param $s i32) (result i32)
+    local.get $s
+    i32.const 4
+    i32.sub
+    i32.load
+  )
+  (func $__nanyx_string_alloc (param $len i32) (result i32)
+    (local $base i32)
+    local.get $len
+    i32.const 5
+    i32.add
+    call $__nanyx_alloc
+    local.set $base
+    local.get $base
+    local.get $len
+    i32.store
+    local.get $base
+    i32.const 4
+    i32.add
+    local.get $len
+    i32.add
+    i32.const 0
+    i32.store8
+    local.get $base
+    i32.const 4
+    i32.add
+  )
+  (func $__nanyx_string_concat (param $a i32) (param $b i32) (result i32)
+    (local $lenA i32)
+    (local $lenB i32)
+    (local $out i32)
+    local.get $a
+    call $__nanyx_string_length
+    local.set $lenA
+    local.get $b
+    call $__nanyx_string_length
+    local.set $lenB
+    local.get $lenA
+    local.get $lenB
+    i32.add
+    call $__nanyx_string_alloc
+    local.set $out
+    local.get $out
+    local.get $a
+    local.get $lenA
+    call $__nanyx_copy_bytes
+    local.get $out
+    local.get $lenA
+    i32.add
+    local.get $b
+    local.get $lenB
+    call $__nanyx_copy_bytes
+    local.get $out
+  )
+
   (type $ctx_fn_1 (func (param i32) (result i32)))
   (table $ctx_table 2 funcref)
   (elem (i32.const 0) $__ctx_main_ToString_int_toString_0 $__ctx_main_ToString_string_toString_1)
@@ -192,13 +301,13 @@
     local.set $yString
     i32.const 260
     local.get $xString
-    i32.add
     i32.const 274
-    i32.add
     local.get $yString
-    i32.add
+    call $__nanyx_string_concat
+    call $__nanyx_string_concat
+    call $__nanyx_string_concat
     local.tee $__dbg_tmp
-    call $dbg
+    call $dbg_str
     local.get $__dbg_tmp
     drop
     local.get $xString

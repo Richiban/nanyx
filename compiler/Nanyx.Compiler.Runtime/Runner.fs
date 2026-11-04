@@ -13,8 +13,8 @@ type RunError =
 ///
 /// The backend turns top-level expressions into a WebAssembly start function, so instantiating the module
 /// runs the program. The program's output goes to this process's stdout: through WASI `fd_write` for
-/// `println` and `dbg` of strings and integers, and through host functions for the `env.dbg_tag_*`
-/// imports that `dbg(#tag)` emits.
+/// `nanyx/console` (the `__nanyx_write_stdout` intrinsic) and `dbg` of strings and integers, and through
+/// host functions for the `env.dbg_tag_*` imports that `dbg(#tag)` emits.
 module WasmRunner =
     let private stripImportPrefix (prefix: string) (name: string) = name.Substring prefix.Length
 

@@ -1,0 +1,23 @@
+module console
+
+-- nanyx/console: how a program talks to the terminal.
+--
+-- `Console` is a context. Code that needs the terminal declares `[Console]` and calls `print` or
+-- `println`, which come from whichever `Console` instance its caller supplies. The definitions
+-- below are the instance the runtime supplies to the program's entry point (and to the top level
+-- of a script): each writes to standard output through the host, via the compiler intrinsic
+-- `__nanyx_write_stdout`.
+
+export context Console = (
+  print: string -> ()
+  println: string -> ()
+)
+
+-- Writes `text` to standard output.
+export def print: string -> () = { text -> __nanyx_write_stdout(text) }
+
+-- Writes `text` followed by a line break to standard output.
+export def println: string -> () = { text ->
+  __nanyx_write_stdout(text)
+  __nanyx_write_stdout(__nanyx_string_from_byte(10))
+}
