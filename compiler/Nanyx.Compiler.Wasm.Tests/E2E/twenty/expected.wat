@@ -25,7 +25,7 @@
       i32.mul
       local.set $n
     end
-    i32.const 192
+    i32.const 133
     local.set $pos
     local.get $isneg
     if

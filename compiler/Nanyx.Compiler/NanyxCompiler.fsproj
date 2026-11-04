@@ -13,6 +13,7 @@
     <Compile Include="Constraints.fs" />
     <Compile Include="Unifier.fs" />
     <Compile Include="Infer.fs" />
+    <Compile Include="Builtins.fs" />
     <Compile Include="Library.fs" />
   </ItemGroup>
 

@@ -111,3 +111,11 @@ let ``E2E - twentyone - import from other file`` () =
 [<Fact>]
 let ``E2E - twentytwo - top-level main call emits start`` () =
     runE2ETest "twentytwo"
+
+[<Fact>]
+let ``E2E - twentythree - built-in println in a script`` () =
+    runE2EFileTest "twentythree"
+
+[<Fact>]
+let ``E2E - twentyfour - entry attribute runs main at start`` () =
+    runE2EFileTest "twentyfour"
