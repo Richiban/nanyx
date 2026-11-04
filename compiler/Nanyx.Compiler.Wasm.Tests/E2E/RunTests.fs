@@ -266,6 +266,30 @@ let ``Run - a compile error exits 1 with the diagnostic on stderr`` () =
     Assert.Contains("Type mismatch", outcome.StandardError)
 
 [<Fact>]
+let ``Run - matching on string literals`` () =
+    // Regression: `| "Sat" -> ...` failed with "Unsupported match pattern" (#32).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def kind: string -> string = { day ->\n" +
+        "  match day\n" +
+        "    | \"Sat\" -> \"weekend\"\n" +
+        "    | \"Sun\" -> \"weekend\"\n" +
+        "    | _ -> \"weekday\"\n" +
+        "}\n" +
+        "def greet: #name(string) | #anon -> string = { who ->\n" +
+        "  match who\n" +
+        "    | #name(\"Ada\") -> \"hello, Ada!\"\n" +
+        "    | #name(_) -> \"hello, someone\"\n" +
+        "    | #anon -> \"hello, stranger\"\n" +
+        "}\n" +
+        "def suffix = \"t\"\n" +
+        "println(kind(\"Sat\") ++ \" \" ++ kind(\"Sun\") ++ \" \" ++ kind(\"Mon\"))\n" +
+        "println(kind(\"Sa\" ++ suffix))\n" +
+        "println(greet(#name(\"Ada\")) ++ \" / \" ++ greet(#name(\"Bob\")) ++ \" / \" ++ greet(#anon))\n"
+    runSource source |> assertRan "weekend weekend weekday\nweekend\nhello, Ada! / hello, someone / hello, stranger\n"
+
+[<Fact>]
 let ``Run - a match with no matching arm exits 1 with a runtime error`` () =
     let source =
         "def pick = { x ->\n" +
