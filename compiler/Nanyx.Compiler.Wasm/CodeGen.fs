@@ -13,7 +13,7 @@ type private ContextFn = string * int * int
 type private FunctionTable =
     { /// Function name -> (WebAssembly name, slot, arity).
       Values: System.Collections.Generic.Dictionary<string, ContextFn>
-      /// The next free slot; starts after the slots the context machinery assigned.
+      /// The next free slot.
       mutable NextSlot: int
       /// The arities of every indirect call made through a local, so a `$ctx_fn_N` type exists for each.
       IndirectArities: System.Collections.Generic.HashSet<int> }
@@ -30,12 +30,14 @@ type private TranspileEnv =
       MatchTempNames: string list
       NextMatchTemp: int
       StringLiterals: Map<string, int>
-      ContextFunctions: Map<string, ContextFn>
-      ContextParams: Map<string, string>
+      /// The context members in scope, by key (see `contextMemberKey`): each is a function value,
+      /// a closure block, and this is the code that pushes it. A function that requires a context gets one
+      /// parameter per member; a `use` binds members to the locals it evaluated its bindings into.
+      ContextMembers: Map<string, string>
       /// Module-level functions that stand in for a context member of the same name when a callee needs a
-      /// context and nothing in scope supplies it: the ambient instance (e.g. the runtime's `Console`).
-      AmbientContextFunctions: Map<string, ContextFn>
-      PendingUseBindings: Map<string, ContextFn> list ref
+      /// context and nothing in scope supplies it: the ambient instance (e.g. the runtime's `Console`). Maps
+      /// the member to the wrapper that lets the function be called as a function value.
+      AmbientContextMembers: Map<string, string>
       RecordLayouts: Map<string, string list>
       TypeLayouts: Map<string, string list>
       TypeFieldTypes: Map<string, Map<string, string>>
@@ -647,6 +649,13 @@ let rec private typeExprToKey (t: TypeExpr) =
         $"{name}_{argsStr}"
     | _ -> "unknown"
 
+/// The key a context member is known by in the backend: the member's name for a plain context, and
+/// `<context key>_<member>` for an instance of a parameterised one (`ToString_int_toString`).
+let private contextMemberKey (contextType: TypeExpr option) (memberName: string) =
+    match contextType with
+    | Some (TypeApply _ as applied) -> $"{typeExprToKey applied}_{memberName}"
+    | _ -> memberName
+
 // Extract context type expressions from a TypeWithContext or TypeContext annotation
 let private extractContextTypes (typeExpr: TypeExpr option) : TypeExpr list =
     match typeExpr with
@@ -777,24 +786,10 @@ let rec private collectExprLocalNames (expr: Expression) : string list =
     | LiteralExpr _
     | IdentifierExpr _ -> []
 
-// Collect names of defs that are used in a `use` statement (context-only defs)
-and private collectContextOnlyDefNames (statements: Statement list) : Set<string> =
-    statements
-    |> List.choose (function
-        | UseStatement (UseValue (IdentifierExpr (name, _))) -> Some name
-        | _ -> None)
-    |> Set.ofList
-
 and private collectStatementLocalNames (statements: Statement list) : string list =
-    let contextOnlyDefs = collectContextOnlyDefNames statements
     statements
     |> List.collect (function
-        | DefStatement(_, name, _, rhs) ->
-            if contextOnlyDefs |> Set.contains name then
-                // Skip context-only defs - they don't need locals
-                []
-            else
-                name :: collectExprLocalNames rhs
+        | DefStatement(_, name, _, rhs) -> name :: collectExprLocalNames rhs
         | ExprStatement expr -> collectExprLocalNames expr
         | ImportStatement _
         | TypeDefStatement _
@@ -1214,110 +1209,6 @@ let private interpolationLocalsFor (expr: Expression) : string list =
         @ [ for index in 0 .. maxInterpolationHoles expr - 1 -> interpolationHoleLocalName index ]
     else
         []
-
-let private collectContextUseBindings (expr: Expression) : (string * Expression) list list =
-    // Helper to extract bindings from a record expression
-    let extractRecordBindings (fields: RecordField list) =
-        fields
-        |> List.choose (function
-            | NamedField(name, value) -> Some (name, value)
-            | PositionalField _ -> None)
-
-    // Collect def bindings in a block that might be used in `use identifier`
-    let rec collectDefsInBlock (statements: Statement list) : Map<string, Expression> =
-        statements
-        |> List.choose (function
-            | DefStatement(_, name, _, rhs) -> Some (name, rhs)
-            | _ -> None)
-        |> Map.ofList
-
-    let rec typeExprToKey (t: TypeExpr) =
-        match t with
-        | TypeName name -> name
-        | TypeVar name -> name
-        | TypeApply(name, typeArgs) -> 
-            let argsStr = typeArgs |> List.map typeExprToKey |> String.concat "_"
-            $"{name}_{argsStr}"
-        | _ -> "unknown"
-
-    let rec collectFromStatement (localDefs: Map<string, Expression>) (stmt: Statement) =
-        match stmt with
-        | UseStatement (UseValue (RecordExpr fields)) ->
-            // Direct record expression: use (println = { msg -> () })
-            [extractRecordBindings fields]
-        | UseStatement (UseValue (IdentifierExpr (name, _))) ->
-            // use identifier - look up in local defs
-            match localDefs |> Map.tryFind name with
-            | Some (RecordExpr fields) -> [extractRecordBindings fields]
-            | _ -> []
-        | UseStatement (UseValue (FunctionCall(_, _, args))) ->
-            match args with
-            | [RecordExpr fields] -> [extractRecordBindings fields]
-            | _ -> []
-        | UseStatement (UseContextInstance(ctxType, RecordExpr fields)) ->
-            // Parameterized context instance: use ToString(int) = (toString = ...)
-            let ctxKey = typeExprToKey ctxType
-            let qualifiedFields = 
-                fields
-                |> List.choose (function
-                    | NamedField(name, value) -> Some ($"{ctxKey}_{name}", value)
-                    | PositionalField _ -> None)
-            [qualifiedFields]
-        | UseStatement (UseContextInstance(_, _)) ->
-            // Other parameterized context forms not yet supported
-            []
-        | DefStatement(_, _, _, rhs) -> collectFromExpr localDefs rhs
-        | ExprStatement value -> collectFromExpr localDefs value
-        | ImportStatement _
-        | TypeDefStatement _ -> []
-        | _ -> []
-    and collectFromExpr (localDefs: Map<string, Expression>) value =
-        match value with
-        | Block statements ->
-            // Collect local defs first for this block scope
-            let blockDefs = collectDefsInBlock statements
-            let mergedDefs = Map.fold (fun acc k v -> Map.add k v acc) localDefs blockDefs
-            statements |> List.collect (collectFromStatement mergedDefs)
-        | IfExpr(cond, thenExpr, elseExpr) ->
-            collectFromExpr localDefs cond @ collectFromExpr localDefs thenExpr @ collectFromExpr localDefs elseExpr
-        | Match(values, arms) ->
-            let valueBindings = values |> List.collect (collectFromExpr localDefs)
-            let armBindings = arms |> List.collect (fun (_, armExpr) -> collectFromExpr localDefs armExpr)
-            valueBindings @ armBindings
-        | Lambda(_, body) -> collectFromExpr localDefs body
-        | Pipe(value, _, _, args) ->
-            collectFromExpr localDefs value @ (args |> List.collect (collectFromExpr localDefs))
-        | FunctionCall(_, _, args) -> args |> List.collect (collectFromExpr localDefs)
-        | TupleExpr items
-        | ListExpr items -> items |> List.collect (collectFromExpr localDefs)
-        | RecordExpr fields ->
-            fields
-            |> List.collect (function
-                | NamedField(_, value) -> collectFromExpr localDefs value
-                | PositionalField value -> collectFromExpr localDefs value)
-        | UseIn(binding, body) ->
-            let bindingBindings =
-                match binding with
-                | UseValue inner -> collectFromExpr localDefs inner
-                | UseContextInstance(_, inner) -> collectFromExpr localDefs inner
-            bindingBindings @ collectFromExpr localDefs body
-        | TagExpr(_, payload) -> payload |> Option.map (collectFromExpr localDefs) |> Option.defaultValue []
-        | MemberAccess(inner, _, _) -> collectFromExpr localDefs inner
-        | ContextMemberAccess(_, _) -> []
-        | ContextMemberCall(_, _, args) -> args |> List.collect (collectFromExpr localDefs)
-        | InterpolatedString parts ->
-            parts
-            |> List.collect (function
-                | StringText _ -> []
-                | StringExpr inner -> collectFromExpr localDefs inner)
-        | WorkflowBindExpr(_, value)
-        | WorkflowReturnExpr value -> collectFromExpr localDefs value
-        | UnitExpr
-        | LiteralExpr _
-        | IdentifierExpr _ -> []
-        | _ -> []
-
-    collectFromExpr Map.empty expr
 
 let private maxOrZero list =
     match list with
@@ -1915,6 +1806,14 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
             |> List.mapi (fun index value ->
                 $"{transpileExpression env value}\n    i32.const {index * 4}\n    call ${Helpers.recordSet}")
         ($"i32.const {values.Length * 4}\n    call ${Helpers.alloc}" :: stores) |> String.concat "\n    "
+
+    // A call through a function value: `closureCode` pushes the closure block, whose first slot is the
+    // function's table slot. The block is passed as the environment, ahead of the arguments.
+    let callClosure (closureCode: string) (argsCode: string list) =
+        let arity = argsCode.Length + 1
+        env.FunctionTable.IndirectArities.Add arity |> ignore
+        ([ closureCode ] @ argsCode @ [ closureCode; "i32.load"; $"call_indirect (type $ctx_fn_{arity})" ])
+        |> String.concat "\n    "
 
     let renderStaticBytes bytes =
         bytes
@@ -2518,32 +2417,17 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                 | _ ->
                     flatArgs |> List.map (transpileExpression env)
             
-            match env.ContextFunctions |> Map.tryFind name with
-            | Some ctxFn ->
-                let prefix = argsCode |> String.concat "\n    "
-                let slot = ctxFnSlot ctxFn
-                let slotCode = 
-                    if slot = -1 then
-                        // Slot comes from a parameter - look up in ContextParams
-                        match env.ContextParams |> Map.tryFind name with
-                        | Some paramName -> $"local.get ${paramName}"
-                        | None -> failwith $"Context function {name} not found in params"
-                    else
-                        $"i32.const {slot}"
-                if prefix = "" then
-                    $"{slotCode}\n    call_indirect (type $ctx_fn_{ctxFnArity ctxFn})"
-                else
-                    $"{prefix}\n    {slotCode}\n    call_indirect (type $ctx_fn_{ctxFnArity ctxFn})"
+            match env.ContextMembers |> Map.tryFind name with
+            | Some memberCode ->
+                // A context member in scope: a function value like any other.
+                callClosure memberCode argsCode
             | None when env.Locals.ContainsKey name || (env.KnownFunctions.Contains name && expectedArity = 0 && not flatArgs.IsEmpty) ->
-                // Calling a parameter, local or top-level value that holds a function value: a closure block
-                // whose first slot is the function's table slot. The block is passed as the environment.
+                // Calling a parameter, local or top-level value that holds a function value.
                 let closureCode =
                     match env.Locals |> Map.tryFind name with
                     | Some localName -> $"local.get ${localName}"
                     | None -> $"call ${sanitizeIdentifier name}"
-                env.FunctionTable.IndirectArities.Add (flatArgs.Length + 1) |> ignore
-                ([ closureCode ] @ argsCode @ [ closureCode; "i32.load"; $"call_indirect (type $ctx_fn_{flatArgs.Length + 1})" ])
-                |> String.concat "\n    "
+                callClosure closureCode argsCode
             | None when NyxCompiler.Intrinsics.isIntrinsic name ->
                 // A compiler intrinsic (only the standard library can call these): a runtime helper of the same
                 // name. Every Nanyx expression leaves an i32, so a unit result is materialised as 0.
@@ -2568,10 +2452,9 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                             let baseName = parts.[0]
                             let memberName = parts.[parts.Length - 1]
                             // Look for an available context with same base name and member name, not already used
-                            let allAvailable = 
-                                (env.ContextFunctions |> Map.toList |> List.map fst) @
-                                (env.ContextParams |> Map.toList |> List.map fst)
-                            allAvailable
+                            env.ContextMembers
+                            |> Map.toList
+                            |> List.map fst
                             |> List.tryFind (fun availKey ->
                                 not (usedContexts.Contains availKey) &&
                                 let availParts = availKey.Split('_')
@@ -2584,37 +2467,25 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                         requiredCtxFns
                         |> List.fold (fun (codeAcc, usedCtxs) ctxFnName ->
                             // Try exact match first, then try compatible match
-                            let resolvedName = 
-                                match env.ContextFunctions |> Map.tryFind ctxFnName, env.ContextParams |> Map.tryFind ctxFnName with
-                                | Some _, _ | _, Some _ -> ctxFnName
-                                | None, None ->
+                            let resolvedName =
+                                if env.ContextMembers.ContainsKey ctxFnName then ctxFnName
+                                else
                                     match findCompatibleContext usedCtxs ctxFnName with
                                     | Some compatible -> compatible
                                     | None -> ctxFnName  // Will fail below with better error
-                            
-                            // Get the context value - either from ContextFunctions (use statement) or ContextParams (passed in)
-                            let code = 
-                                match env.ContextFunctions |> Map.tryFind resolvedName with
-                                | Some ctxFn when ctxFnSlot ctxFn >= 0 ->
-                                    // Fixed slot from a use statement
-                                    $"i32.const {ctxFnSlot ctxFn}"
-                                | Some _ ->
-                                    // Slot from param - look in ContextParams
-                                    match env.ContextParams |> Map.tryFind resolvedName with
-                                    | Some paramName -> $"local.get ${paramName}"
-                                    | None -> failwith $"Context function {resolvedName} not found"
-                                | None ->
-                                    // Not in ContextFunctions - check ContextParams, then the ambient instance
-                                    match env.ContextParams |> Map.tryFind resolvedName, env.AmbientContextFunctions |> Map.tryFind resolvedName with
-                                    | Some paramName, _ -> $"local.get ${paramName}"
-                                    | None, Some ambientFn -> $"i32.const {ctxFnSlot ambientFn}"
-                                    | None, None ->
-                                        let available =
-                                            (env.ContextFunctions |> Map.toList |> List.map fst) @
-                                            (env.ContextParams |> Map.toList |> List.map fst) @
-                                            (env.AmbientContextFunctions |> Map.toList |> List.map fst)
-                                        let availableStr = String.concat ", " available
-                                        failwith $"Context function {ctxFnName} not available in current scope. Available: [{availableStr}]"
+
+                            // The member's closure: one in scope (a parameter or a `use`), else the ambient instance's.
+                            let code =
+                                match env.ContextMembers |> Map.tryFind resolvedName, env.AmbientContextMembers |> Map.tryFind resolvedName with
+                                | Some memberCode, _ -> memberCode
+                                | None, Some wrapper ->
+                                    transpileExpression env (FunctionCall("__closure", None, [ FunctionCall("__slot", None, [ IdentifierExpr(wrapper, None) ]) ]))
+                                | None, None ->
+                                    let available =
+                                        (env.ContextMembers |> Map.toList |> List.map fst) @
+                                        (env.AmbientContextMembers |> Map.toList |> List.map fst)
+                                    let availableStr = String.concat ", " available
+                                    failwith $"Context function {ctxFnName} not available in current scope. Available: [{availableStr}]"
                             (codeAcc @ [code], usedCtxs.Add resolvedName)) ([], Set.empty)
                     let allArgsCode = argsCode @ ctxArgsCode
                     match allArgsCode with
@@ -2623,54 +2494,23 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                         let prefix = allArgsCode |> String.concat "\n    "
                         $"{prefix}\n    call ${sanitizeIdentifier name}"
     | ContextMemberCall(ctxType, memberName, args) ->
-        // Context member call: C(T).f(args) - look up the param for this specific context instantiation
-        let rec typeExprToKey (t: TypeExpr) =
-            match t with
-            | TypeName name -> name
-            | TypeVar name -> name
-            | TypeApply(name, typeArgs) -> 
-                let argsStr = typeArgs |> List.map typeExprToKey |> String.concat "_"
-                $"{name}_{argsStr}"
-            | _ -> failwith $"Unsupported type expression in context access: {t}"
-        let ctxKey = typeExprToKey ctxType
-        let paramKey = $"{ctxKey}_{memberName}"
-        let flatArgs = flattenCallArgs args
-        let argsCode = flatArgs |> List.map (transpileExpression env)
-        // Look up the context param for this qualified member
-        match env.ContextParams |> Map.tryFind paramKey with
-        | Some paramName ->
-            let prefix = argsCode |> String.concat "\n    "
-            if prefix = "" then
-                $"local.get ${paramName}\n    call_indirect (type $ctx_fn_{flatArgs.Length})"
-            else
-                $"{prefix}\n    local.get ${paramName}\n    call_indirect (type $ctx_fn_{flatArgs.Length})"
+        // Context member call: C(T).f(args) - the member of this specific context instantiation
+        let memberKey = contextMemberKey (Some ctxType) memberName
+        let argsCode = flattenCallArgs args |> List.map (transpileExpression env)
+        match env.ContextMembers |> Map.tryFind memberKey with
+        | Some memberCode -> callClosure memberCode argsCode
         | None ->
-            // Also check in ContextFunctions for direct use statements
-            match env.ContextFunctions |> Map.tryFind paramKey with
-            | Some ctxFn ->
-                let prefix = argsCode |> String.concat "\n    "
-                let slot = ctxFnSlot ctxFn
-                if prefix = "" then
-                    $"i32.const {slot}\n    call_indirect (type $ctx_fn_{ctxFnArity ctxFn})"
-                else
-                    $"{prefix}\n    i32.const {slot}\n    call_indirect (type $ctx_fn_{ctxFnArity ctxFn})"
-            | None ->
-                failwith $"Context member {memberName} from {ctxKey} not found in scope. Available: {env.ContextParams |> Map.toList |> List.map fst}, {env.ContextFunctions |> Map.toList |> List.map fst}"
+            failwith $"Context member {memberName} from {typeExprToKey ctxType} not found in scope. Available: {env.ContextMembers |> Map.toList |> List.map fst}"
     | Pipe(value, funcName, rangeOpt, args) ->
         // Pipe x \f(a, b) is the call f(x, a, b), with everything a call gets (contexts, intrinsics, ...).
         transpileExpression env (FunctionCall(funcName, rangeOpt, value :: flattenCallArgs args))
     | Lambda(args, body) when args.IsEmpty ->
         transpileExpression env body
     | Block statements ->
-        // Identify defs that are only used in `use` statements - skip generating code for them
-        let contextOnlyDefs = collectContextOnlyDefNames statements
         let rec transpileStatements env items =
             match items with
             | [] -> failwith "Unsupported block form for WASM MVP backend: block does not end in expression"
             | [ExprStatement expr] -> transpileExpression env expr
-            | DefStatement(_, name, _, _) :: tail when contextOnlyDefs |> Set.contains name ->
-                // Skip context-only defs - lambdas are hoisted to context functions
-                transpileStatements env tail
             | DefStatement(_, name, _, rhs) :: tail ->
                 match env.Locals |> Map.tryFind name with
                 | Some localName ->
@@ -2745,18 +2585,18 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                 let exprCode = transpileExpression env expr
                 let restCode = transpileStatements env tail
                 $"{exprCode}\n    drop\n    {restCode}"
-            | UseStatement _ :: tail ->
-                let pending = env.PendingUseBindings.Value
-                match pending with
-                | [] ->
-                    failwith "Use statement encountered without collected bindings"
-                | nextBindings :: rest ->
-                    env.PendingUseBindings.Value <- rest
-                    let updatedEnv =
-                        nextBindings
-                        |> Map.fold (fun acc name ctxFn ->
-                            { acc with ContextFunctions = acc.ContextFunctions |> Map.add name ctxFn }) env
-                    transpileStatements updatedEnv tail
+            | UseStatement (UseValue (RecordExpr fields)) :: tail ->
+                // Closure conversion evaluated each binding into a local; the members are those locals.
+                let updatedEnv =
+                    fields
+                    |> List.fold (fun acc field ->
+                        match field with
+                        | NamedField(key, IdentifierExpr(local, _)) when acc.Locals.ContainsKey local ->
+                            { acc with ContextMembers = acc.ContextMembers |> Map.add key $"local.get ${acc.Locals.[local]}" }
+                        | _ -> failwith $"Unsupported context binding for WASM MVP backend: {field}") env
+                transpileStatements updatedEnv tail
+            | UseStatement binding :: _ ->
+                failwith $"Unsupported use statement for WASM MVP backend: {binding}"
             | ImportStatement _ :: _
             | TypeDefStatement _ :: _ ->
                 failwith "Unsupported statement form for WASM MVP backend"
@@ -2942,14 +2782,43 @@ module private LambdaLifting =
     /// was a `rec` def, and the names of the variables it captures, in the order they sit in its environment.
     type LiftedOrigin = { Owner: string; LocalName: string option; Captured: string list }
 
+    /// `ty` with the type parameters of a context replaced by the arguments of one of its instances.
+    let rec private substituteTypeParameters (arguments: Map<string, TypeExpr>) (ty: TypeExpr) : TypeExpr =
+        let recur = substituteTypeParameters arguments
+        match ty with
+        | TypeName name
+        | TypeVar name when arguments.ContainsKey name -> arguments.[name]
+        | TypeFunc(input, output) -> TypeFunc(recur input, recur output)
+        | TypeTuple items -> TypeTuple(items |> List.map recur)
+        | TypeApply(name, items) -> TypeApply(name, items |> List.map recur)
+        | other -> other
+
+    /// A lambda bound to a context member, with each parameter it leaves unannotated given the type the member
+    /// declares for it, so the lifted function knows its parameters' types (a string to interpolate, say).
+    let private annotateFromMemberType (memberType: TypeExpr option) (args: (string * TypeExpr option) list) =
+        let declared =
+            match memberType with
+            | Some (TypeFunc(TypeTuple items, _)) when items.Length = args.Length -> items
+            | Some (TypeFunc(input, _)) when args.Length = 1 -> [ input ]
+            | _ -> []
+        if declared.IsEmpty then args
+        else List.map2 (fun (name, annotation) ty -> name, Some (annotation |> Option.defaultValue ty)) args declared
+
     /// Closure conversion. Every function value is a closure block: a tuple of the function's table slot
     /// followed by the values it captures. A lifted function takes that block as its first parameter,
     /// `__env`, and starts by binding each captured name to the matching field; a call through a value
     /// passes the block as the environment and calls the slot it holds. A top-level function used as a
     /// value gets a wrapper that takes and ignores an environment. Lifts the lambdas of a module into
     /// top-level definitions appended at the end, and returns where each came from (lifting runs after
-    /// type checking, so the backend uses that to find the types of parameters and captures).
-    let lift (module': Module) : Module * Map<string, LiftedOrigin> =
+    /// type checking, so the backend uses that to find the types of parameters and captures) and the
+    /// wrapper made for each top-level function used as a value.
+    ///
+    /// A context member is a function value too. Each binding of a `use` is evaluated into a local of its
+    /// own, `__use_<key>_N`, and the statement is left as `use (<key> = __use_<key>_N, ...)`, so a binding
+    /// can be any function-valued expression: a lambda (which may capture), a top-level function, a
+    /// parameter or local. The top-level functions that can stand in for a context member when nothing in
+    /// scope supplies one (the ambient instance, like the runtime's `Console`) get wrappers up front.
+    let lift (module': Module) : Module * Map<string, LiftedOrigin> * Map<string, string> =
         let lifted = System.Collections.Generic.List<TopLevelItem>()
         let origins = System.Collections.Generic.Dictionary<string, LiftedOrigin>()
         let wrappers = System.Collections.Generic.Dictionary<string, string>()
@@ -2962,6 +2831,52 @@ module private LambdaLifting =
                 | Def (ValueDef(_, name, _, Lambda(args, _))) when not args.IsEmpty -> Some (name, args.Length)
                 | _ -> None)
             |> Map.ofList
+
+        /// The type parameters and member types of every record type, by name: contexts are declared as
+        /// records, with or without the `context` modifier.
+        let recordTypes =
+            module'
+            |> List.choose (function
+                | Def (TypeDef(name, _, parameters, TypeRecord fields)) ->
+                    let members =
+                        fields
+                        |> List.choose (function
+                            | TypeField(fieldName, _, _, typeOpt, _)
+                            | TypeMember(fieldName, typeOpt) -> typeOpt |> Option.map (fun ty -> fieldName, ty))
+                        |> Map.ofList
+                    Some (name, (parameters |> List.map fst, members))
+                | _ -> None)
+            |> Map.ofList
+
+        /// The type a context declares for a member: of the named context (with its type parameters bound
+        /// to the instance's arguments), or of any record type with such a member when the context is not named.
+        let memberType (contextType: TypeExpr option) (memberName: string) : TypeExpr option =
+            match contextType with
+            | Some (TypeName name) ->
+                recordTypes |> Map.tryFind name |> Option.bind (fun (_, members) -> members |> Map.tryFind memberName)
+            | Some (TypeApply(name, arguments)) ->
+                recordTypes
+                |> Map.tryFind name
+                |> Option.bind (fun (parameters, members) ->
+                    members
+                    |> Map.tryFind memberName
+                    |> Option.map (fun ty ->
+                        if parameters.Length = arguments.Length then
+                            substituteTypeParameters (List.zip parameters arguments |> Map.ofList) ty
+                        else ty))
+            | _ -> recordTypes |> Map.toSeq |> Seq.tryPick (fun (_, (_, members)) -> members |> Map.tryFind memberName)
+
+        /// The wrapper that lets the top-level function `name` be called as a function value.
+        let wrapperOf (name: string) =
+            match wrappers.TryGetValue name with
+            | true, existing -> existing
+            | _ ->
+                let wrapperName = $"__fn_{sanitizeIdentifier name}"
+                let parameters = [ for index in 1 .. topLevelFunctions.[name] -> $"__arg{index}" ]
+                let call = FunctionCall(name, None, [ TupleExpr (parameters |> List.map (fun p -> IdentifierExpr(p, None))) ])
+                lifted.Add(Def (ValueDef(false, wrapperName, None, Lambda((envParameter, None) :: (parameters |> List.map (fun p -> p, None)), call))))
+                wrappers.[name] <- wrapperName
+                wrapperName
 
         /// The closure block for the lifted function `liftedName` over the given captured names. (A marker
         /// call rather than a tuple, so that `f(closure)` is not flattened into one argument per field.)
@@ -2992,42 +2907,36 @@ module private LambdaLifting =
             | FunctionCall("__for", range, [ iterable; Lambda(args, body) ]) ->
                 let innerScope = Set.union (args |> List.map fst |> Set.ofList) (boundNames body |> Set.ofList)
                 FunctionCall("__for", range, [ recur iterable; Lambda(args, liftExpr (Set.union scope innerScope) body) ])
-            | Lambda(args, body) when not args.IsEmpty ->
-                let parameterNames = args |> List.map fst |> Set.ofList
-                let innerScope = Set.union parameterNames (boundNames body |> Set.ofList)
-                // A lambda nested inside may capture what this one binds and what encloses this one alike;
-                // what it captures from outside is then referenced here, so this lambda captures it in turn.
-                let liftedBody = liftExpr (Set.union scope innerScope) body
-                let captured =
-                    Set.difference (referencedNames liftedBody |> Set.ofList) innerScope
-                    |> Set.intersect scope
-                    |> Set.toList
-                let name = $"__lambda_{counter}"
-                counter <- counter + 1
-                lifted.Add(Def (ValueDef(false, name, None, liftedLambda args captured liftedBody)))
-                origins.[name] <- { Owner = owner; LocalName = None; Captured = captured }
-                closureOf name captured
+            | Lambda(args, body) when not args.IsEmpty -> liftLambda scope args body
             | Lambda(args, body) -> Lambda(args, recur body)
             // A top-level function used as a value: a closure over a wrapper that takes an environment.
             | IdentifierExpr(name, _) when topLevelFunctions.ContainsKey name && not (scope.Contains name) ->
-                let wrapperName =
-                    match wrappers.TryGetValue name with
-                    | true, existing -> existing
-                    | _ ->
-                        let wrapperName = $"__fn_{sanitizeIdentifier name}"
-                        let parameters = [ for index in 1 .. topLevelFunctions.[name] -> $"__arg{index}" ]
-                        let call = FunctionCall(name, None, [ TupleExpr (parameters |> List.map (fun p -> IdentifierExpr(p, None))) ])
-                        lifted.Add(Def (ValueDef(false, wrapperName, None, Lambda((envParameter, None) :: (parameters |> List.map (fun p -> p, None)), call))))
-                        wrappers.[name] <- wrapperName
-                        wrapperName
-                closureOf wrapperName []
+                closureOf (wrapperOf name) []
             | FunctionCall(name, range, args) -> FunctionCall(name, range, args |> List.map recur)
             | Pipe(value, name, range, args) -> Pipe(recur value, name, range, args |> List.map recur)
             | BinaryOp(op, left, right) -> BinaryOp(op, recur left, recur right)
             | IfExpr(cond, thenExpr, elseExpr) -> IfExpr(recur cond, recur thenExpr, recur elseExpr)
             | Block statements ->
+                // The records defined in this block, for `use ctx` where `ctx` is one of them.
+                let localRecords =
+                    statements
+                    |> List.choose (function
+                        | DefStatement(_, name, _, RecordExpr fields) -> Some (name, fields)
+                        | _ -> None)
+                    |> Map.ofList
+                let usedRecords =
+                    statements
+                    |> List.choose (function
+                        | UseStatement(UseValue(IdentifierExpr(name, _))) when localRecords.ContainsKey name -> Some name
+                        | _ -> None)
+                    |> Set.ofList
+                // A lambda bound to a context member is a function even with no parameters.
+                let liftMember contextType memberName value =
+                    match value with
+                    | Lambda(args, body) -> liftLambda scope (annotateFromMemberType (memberType contextType memberName) args) body
+                    | other -> recur other
                 statements
-                |> List.map (function
+                |> List.collect (function
                     // `rec name = { ... }`: a local function that calls itself. It is lifted under a fresh
                     // name with its self-references redirected there (a self-call passes the environment on),
                     // and the local is bound to its closure.
@@ -3043,13 +2952,44 @@ module private LambdaLifting =
                             |> Set.toList
                         lifted.Add(Def (ValueDef(false, liftedName, None, liftedLambda args captured liftedBody)))
                         origins.[liftedName] <- { Owner = owner; LocalName = Some name; Captured = captured }
-                        DefStatement(isExport, name, None, closureOf liftedName captured)
+                        [ DefStatement(isExport, name, None, closureOf liftedName captured) ]
                     | DefStatement(isExport, name, typeOpt, FunctionCall("__rec", _, [ rhs ])) ->
-                        DefStatement(isExport, name, typeOpt, recur rhs)
-                    | DefStatement(isExport, name, typeOpt, rhs) -> DefStatement(isExport, name, typeOpt, recur rhs)
-                    | ExprStatement value -> ExprStatement(recur value)
-                    // `use` bindings are hoisted by the context machinery; leave them to it.
-                    | other -> other)
+                        [ DefStatement(isExport, name, typeOpt, recur rhs) ]
+                    // A record a `use` binds below: its fields are context members.
+                    | DefStatement(isExport, name, typeOpt, RecordExpr fields) when usedRecords.Contains name ->
+                        let fields =
+                            fields
+                            |> List.map (function
+                                | NamedField(memberName, value) -> NamedField(memberName, liftMember None memberName value)
+                                | PositionalField value -> PositionalField(recur value))
+                        [ DefStatement(isExport, name, typeOpt, RecordExpr fields) ]
+                    | DefStatement(isExport, name, typeOpt, rhs) -> [ DefStatement(isExport, name, typeOpt, recur rhs) ]
+                    | ExprStatement value -> [ ExprStatement(recur value) ]
+                    | UseStatement binding as statement ->
+                        let namedFields (fields: RecordField list) =
+                            fields |> List.choose (function NamedField(name, value) -> Some (name, value) | PositionalField _ -> None)
+                        let contextType, bindings =
+                            match binding with
+                            | UseValue(RecordExpr fields) -> None, namedFields fields
+                            | UseValue(FunctionCall(contextName, _, [ RecordExpr fields ])) -> Some (TypeName contextName), namedFields fields
+                            | UseContextInstance(contextType, RecordExpr fields) -> Some contextType, namedFields fields
+                            | UseValue(IdentifierExpr(recordName, range)) when localRecords.ContainsKey recordName ->
+                                None,
+                                namedFields localRecords.[recordName]
+                                |> List.map (fun (name, _) -> name, MemberAccess(IdentifierExpr(recordName, range), name, None))
+                            | _ -> None, []
+                        if bindings.IsEmpty then [ statement ]
+                        else
+                            let locals =
+                                bindings
+                                |> List.map (fun (memberName, value) ->
+                                    let key = contextMemberKey contextType memberName
+                                    let local = $"__use_{sanitizeIdentifier key}_{counter}"
+                                    counter <- counter + 1
+                                    key, local, liftMember contextType memberName value)
+                            [ yield! locals |> List.map (fun (_, local, value) -> DefStatement(false, local, None, value))
+                              UseStatement(UseValue(RecordExpr(locals |> List.map (fun (key, local, _) -> NamedField(key, IdentifierExpr(local, None)))))) ]
+                    | other -> [ other ])
                 |> Block
             | Match(values, arms) -> Match(values |> List.map recur, arms |> List.map (fun (patterns, body) -> patterns, recur body))
             | TupleExpr items -> TupleExpr(items |> List.map recur)
@@ -3057,11 +2997,6 @@ module private LambdaLifting =
             | RecordExpr fields ->
                 fields
                 |> List.map (function
-                    // A record of lambdas is how a context instance is written (`use (f = { ... })`), and the
-                    // context machinery hoists those lambdas itself: leave them in place, lift inside only.
-                    | NamedField(name, Lambda(args, body)) ->
-                        let innerScope = Set.union (args |> List.map fst |> Set.ofList) (boundNames body |> Set.ofList)
-                        NamedField(name, Lambda(args, liftExpr (Set.union scope innerScope) body))
                     | NamedField(name, value) -> NamedField(name, recur value)
                     | PositionalField value -> PositionalField(recur value))
                 |> RecordExpr
@@ -3082,6 +3017,23 @@ module private LambdaLifting =
             | LiteralExpr _
             | IdentifierExpr _ -> expr
 
+        /// Lifts `{ args -> body }` to a fresh top-level function and returns its closure.
+        and liftLambda (scope: Set<string>) (args: (string * TypeExpr option) list) (body: Expression) : Expression =
+            let parameterNames = args |> List.map fst |> Set.ofList
+            let innerScope = Set.union parameterNames (boundNames body |> Set.ofList)
+            // A lambda nested inside may capture what this one binds and what encloses this one alike;
+            // what it captures from outside is then referenced here, so this lambda captures it in turn.
+            let liftedBody = liftExpr (Set.union scope innerScope) body
+            let captured =
+                Set.difference (referencedNames liftedBody |> Set.ofList) innerScope
+                |> Set.intersect scope
+                |> Set.toList
+            let name = $"__lambda_{counter}"
+            counter <- counter + 1
+            lifted.Add(Def (ValueDef(false, name, None, liftedLambda args captured liftedBody)))
+            origins.[name] <- { Owner = owner; LocalName = None; Captured = captured }
+            closureOf name captured
+
         let liftItem (item: TopLevelItem) : TopLevelItem =
             match item with
             // A definition's own lambda is the function being defined; lift inside its body only.
@@ -3098,7 +3050,30 @@ module private LambdaLifting =
             | other -> other
 
         let items = module' |> List.map liftItem
-        items @ List.ofSeq lifted, origins |> Seq.map (fun pair -> pair.Key, pair.Value) |> Map.ofSeq
+
+        // The ambient instance: a top-level function named like a member of a declared context, which takes
+        // no contexts itself, stands in for that member wherever nothing else supplies it. Only worth a
+        // wrapper when some function takes contexts.
+        let takesContexts (typeOpt: TypeExpr option) =
+            match typeOpt with
+            | Some (TypeWithContext _)
+            | Some (TypeContext _) -> true
+            | _ -> false
+        let defTypes =
+            module' |> List.choose (function Def (ValueDef(_, name, typeOpt, _)) -> Some (name, typeOpt) | _ -> None) |> Map.ofList
+        if defTypes |> Map.exists (fun _ typeOpt -> takesContexts typeOpt) then
+            module'
+            |> List.collect (function
+                | Def (TypeDef(_, modifiers, _, TypeRecord fields)) when modifiers |> List.contains Context ->
+                    fields |> List.map (function TypeField(fieldName, _, _, _, _) | TypeMember(fieldName, _) -> fieldName)
+                | _ -> [])
+            |> List.distinct
+            |> List.filter (fun name -> topLevelFunctions.ContainsKey name && not (takesContexts defTypes.[name]))
+            |> List.iter (wrapperOf >> ignore)
+
+        items @ List.ofSeq lifted,
+        origins |> Seq.map (fun pair -> pair.Key, pair.Value) |> Map.ofSeq,
+        wrappers |> Seq.map (fun pair -> pair.Key, pair.Value) |> Map.ofSeq
 
 let private extractTypeLayouts (module': Module) : Map<string, string list> * Map<string, Map<string, string>> =
     let rec typeExprToTypeString (t: TypeExpr) : string =
@@ -3164,7 +3139,7 @@ let private getLayoutFromTypeExpr (typeLayouts: Map<string, string list>) (typeF
     | _ -> None
 
 let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map<string, TypedExpr>) (typedValueTypes: Map<string, string>) (typedReturnTypes: Map<string, string>) (typedTopLevelTys: Map<string, Ty>) : string =
-    let module', liftedOrigins = LambdaLifting.lift module'
+    let module', liftedOrigins, functionWrappers = LambdaLifting.lift module'
     let defs =
         module'
         |> List.choose (function
@@ -3179,47 +3154,7 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
 
     let typeLayouts, typeFieldTypes = extractTypeLayouts module'
 
-    let mutable nextContextIndex = 0
-    let mutable contextDefs: (string * TypeExpr option * Expression) list = []
-    let mutable contextFnList: ContextFn list = []
-    let contextBindingsByDef =
-        defs
-        |> List.map (fun (defName, _, expr) ->
-            let bindings = collectContextUseBindings expr
-            let bindingMaps =
-                bindings
-                |> List.map (fun bindingList ->
-                    bindingList
-                    |> List.map (fun (bindingName, valueExpr) ->
-                        match valueExpr with
-                        | Lambda(args, body) ->
-                            let fnName = $"__ctx_{sanitizeIdentifier defName}_{sanitizeIdentifier bindingName}_{nextContextIndex}"
-                            let ctxFn: ContextFn = fnName, nextContextIndex, args.Length
-                            nextContextIndex <- nextContextIndex + 1
-                            // Lookup the type of this context function from type definitions
-                            let ctxTypeOpt =
-                                typeFieldTypes
-                                |> Map.toSeq
-                                |> Seq.tryPick (fun (_, fields) ->
-                                    fields |> Map.tryFind bindingName)
-                                |> Option.bind (fun typeString ->
-                                    // Parse the type string like "(string) -> (())" into a TypeExpr
-                                    // Check if the param type contains "string"
-                                    if typeString.Contains("(string)") then Some (TypeFunc(TypeName "string", TypeUnit))
-                                    elif typeString.Contains("(int)") then Some (TypeFunc(TypeName "int", TypeUnit))
-                                    else None)
-                            contextDefs <- contextDefs @ [fnName, ctxTypeOpt, Lambda(args, body)]
-                            contextFnList <- contextFnList @ [ctxFn]
-                            bindingName, ctxFn
-                        | _ ->
-                            failwith $"Unsupported context binding for {bindingName}: only lambdas are supported in WASM MVP")
-                    |> Map.ofList)
-            defName, bindingMaps)
-        |> Map.ofList
-
-    let knownFunctions =
-        (defs |> List.map (fun (n, _, _) -> n)) @ (contextDefs |> List.map (fun (n, _, _) -> n))
-        |> Set.ofList
+    let knownFunctions = defs |> List.map (fun (n, _, _) -> n) |> Set.ofList
 
     let functionArities =
         defs
@@ -3263,34 +3198,24 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
     // The ambient context instance: a module-level function named like a member of a declared context stands
     // in for that member whenever a callee requires the context and the caller has nothing else to supply.
     // This is how the runtime-provided `Console` (the functions `nanyx/console` exports) reaches `@entry`.
-    let contextMemberNames =
-        module'
-        |> List.collect (function
-            | Def (TypeDef(_, modifiers, _, TypeRecord fields)) when modifiers |> List.contains Context ->
-                fields
-                |> List.map (function
-                    | TypeField(fieldName, _, _, _, _) -> fieldName
-                    | TypeMember(fieldName, _) -> fieldName)
-            | _ -> [])
-        |> List.distinct
-    let ambientContextFunctions =
-        // Only worth table slots when some function actually takes contexts.
-        if functionContextRequirements.IsEmpty then [] else contextMemberNames
-        |> List.choose (fun memberName ->
-            defs
-            |> List.tryFind (fun (defName, _, _) -> defName = memberName && not (functionContextRequirements.ContainsKey defName))
-            |> Option.map (fun (defName, _, expr) ->
-                let parameters, _ = defBodyAndParameters expr
-                let ctxFn: ContextFn = sanitizeIdentifier defName, nextContextIndex, parameters.Length
-                nextContextIndex <- nextContextIndex + 1
-                contextFnList <- contextFnList @ [ ctxFn ]
-                memberName, ctxFn))
-        |> Map.ofList
+    // Closure conversion made a wrapper for each such function, so the member is a closure over it.
+    let ambientContextMembers =
+        let contextMemberNames =
+            module'
+            |> List.collect (function
+                | Def (TypeDef(_, modifiers, _, TypeRecord fields)) when modifiers |> List.contains Context ->
+                    fields |> List.map (function TypeField(fieldName, _, _, _, _) | TypeMember(fieldName, _) -> fieldName)
+                | _ -> [])
+        if functionContextRequirements.IsEmpty then Map.empty
+        else
+            contextMemberNames
+            |> List.filter (fun memberName -> not (functionContextRequirements.ContainsKey memberName))
+            |> List.choose (fun memberName -> functionWrappers |> Map.tryFind memberName |> Option.map (fun wrapper -> memberName, wrapper))
+            |> Map.ofList
 
-    // Functions used as values take the table slots after the ones the context machinery assigned.
     let functionTable: FunctionTable =
         { Values = System.Collections.Generic.Dictionary<string, ContextFn>()
-          NextSlot = nextContextIndex
+          NextSlot = 0
           IndirectArities = System.Collections.Generic.HashSet<int>() }
 
     // The result types the backend can read off definitions' annotations, plus what inference told it.
@@ -3319,36 +3244,29 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
 
     let moduleUsesDbg =
         (defs |> List.exists (fun (_, _, expr) -> containsDbgCallExpr expr)) ||
-        (contextDefs |> List.exists (fun (_, _, expr) -> containsDbgCallExpr expr)) ||
         (topLevelExprs |> List.exists containsDbgCallExpr)
     let moduleUsesRegularDbg =
         (defs |> List.exists (fun (_, _, expr) -> containsRegularDbgExpr expr)) ||
-        (contextDefs |> List.exists (fun (_, _, expr) -> containsRegularDbgExpr expr)) ||
         (topLevelExprs |> List.exists containsRegularDbgExpr)
     let moduleUsesDbgString = 
         (defs |> List.exists (fun (_, _, expr) -> containsDbgStringLiteralExpr expr)) ||
-        (contextDefs |> List.exists (fun (_, _, expr) -> containsDbgStringLiteralExpr expr)) ||
         (topLevelExprs |> List.exists containsDbgStringLiteralExpr)
     let moduleUsesHeap = 
         (defs |> List.exists (fun (_, _, expr) -> usesHeapAllocationExpr expr)) ||
-        (contextDefs |> List.exists (fun (_, _, expr) -> usesHeapAllocationExpr expr)) ||
         (topLevelExprs |> List.exists usesHeapAllocationExpr)
     let dbgTagNames =
         (defs |> List.collect (fun (_, _, expr) -> collectDbgTagNamesExpr expr)) @
-        (contextDefs |> List.collect (fun (_, _, expr) -> collectDbgTagNamesExpr expr))
-        @ (topLevelExprs |> List.collect collectDbgTagNamesExpr)
+         (topLevelExprs |> List.collect collectDbgTagNamesExpr)
         |> List.distinct
         |> List.sort
     let dbgTagPayloadNames =
         (defs |> List.collect (fun (_, _, expr) -> collectDbgTagPayloadNamesExpr expr)) @
-        (contextDefs |> List.collect (fun (_, _, expr) -> collectDbgTagPayloadNamesExpr expr))
-        @ (topLevelExprs |> List.collect collectDbgTagPayloadNamesExpr)
+         (topLevelExprs |> List.collect collectDbgTagPayloadNamesExpr)
         |> List.distinct
         |> List.sort
     let tagIdMap =
         (defs |> List.collect (fun (_, _, expr) -> collectTagNamesExpr expr)) @
-        (contextDefs |> List.collect (fun (_, _, expr) -> collectTagNamesExpr expr))
-        @ (topLevelExprs |> List.collect collectTagNamesExpr)
+         (topLevelExprs |> List.collect collectTagNamesExpr)
         |> List.distinct
         |> List.sort
         |> List.mapi (fun index name -> name, index + 1)
@@ -3356,13 +3274,12 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
 
     let stringLiterals =
         (defs |> List.collect (fun (_, _, expr) -> collectStringLiteralsExpr expr)) @
-        (contextDefs |> List.collect (fun (_, _, expr) -> collectStringLiteralsExpr expr))
-        @ (topLevelExprs |> List.collect collectStringLiteralsExpr)
+         (topLevelExprs |> List.collect collectStringLiteralsExpr)
         |> List.distinct
 
     let stringLiteralMap, stringLiteralData = buildStringLiteralMap stringLiterals
 
-    let renderFunction (name: string) (defTypeOpt: TypeExpr option) (expr: Expression) (typedExprOpt: TypedExpr option) (exportFn: bool) (pendingUseBindings: Map<string, ContextFn> list) =
+    let renderFunction (name: string) (defTypeOpt: TypeExpr option) (expr: Expression) (typedExprOpt: TypedExpr option) (exportFn: bool) =
             let parameters, bodyExpr = defBodyAndParameters expr
             let parameterNames = parameters |> List.map fst
             let parameterMap = createNameMap parameterNames
@@ -3474,10 +3391,16 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                 | TypeRecord _ -> Some "record"
                 | TypeFunc _ -> Some "func"
                 | _ -> None
+            // A parameter the def's annotation doesn't cover may carry its own (a lambda bound to a context
+            // member is annotated with the member's parameter types when it is lifted).
             let initialParamTypes =
-                List.zip parameterNames (defParamTypes @ List.replicate (parameterNames.Length - defParamTypes.Length) TypeUnit)
-                |> List.choose (fun (paramName, paramType) ->
-                    typeExprToString paramType |> Option.map (fun t -> paramName, t))
+                parameters
+                |> List.mapi (fun index (paramName, annotation) ->
+                    List.tryItem index defParamTypes
+                    |> Option.orElse annotation
+                    |> Option.bind typeExprToString
+                    |> Option.map (fun t -> paramName, t))
+                |> List.choose id
                 |> Map.ofList
 
             let typedLocalValueTypes =
@@ -3503,42 +3426,10 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                 requiredContextFns
                 |> List.map (fun ctxFnName -> (ctxFnName, $"__ctx_{sanitizeIdentifier ctxFnName}"))
 
-            // Context functions from params - they don't have fixed slots, the slot comes from the param value
-            // We'll use ContextParams to store the param name for each context fn
-            let contextParamsMap =
+            // Each member arrives as a closure block in a parameter of its own.
+            let contextMembersFromParams =
                 contextParamNames
-                |> Map.ofList
-
-            // Determine arity of each context function from type definitions
-            let contextFunctionsFromParams =
-                contextParamNames
-                |> List.mapi (fun _ (ctxFnName, paramName) ->
-                    // Look up the context function's arity from the type field definitions
-                    // ctxFnName is qualified like "ToString_a_toString" - extract base context name and member
-                    let arity =
-                        // Try to find by splitting on last underscore to get member name
-                        let lastUnderscoreIdx = ctxFnName.LastIndexOf('_')
-                        let memberName = if lastUnderscoreIdx > 0 then ctxFnName.Substring(lastUnderscoreIdx + 1) else ctxFnName
-                        typeFieldTypes
-                        |> Map.toList
-                        |> List.tryPick (fun (_, fieldTypes) ->
-                            fieldTypes |> Map.tryFind memberName
-                            |> Option.bind (fun typeStr ->
-                                // Parse arity from type like "(string) -> (())" or "(int, int) -> (int)"
-                                // Count commas in the param section to determine arity
-                                let arrowIdx = typeStr.IndexOf("->")
-                                if arrowIdx < 0 then None
-                                else
-                                    let paramPart = typeStr.Substring(0, arrowIdx).Trim()
-                                    // Count params by counting commas + 1, but handle empty params "()"
-                                    if paramPart = "()" || paramPart = "(())" then Some 0
-                                    else
-                                        let commas = paramPart |> Seq.filter ((=) ',') |> Seq.length
-                                        Some (commas + 1)))
-                        |> Option.defaultValue 1
-                    // The slot isn't known at compile time - it's in the param
-                    // We use -1 as a marker meaning "read from ContextParams"
-                    ctxFnName, (paramName, -1, arity))
+                |> List.map (fun (ctxFnName, paramName) -> ctxFnName, $"local.get ${paramName}")
                 |> Map.ofList
 
             let env =
@@ -3552,10 +3443,8 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                   MatchTempNames = matchTempNames
                   NextMatchTemp = 0
                   StringLiterals = stringLiteralMap
-                  ContextFunctions = contextFunctionsFromParams
-                  ContextParams = contextParamsMap
-                  AmbientContextFunctions = ambientContextFunctions
-                  PendingUseBindings = ref pendingUseBindings
+                  ContextMembers = contextMembersFromParams
+                  AmbientContextMembers = ambientContextMembers
                   RecordLayouts = initialRecordLayouts
                   TypeLayouts = typeLayouts
                   TypeFieldTypes = typeFieldTypes
@@ -3611,7 +3500,6 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
     let renderedUserFunctions =
         defs
         |> List.map (fun (name, typeOpt, expr) ->
-            let pending = contextBindingsByDef |> Map.tryFind name |> Option.defaultValue []
             let typedExprOpt =
                 typedFunctionBodies
                 |> Map.tryFind name
@@ -3651,15 +3539,9 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                                 | _ -> TyVar { Id = -1; Name = None }
                             let inputTy = TyRecord (Map.ofList (("0", envTy) :: parameterTys))
                             { Expr = expr; Type = TyFunc(inputTy, returnTy); Body = None; Statements = None; MatchArms = None })))
-            renderFunction name typeOpt expr typedExprOpt true pending)
+            renderFunction name typeOpt expr typedExprOpt true)
 
-    let renderedContextFunctions =
-        contextDefs
-        |> List.map (fun (name, typeOpt, expr) -> renderFunction name typeOpt expr None false [])
-
-    let renderedFunctions =
-        renderedUserFunctions @ renderedContextFunctions
-        |> String.concat "\n\n"
+    let renderedFunctions = renderedUserFunctions |> String.concat "\n\n"
 
     let renderedStartFunction, startDirective =
         if topLevelExprs.IsEmpty then
@@ -3718,10 +3600,8 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                   MatchTempNames = matchTempNames
                   NextMatchTemp = 0
                   StringLiterals = stringLiteralMap
-                  ContextFunctions = Map.empty
-                  ContextParams = Map.empty
-                  AmbientContextFunctions = ambientContextFunctions
-                  PendingUseBindings = ref []
+                  ContextMembers = Map.empty
+                  AmbientContextMembers = ambientContextMembers
                   RecordLayouts = Map.empty
                   TypeLayouts = typeLayouts
                   TypeFieldTypes = typeFieldTypes
@@ -3969,8 +3849,8 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
         else
             ""
 
-    // Every function body has been rendered by now, so the function-value slots are final: add them to the table.
-    contextFnList <- contextFnList @ (functionTable.Values.Values |> Seq.toList)
+    // Every function body has been rendered by now, so the function-value slots are final.
+    let contextFnList = functionTable.Values.Values |> Seq.toList
 
     let contextTypeDefs =
         (contextFnList |> List.map ctxFnArity) @ (functionTable.IndirectArities |> Seq.toList)
