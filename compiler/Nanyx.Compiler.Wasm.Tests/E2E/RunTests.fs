@@ -364,6 +364,47 @@ let ``Run - a function annotated as returning a function returns a closure`` () 
     runSource source |> assertRan "dbg: 15\n"
 
 [<Fact>]
+let ``Run - a lambda argument's inferred parameter types`` () =
+    // A lambda passed to a call is lifted to a function of its own; its parameters' types come from the typed
+    // call it was an argument of, so `p.x` has a record layout and `"{n}"` an interpolation type.
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "type P = (x: int)\n" +
+        "def apply: P, (P -> int) -> int = { p, f -> f(p) }\n" +
+        "def mapOption\n" +
+        "  : (#some(a) | r), (a -> b) -> (#some(b) | r)\n" +
+        "  = { | #some(a), f -> #some(f(a))\n" +
+        "      | other, _ -> other }\n" +
+        "\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  def n = P(x = 3) \\apply { p -> p.x }\n" +
+        "  def x: #some(int) | #notFound = #some(n)\n" +
+        "  def m = x \\mapOption { v -> \"got {v}\" }\n" +
+        "  match m\n" +
+        "    | #some(s) -> println(s)\n" +
+        "    | #notFound -> println(\"none\")\n" +
+        "}\n"
+    runSource source |> assertRan "got 3\n"
+
+[<Fact>]
+let ``Run - calling a unit function whose lambda takes a parameter`` () =
+    // `{ _ -> ... }` has one parameter, the unit, which `getData()` passes.
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def getData: () -> #some(int) | #notFound = { _ -> #some(42) }\n" +
+        "\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  match getData()\n" +
+        "    | #some(n) -> println(\"got {n}\")\n" +
+        "    | #notFound -> println(\"none\")\n" +
+        "}\n"
+    runSource source |> assertRan "got 42\n"
+
+[<Fact>]
 let ``Run - interpolating variables bound by match patterns`` () =
     // Regression: the backend did not know the type of a pattern-bound name, so `"{n}"` inside a
     // match arm failed with "Unable to determine interpolated value type" (#35).

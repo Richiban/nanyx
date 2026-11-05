@@ -969,6 +969,25 @@ let private patternBoundValueTypes (typedPattern: TypedPattern) : (string * stri
         | _ -> []
     boundTypes typedPattern.Pattern typedPattern.Type
 
+/// The typed expression for `target` (an expression as written, ranges and all) within `typedExpr`.
+let rec private tryFindTypedExpr (target: Expression) (typedExpr: TypedExpr) : TypedExpr option =
+    if typedExpr.Expr = target then
+        Some typedExpr
+    else
+        let inStatement statement =
+            match statement with
+            | TypedDefStatement(_, _, _, expr)
+            | TypedExprStatement expr
+            | TypedUseStatement(_, Some expr) -> tryFindTypedExpr target expr
+            | TypedUseStatement(_, None)
+            | TypedImportStatement _
+            | TypedTypeDefStatement _ -> None
+        typedExpr.Body
+        |> Option.bind (tryFindTypedExpr target)
+        |> Option.orElseWith (fun () -> typedExpr.Statements |> Option.bind (List.tryPick inStatement))
+        |> Option.orElseWith (fun () -> typedExpr.MatchArms |> Option.bind (List.tryPick (snd >> tryFindTypedExpr target)))
+        |> Option.orElseWith (fun () -> typedExpr.Arguments |> Option.bind (List.tryPick (tryFindTypedExpr target)))
+
 /// The full inferred types of a function's parameters and the locals defined anywhere in its body.
 let private collectTypedValueTys (typedExpr: TypedExpr) : Map<string, Ty> =
     let parameterTys =
@@ -2414,6 +2433,9 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                 | _ when expectedArity = 1 && flatArgs.Length > 1 ->
                     // `f(a, b)` and `f((a, b))` parse alike; a one-parameter callee takes the whole tuple.
                     [ transpileExpression env (Expression.from expr (TupleExpr flatArgs)) ]
+                | [] when expectedArity = 1 ->
+                    // `f()` on a `() -> a` written `{ _ -> ... }`: its one parameter is the unit.
+                    [ transpileExpression env (Expression.from expr UnitExpr) ]
                 | _ ->
                     flatArgs |> List.map (transpileExpression env)
             
@@ -2783,7 +2805,8 @@ module private LambdaLifting =
 
     /// Where a lifted function came from: the top-level def it was written in, its local name there if it
     /// was a `rec` def, and the names of the variables it captures, in the order they sit in its environment.
-    type LiftedOrigin = { Owner: string; LocalName: string option; Captured: string list }
+    /// A lambda lifted from a call's argument also keeps the lambda as written, to find its type in the owner's.
+    type LiftedOrigin = { Owner: string; LocalName: string option; Captured: string list; Source: Expression option }
 
     /// `ty` with the type parameters of a context replaced by the arguments of one of its instances.
     let rec private substituteTypeParameters (arguments: Map<string, TypeExpr>) (ty: TypeExpr) : TypeExpr =
@@ -2958,7 +2981,7 @@ module private LambdaLifting =
                             |> Set.intersect scope
                             |> Set.toList
                         lifted.Add(Def (ValueDef(false, liftedName, None, liftedLambda lambda args captured liftedBody)))
-                        origins.[liftedName] <- { Owner = owner; LocalName = Some name; Captured = captured }
+                        origins.[liftedName] <- { Owner = owner; LocalName = Some name; Captured = captured; Source = None }
                         [ DefStatement(isExport, name, None, closureOf lambda liftedName captured) ]
                     | DefStatement(isExport, name, typeOpt, Kind (FunctionCall("__rec", _, [ rhs ]))) ->
                         [ DefStatement(isExport, name, typeOpt, recur rhs) ]
@@ -3041,7 +3064,7 @@ module private LambdaLifting =
             let name = $"__lambda_{counter}"
             counter <- counter + 1
             lifted.Add(Def (ValueDef(false, name, None, liftedLambda lambda args captured liftedBody)))
-            origins.[name] <- { Owner = owner; LocalName = None; Captured = captured }
+            origins.[name] <- { Owner = owner; LocalName = None; Captured = captured; Source = Some lambda }
             closureOf lambda name captured
 
         let liftItem (item: TopLevelItem) : TopLevelItem =
@@ -3531,24 +3554,31 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                                 |> Map.ofList
                                 |> Map.add "0" (TyPrimitive "int")
                                 |> TyRecord
-                            let localTy = origin.LocalName |> Option.bind (fun localName -> ownerTys |> Map.tryFind localName)
+                            // A lambda passed to a call is found as written among the owner's typed call arguments.
+                            let sourceTyped = origin.Source |> Option.bind (fun source -> tryFindTypedExpr source ownerTyped)
+                            let localTy =
+                                match origin.LocalName with
+                                | Some localName -> ownerTys |> Map.tryFind localName
+                                | None -> sourceTyped |> Option.map (fun typed -> typed.Type)
                             let parameterTys =
-                                match localTy with
-                                | Some (TyFunc(TyRecord fields, _)) ->
+                                match localTy, origin.Source with
+                                | Some (TyFunc(single, _)), Some (Kind (Lambda([ _ ], _))) -> [ "1", single ]
+                                | Some (TyFunc(TyRecord fields, _)), _ ->
                                     fields
                                     |> Map.toList
                                     |> List.choose (fun (key, ty) ->
                                         match Int32.TryParse key with
                                         | true, index -> Some (string (index + 1), ty)
                                         | _ -> None)
-                                | Some (TyFunc(single, _)) -> [ "1", single ]
+                                | Some (TyFunc(single, _)), _ -> [ "1", single ]
                                 | _ -> []
                             let returnTy =
                                 match localTy with
                                 | Some (TyFunc(_, ret)) -> ret
                                 | _ -> TyVar { Id = -1; Name = None }
                             let inputTy = TyRecord (Map.ofList (("0", envTy) :: parameterTys))
-                            { Expr = expr; Type = TyFunc(inputTy, returnTy); Body = None; Statements = None; MatchArms = None })))
+                            { Expr = expr; Type = TyFunc(inputTy, returnTy); Body = sourceTyped |> Option.bind (fun typed -> typed.Body)
+                              Statements = None; MatchArms = None; Arguments = None })))
             renderFunction name typeOpt expr typedExprOpt true)
 
     let renderedFunctions = renderedUserFunctions |> String.concat "\n\n"

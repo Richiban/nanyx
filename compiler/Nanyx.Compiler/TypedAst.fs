@@ -17,9 +17,11 @@ type Ty =
     | TyApply of string * Ty list
     | TyUnion of Ty list
 
-/// A simple typed expression placeholder for future expansion.
+/// A simple typed expression placeholder for future expansion. `Arguments` are a call's arguments (a pipe's
+/// include the piped value first), so a lambda passed to a call keeps its inferred type.
 type TypedExpr =
-    { Expr: Expression; Type: Ty; Body: TypedExpr option; Statements: TypedStatement list option; MatchArms: TypedMatchArm list option }
+    { Expr: Expression; Type: Ty; Body: TypedExpr option; Statements: TypedStatement list option; MatchArms: TypedMatchArm list option
+      Arguments: TypedExpr list option }
 
 and TypedPattern =
     { Pattern: Pattern; Type: Ty }

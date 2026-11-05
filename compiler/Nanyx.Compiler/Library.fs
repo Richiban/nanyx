@@ -462,7 +462,8 @@ module Compiler =
                 Type = Unifier.apply subst typedExpr.Type
                 Body = typedExpr.Body |> Option.map applyTypedExpr
                 Statements = typedExpr.Statements |> Option.map (List.map applyTypedStatement)
-                MatchArms = typedExpr.MatchArms |> Option.map (List.map applyTypedMatchArm) }
+                MatchArms = typedExpr.MatchArms |> Option.map (List.map applyTypedMatchArm)
+                Arguments = typedExpr.Arguments |> Option.map (List.map applyTypedExpr) }
         and applyTypedStatement statement =
             match statement with
             | TypedDefStatement(isExport, name, typeOpt, expr) ->
