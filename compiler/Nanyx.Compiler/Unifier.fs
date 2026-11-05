@@ -27,7 +27,7 @@ module Unifier =
         else
             None, namedFields
 
-    let rec private tyToString (ty: Ty) : string =
+    let rec tyToString (ty: Ty) : string =
         match ty with
         | TyPrimitive name -> name
         | TyVar v ->
