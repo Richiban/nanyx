@@ -15,7 +15,7 @@ let ``Parse string literal`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, LiteralExpr (StringLit value))) ->
+        | Def (ValueDef (_, name, _, Kind (LiteralExpr (StringLit value)))) ->
             name |> should equal "message"
             value |> should equal "Hello world"
         | _ -> failwith "Expected Def with StringLit"
@@ -30,7 +30,7 @@ let ``Parse integer literal`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, LiteralExpr (IntLit value))) ->
+        | Def (ValueDef (_, name, _, Kind (LiteralExpr (IntLit value)))) ->
             name |> should equal "count"
             value |> should equal 42
         | _ -> failwith "Expected Def with IntLit"
@@ -45,7 +45,7 @@ let ``Parse float literal`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, LiteralExpr (FloatLit value))) ->
+        | Def (ValueDef (_, name, _, Kind (LiteralExpr (FloatLit value)))) ->
             name |> should equal "pi"
             value |> should equal 3.14159
         | _ -> failwith "Expected Def with FloatLit"
@@ -60,7 +60,7 @@ let ``Parse boolean true`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, LiteralExpr (BoolLit value))) ->
+        | Def (ValueDef (_, name, _, Kind (LiteralExpr (BoolLit value)))) ->
             name |> should equal "flag"
             value |> should equal true
         | _ -> failwith "Expected Def with BoolLit"
@@ -75,7 +75,7 @@ let ``Parse boolean false`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, LiteralExpr (BoolLit value))) ->
+        | Def (ValueDef (_, name, _, Kind (LiteralExpr (BoolLit value)))) ->
             name |> should equal "flag"
             value |> should equal false
         | _ -> failwith "Expected Def with BoolLit"
@@ -169,7 +169,7 @@ let ``Parse definition with newline before equals`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, LiteralExpr (IntLit value))) ->
+        | Def (ValueDef (_, name, _, Kind (LiteralExpr (IntLit value)))) ->
             name |> should equal "x"
             value |> should equal 1
         | _ -> failwith "Expected Def with IntLit"
@@ -185,7 +185,7 @@ let ``Parse typed definition with newline before equals`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, Some _, Lambda _)) ->
+        | Def (ValueDef (_, name, Some _, Kind (Lambda _))) ->
             name |> should equal "f"
         | _ -> failwith "Expected typed Def with Lambda"
     | Result.Error err -> failwith $"Parse should succeed, got: {err}"
@@ -200,7 +200,7 @@ let ``Parse context-typed definition with newline before equals`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, Some _, Lambda _)) ->
+        | Def (ValueDef (_, name, Some _, Kind (Lambda _))) ->
             name |> should equal "f"
         | _ -> failwith "Expected context-typed Def with Lambda"
     | Result.Error err -> failwith $"Parse should succeed, got: {err}"
@@ -215,7 +215,7 @@ let ``Parse identifier expression`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, IdentifierExpr(value, _))) ->
+        | Def (ValueDef (_, name, _, Kind (IdentifierExpr value))) ->
             name |> should equal "x"
             value |> should equal "someValue"
         | _ -> failwith "Expected Def with IdentifierExpr"
@@ -259,7 +259,7 @@ let ``Parse simple member access`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, MemberAccess(IdentifierExpr(objName, _), fieldName, _))) ->
+        | Def (ValueDef (_, name, _, Kind (MemberAccess(Kind (IdentifierExpr objName), fieldName, _)))) ->
             name |> should equal "x"
             objName |> should equal "point"
             fieldName |> should equal "x"
@@ -275,7 +275,7 @@ let ``Parse nested member access`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, MemberAccess(MemberAccess(IdentifierExpr(outer, _), inner, _), value, _))) ->
+        | Def (ValueDef (_, name, _, Kind (MemberAccess(Kind (MemberAccess(Kind (IdentifierExpr outer), inner, _)), value, _)))) ->
             name |> should equal "x"
             outer |> should equal "outer"
             inner |> should equal "inner"
@@ -292,7 +292,7 @@ let ``Parse member access in binary operation`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, BinaryOp("+", MemberAccess(IdentifierExpr(p1, _), f1, _), MemberAccess(IdentifierExpr(p2, _), f2, _)))) ->
+        | Def (ValueDef (_, name, _, Kind (BinaryOp("+", Kind (MemberAccess(Kind (IdentifierExpr p1), f1, _)), Kind (MemberAccess(Kind (IdentifierExpr p2), f2, _)))))) ->
             name |> should equal "sum"
             p1 |> should equal "point"
             f1 |> should equal "x"
@@ -422,7 +422,7 @@ let ``Parse function call with no arguments`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, FunctionCall (funcName, _, args))) ->
+        | Def (ValueDef (_, name, _, Kind (FunctionCall (funcName, _, args)))) ->
             name |> should equal "x"
             funcName |> should equal "foo"
             args |> should haveLength 0
@@ -438,11 +438,11 @@ let ``Parse function call with one argument`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, FunctionCall (funcName, _, args))) ->
+        | Def (ValueDef (_, name, _, Kind (FunctionCall (funcName, _, args)))) ->
             name |> should equal "x"
             funcName |> should equal "println"
             args |> should haveLength 1
-            match args.[0] with
+            match args.[0].Kind with
             | LiteralExpr (StringLit value) -> value |> should equal "Hello"
             | _ -> failwith "Expected string literal argument"
         | _ -> failwith "Expected Def with FunctionCall"
@@ -457,13 +457,13 @@ let ``Parse function call with multiple arguments`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, FunctionCall (funcName, _, args))) ->
+        | Def (ValueDef (_, name, _, Kind (FunctionCall (funcName, _, args)))) ->
             name |> should equal "result"
             funcName |> should equal "add"
             // With comma operator, f(x, y) creates a single tuple argument
             args |> should haveLength 1
-            match args.[0] with
-            | TupleExpr [LiteralExpr (IntLit v1); LiteralExpr (IntLit v2)] -> 
+            match args.[0].Kind with
+            | TupleExpr [Kind (LiteralExpr (IntLit v1)); Kind (LiteralExpr (IntLit v2))] -> 
                 v1 |> should equal 1
                 v2 |> should equal 2
             | _ -> failwith "Expected tuple of int literal arguments"
@@ -479,12 +479,12 @@ let ``Parse function call with identifier argument`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, FunctionCall (funcName, _, args))) ->
+        | Def (ValueDef (_, name, _, Kind (FunctionCall (funcName, _, args)))) ->
             name |> should equal "y"
             funcName |> should equal "foo"
             args |> should haveLength 1
-            match args.[0] with
-            | IdentifierExpr (id, _) -> id |> should equal "x"
+            match args.[0].Kind with
+            | IdentifierExpr id -> id |> should equal "x"
             | _ -> failwith "Expected identifier argument"
         | _ -> failwith "Expected Def with FunctionCall"
     | Result.Error err -> failwith $"Parse should succeed, got: {err}"
@@ -498,15 +498,15 @@ let ``Parse nested function calls`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, FunctionCall (funcName, _, args))) ->
+        | Def (ValueDef (_, name, _, Kind (FunctionCall (funcName, _, args)))) ->
             name |> should equal "x"
             funcName |> should equal "outer"
             args |> should haveLength 1
-            match args.[0] with
+            match args.[0].Kind with
             | FunctionCall (innerName, _, innerArgs) ->
                 innerName |> should equal "inner"
                 innerArgs |> should haveLength 1
-                match innerArgs.[0] with
+                match innerArgs.[0].Kind with
                 | LiteralExpr (IntLit v) -> v |> should equal 42
                 | _ -> failwith "Expected int literal in inner call"
             | _ -> failwith "Expected nested function call"
@@ -523,10 +523,10 @@ let ``Parse lambda with no parameters`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Lambda (parameters, body))) ->
+        | Def (ValueDef (_, name, _, Kind (Lambda (parameters, body)))) ->
             name |> should equal "f"
             parameters |> should haveLength 0
-            match body with
+            match body.Kind with
             | LiteralExpr (IntLit v) -> v |> should equal 42
             | _ -> failwith "Expected int literal in lambda body"
         | _ -> failwith "Expected Def with Lambda"
@@ -541,12 +541,12 @@ let ``Parse lambda with one parameter`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Lambda (parameters, body))) ->
+        | Def (ValueDef (_, name, _, Kind (Lambda (parameters, body)))) ->
             name |> should equal "f"
             parameters |> should haveLength 1
             parameters.[0] |> fst |> should equal "x"
-            match body with
-            | IdentifierExpr (id, _) -> id |> should equal "x"
+            match body.Kind with
+            | IdentifierExpr id -> id |> should equal "x"
             | _ -> failwith "Expected identifier in lambda body"
         | _ -> failwith "Expected Def with Lambda"
     | Result.Error err -> failwith $"Parse should succeed, got: {err}"
@@ -560,7 +560,7 @@ let ``Parse lambda with multiple parameters`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Lambda (parameters, body))) ->
+        | Def (ValueDef (_, name, _, Kind (Lambda (parameters, body)))) ->
             name |> should equal "add"
             parameters |> should haveLength 2
             parameters.[0] |> fst |> should equal "x"
@@ -577,11 +577,11 @@ let ``Parse lambda with function call in body`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Lambda (parameters, body))) ->
+        | Def (ValueDef (_, name, _, Kind (Lambda (parameters, body)))) ->
             name |> should equal "f"
             parameters |> should haveLength 1
             parameters.[0] |> fst |> should equal "x"
-            match body with
+            match body.Kind with
             | FunctionCall (funcName, _, args) ->
                 funcName |> should equal "println"
                 args |> should haveLength 1
@@ -598,13 +598,13 @@ let ``Parse lambda as function argument`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, FunctionCall (funcName, _, args))) ->
+        | Def (ValueDef (_, name, _, Kind (FunctionCall (funcName, _, args)))) ->
             name |> should equal "x"
             funcName |> should equal "map"
             // With comma operator, f(x, y) creates a single tuple argument
             args |> should haveLength 1
-            match args.[0] with
-            | TupleExpr [Lambda (parameters, _); IdentifierExpr("items", _)] ->
+            match args.[0].Kind with
+            | TupleExpr [Kind (Lambda (parameters, _)); Kind (IdentifierExpr "items")] ->
                 parameters |> should haveLength 1
                 parameters.[0] |> fst |> should equal "x"
             | _ -> failwith "Expected tuple with lambda and identifier"
@@ -621,13 +621,13 @@ let ``Parse shorthand lambda with binary operator`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Lambda (parameters, body))) ->
+        | Def (ValueDef (_, name, _, Kind (Lambda (parameters, body)))) ->
             name |> should equal "multiply"
             parameters |> should haveLength 2
             parameters.[0] |> fst |> should equal "x"
             parameters.[1] |> fst |> should equal "y"
-            match body with
-            | BinaryOp (op, IdentifierExpr(left, _), IdentifierExpr(right, _)) ->
+            match body.Kind with
+            | BinaryOp (op, Kind (IdentifierExpr left), Kind (IdentifierExpr right)) ->
                 op |> should equal "*"
                 left |> should equal "x"
                 right |> should equal "y"
@@ -644,12 +644,12 @@ let ``Parse shorthand lambda with unary operation`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Lambda (parameters, body))) ->
+        | Def (ValueDef (_, name, _, Kind (Lambda (parameters, body)))) ->
             name |> should equal "double"
             parameters |> should haveLength 1
             parameters.[0] |> fst |> should equal "x"
-            match body with
-            | BinaryOp (op, IdentifierExpr(left, _), LiteralExpr (IntLit right)) ->
+            match body.Kind with
+            | BinaryOp (op, Kind (IdentifierExpr left), Kind (LiteralExpr (IntLit right))) ->
                 op |> should equal "*"
                 left |> should equal "x"
                 right |> should equal 2
@@ -666,12 +666,12 @@ let ``Parse shorthand lambda with property access`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Lambda (parameters, body))) ->
+        | Def (ValueDef (_, name, _, Kind (Lambda (parameters, body)))) ->
             name |> should equal "getName"
             parameters |> should haveLength 1
             parameters.[0] |> fst |> should equal "x"
-            match body with
-            | MemberAccess (IdentifierExpr(obj, _), field, _) ->
+            match body.Kind with
+            | MemberAccess (Kind (IdentifierExpr obj), field, _) ->
                 obj |> should equal "x"
                 field |> should equal "name"
             | _ -> failwith "Expected member access in shorthand property lambda body"
@@ -687,12 +687,12 @@ let ``Parse shorthand lambda with addition`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Lambda (parameters, body))) ->
+        | Def (ValueDef (_, name, _, Kind (Lambda (parameters, body)))) ->
             name |> should equal "addFive"
             parameters |> should haveLength 1
             parameters.[0] |> fst |> should equal "x"
-            match body with
-            | BinaryOp (op, IdentifierExpr(left, _), LiteralExpr (IntLit right)) ->
+            match body.Kind with
+            | BinaryOp (op, Kind (IdentifierExpr left), Kind (LiteralExpr (IntLit right))) ->
                 op |> should equal "+"
                 left |> should equal "x"
                 right |> should equal 5
@@ -709,17 +709,17 @@ let ``Parse shorthand lambda as function argument`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, FunctionCall (funcName, _, args))) ->
+        | Def (ValueDef (_, name, _, Kind (FunctionCall (funcName, _, args)))) ->
             name |> should equal "doubled"
             funcName |> should equal "map"
             // With comma operator, f(x, y) creates a single tuple argument
             args |> should haveLength 1
-            match args.[0] with
-            | TupleExpr [Lambda (parameters, body); IdentifierExpr("numbers", _)] ->
+            match args.[0].Kind with
+            | TupleExpr [Kind (Lambda (parameters, body)); Kind (IdentifierExpr "numbers")] ->
                 parameters |> should haveLength 1
                 parameters.[0] |> fst |> should equal "x"
-                match body with
-                | BinaryOp (op, IdentifierExpr(left, _), LiteralExpr (IntLit right)) ->
+                match body.Kind with
+                | BinaryOp (op, Kind (IdentifierExpr left), Kind (LiteralExpr (IntLit right))) ->
                     op |> should equal "*"
                     left |> should equal "x"
                     right |> should equal 2
@@ -738,10 +738,10 @@ let ``Parse simple pipe`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Pipe (expr, funcName, _, args))) ->
+        | Def (ValueDef (_, name, _, Kind (Pipe (expr, funcName, _, args)))) ->
             name |> should equal "result"
-            match expr with
-            | IdentifierExpr (id, _) -> id |> should equal "x"
+            match expr.Kind with
+            | IdentifierExpr id -> id |> should equal "x"
             | _ -> failwith "Expected identifier in pipe left side"
             funcName |> should equal "f"
             args |> should haveLength 0
@@ -757,16 +757,16 @@ let ``Parse pipe with arguments`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Pipe (expr, funcName, _, args))) ->
+        | Def (ValueDef (_, name, _, Kind (Pipe (expr, funcName, _, args)))) ->
             name |> should equal "result"
-            match expr with
-            | IdentifierExpr (id, _) -> id |> should equal "x"
+            match expr.Kind with
+            | IdentifierExpr id -> id |> should equal "x"
             | _ -> failwith "Expected identifier"
             funcName |> should equal "f"
             // With comma operator, \f(x, y) creates a single tuple argument
             args |> should haveLength 1
-            match args.[0] with
-            | TupleExpr [IdentifierExpr(y, _); IdentifierExpr(z, _)] ->
+            match args.[0].Kind with
+            | TupleExpr [Kind (IdentifierExpr y); Kind (IdentifierExpr z)] ->
                 y |> should equal "y"
                 z |> should equal "z"
             | _ -> failwith "Expected tuple of identifiers as arguments"
@@ -782,10 +782,10 @@ let ``Parse chained pipes`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Pipe (Pipe (Pipe (expr, f, _, _), g, _, _), h, _, _))) ->
+        | Def (ValueDef (_, name, _, Kind (Pipe (Kind (Pipe (Kind (Pipe (expr, f, _, _)), g, _, _)), h, _, _)))) ->
             name |> should equal "result"
-            match expr with
-            | IdentifierExpr (id, _) -> id |> should equal "x"
+            match expr.Kind with
+            | IdentifierExpr id -> id |> should equal "x"
             | _ -> failwith "Expected identifier"
             f |> should equal "f"
             g |> should equal "g"
@@ -802,9 +802,9 @@ let ``Parse pipe with literal`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Pipe (expr, funcName, _, args))) ->
+        | Def (ValueDef (_, name, _, Kind (Pipe (expr, funcName, _, args)))) ->
             name |> should equal "result"
-            match expr with
+            match expr.Kind with
             | LiteralExpr (IntLit n) -> n |> should equal 5
             | _ -> failwith "Expected int literal"
             funcName |> should equal "double"
@@ -821,14 +821,14 @@ let ``Parse pipe with lambda argument`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Pipe (expr, funcName, _, args))) ->
+        | Def (ValueDef (_, name, _, Kind (Pipe (expr, funcName, _, args)))) ->
             name |> should equal "result"
-            match expr with
-            | IdentifierExpr (id, _) -> id |> should equal "items"
+            match expr.Kind with
+            | IdentifierExpr id -> id |> should equal "items"
             | _ -> failwith "Expected identifier"
             funcName |> should equal "map"
             args |> should haveLength 1
-            match args.[0] with
+            match args.[0].Kind with
             | Lambda (parameters, _) ->
                 parameters |> should haveLength 1
                 parameters.[0] |> fst |> should equal "x"
@@ -846,10 +846,10 @@ let ``Parse addition`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, BinaryOp (op, left, right))) ->
+        | Def (ValueDef (_, name, _, Kind (BinaryOp (op, left, right)))) ->
             name |> should equal "sum"
             op |> should equal "+"
-            match left, right with
+            match left.Kind, right.Kind with
             | LiteralExpr (IntLit v1), LiteralExpr (IntLit v2) ->
                 v1 |> should equal 1
                 v2 |> should equal 2
@@ -865,7 +865,7 @@ let ``Parse multiplication`` () =
     match result with
     | Result.Ok module' ->
         match module'.[0] with
-        | Def (ValueDef (_, _, _, BinaryOp (op, _, _))) ->
+        | Def (ValueDef (_, _, _, Kind (BinaryOp (op, _, _)))) ->
             op |> should equal "*"
         | _ -> failwith "Expected Def with BinaryOp"
     | Result.Error err -> failwith $"Parse should succeed, got: {err}"
@@ -878,7 +878,7 @@ let ``Parse operator precedence - multiplication before addition`` () =
     match result with
     | Result.Ok module' ->
         match module'.[0] with
-        | Def (ValueDef (_, _, _, BinaryOp ("+", LiteralExpr (IntLit 1), BinaryOp ("*", LiteralExpr (IntLit 2), LiteralExpr (IntLit 3))))) ->
+        | Def (ValueDef (_, _, _, Kind (BinaryOp ("+", Kind (LiteralExpr (IntLit 1)), Kind (BinaryOp ("*", Kind (LiteralExpr (IntLit 2)), Kind (LiteralExpr (IntLit 3)))))))) ->
             () // Correct precedence: 1 + (2 * 3)
         | _ -> failwith "Expected correct precedence: 1 + (2 * 3)"
     | Result.Error err -> failwith $"Parse should succeed, got: {err}"
@@ -891,7 +891,7 @@ let ``Parse parenthesized expression`` () =
     match result with
     | Result.Ok module' ->
         match module'.[0] with
-        | Def (ValueDef (_, _, _, BinaryOp ("*", BinaryOp ("+", LiteralExpr (IntLit 1), LiteralExpr (IntLit 2)), LiteralExpr (IntLit 3)))) ->
+        | Def (ValueDef (_, _, _, Kind (BinaryOp ("*", Kind (BinaryOp ("+", Kind (LiteralExpr (IntLit 1)), Kind (LiteralExpr (IntLit 2)))), Kind (LiteralExpr (IntLit 3)))))) ->
             () // Correct: (1 + 2) * 3
         | _ -> failwith "Expected correct precedence: (1 + 2) * 3"
     | Result.Error err -> failwith $"Parse should succeed, got: {err}"
@@ -904,7 +904,7 @@ let ``Parse comparison operators`` () =
     match result with
     | Result.Ok module' ->
         match module'.[0] with
-        | Def (ValueDef (_, _, _, BinaryOp (">", LiteralExpr (IntLit 5), LiteralExpr (IntLit 3)))) ->
+        | Def (ValueDef (_, _, _, Kind (BinaryOp (">", Kind (LiteralExpr (IntLit 5)), Kind (LiteralExpr (IntLit 3)))))) ->
             ()
         | _ -> failwith "Expected comparison operator"
     | Result.Error err -> failwith $"Parse should succeed, got: {err}"
@@ -917,7 +917,7 @@ let ``Parse equality operators`` () =
     match result with
     | Result.Ok module' ->
         match module'.[0] with
-        | Def (ValueDef (_, _, _, BinaryOp ("==", IdentifierExpr("a", _), IdentifierExpr("b", _)))) ->
+        | Def (ValueDef (_, _, _, Kind (BinaryOp ("==", Kind (IdentifierExpr "a"), Kind (IdentifierExpr "b"))))) ->
             ()
         | _ -> failwith "Expected equality operator"
     | Result.Error err -> failwith $"Parse should succeed, got: {err}"
@@ -956,7 +956,7 @@ let ``Parse function-calls.nyx file`` () =
         let defs = module' |> List.tail
         for def in defs do
             match def with
-            | Def (ValueDef (_, _, _, FunctionCall _)) -> ()
+            | Def (ValueDef (_, _, _, Kind (FunctionCall _))) -> ()
             | _ -> failwith "Expected all definitions to contain function calls"
     | Result.Error err -> failwith $"Parse failed: {err}"
 
@@ -976,7 +976,7 @@ let ``Parse lambdas.nyx file`` () =
         let defs = module' |> List.tail
         for def in defs do
             match def with
-            | Def (ValueDef (_, _, _, Lambda _)) -> ()
+            | Def (ValueDef (_, _, _, Kind (Lambda _))) -> ()
             | _ -> failwith "Expected all definitions to contain lambdas"
     | Result.Error err -> failwith $"Parse failed: {err}"
 
@@ -996,11 +996,11 @@ let ``Parse shorthand-lambdas.nyx file`` () =
         let defs = module' |> List.tail
         for def in defs do
             match def with
-            | Def (ValueDef (_, _, _, Lambda _)) -> ()
-            | Def (ValueDef (_, _, _, FunctionCall (_, _, args))) ->
+            | Def (ValueDef (_, _, _, Kind (Lambda _))) -> ()
+            | Def (ValueDef (_, _, _, Kind (FunctionCall (_, _, args)))) ->
                 // With comma operator, args may be wrapped in TupleExpr
                 let rec hasLambda arg = 
-                    match arg with 
+                    match arg.Kind with
                     | Lambda _ -> true 
                     | TupleExpr exprs -> exprs |> List.exists hasLambda
                     | _ -> false
@@ -1025,7 +1025,7 @@ let ``Parse binary-operators.nyx file`` () =
         let hasBinaryOp op module' =
             module' |> List.exists (fun item ->
                 match item with
-                | Def (ValueDef (_, _, _, BinaryOp (operator, _, _))) -> operator = op
+                | Def (ValueDef (_, _, _, Kind (BinaryOp (operator, _, _)))) -> operator = op
                 | _ -> false
             )
         
@@ -1052,7 +1052,7 @@ let ``Parse piping.nyx file`` () =
         // Verify we have some pipe expressions
         let hasPipe = module' |> List.exists (fun item ->
             match item with
-            | Def (ValueDef (_, _, _, Pipe _)) -> true
+            | Def (ValueDef (_, _, _, Kind (Pipe _))) -> true
             | _ -> false
         )
         hasPipe |> should equal true
@@ -1067,14 +1067,14 @@ let ``Parse block with two literals`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Block statements)) ->
+        | Def (ValueDef (_, name, _, Kind (Block statements))) ->
             name |> should equal "test"
             statements |> should haveLength 2
             match statements.[0] with
-            | ExprStatement (LiteralExpr (IntLit 1)) -> ()
+            | ExprStatement (Kind (LiteralExpr (IntLit 1))) -> ()
             | _ -> failwith "Expected first statement to be literal 1"
             match statements.[1] with
-            | ExprStatement (LiteralExpr (IntLit 2)) -> ()
+            | ExprStatement (Kind (LiteralExpr (IntLit 2))) -> ()
             | _ -> failwith "Expected second statement to be literal 2"
         | _ -> failwith "Expected a block with two literal statements"
     | Result.Error err -> failwith $"Parse failed: {err}"
@@ -1094,19 +1094,19 @@ let ``Parse comprehensive.nyx file`` () =
         // Should have a mix of literals, function calls, lambdas, and binary ops
         let hasLiteral = module' |> List.exists (fun item ->
             match item with
-            | Def (ValueDef (_, _, _, LiteralExpr _)) -> true
+            | Def (ValueDef (_, _, _, Kind (LiteralExpr _))) -> true
             | _ -> false
         )
         
         let hasFunctionCall = module' |> List.exists (fun item ->
             match item with
-            | Def (ValueDef (_, _, _, FunctionCall _)) -> true
+            | Def (ValueDef (_, _, _, Kind (FunctionCall _))) -> true
             | _ -> false
         )
         
         let hasLambda = module' |> List.exists (fun item ->
             match item with
-            | Def (ValueDef (_, _, _, Lambda _)) -> true
+            | Def (ValueDef (_, _, _, Kind (Lambda _))) -> true
             | _ -> false
         )
         

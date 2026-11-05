@@ -25,7 +25,7 @@ let ``def annotation can start an indented continuation line`` () =
     let optionOf payload = TypeUnion [ TypeTag ("some", Some (TypeVar payload)); TypeVar "r" ]
     let expected = TypeFunc (TypeTuple [ optionOf "a"; TypeFunc (TypeVar "a", TypeVar "b") ], optionOf "b")
     match parseModule source with
-    | Result.Ok [ Def (ValueDef (_, "mapOption", Some annotation, Lambda _)) ] -> annotation |> should equal expected
+    | Result.Ok [ Def (ValueDef (_, "mapOption", Some annotation, Kind (Lambda _))) ] -> annotation |> should equal expected
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
     | Result.Error err -> failwith $"Parse failed: {err}"
 
@@ -42,6 +42,6 @@ let ``bare parameters in a def annotation bind tighter than the arrow`` () =
 [<Fact>]
 let ``lambda parameters still split at commas`` () =
     match parseModule "def f = { x: int, y -> x + y }" with
-    | Result.Ok [ Def (ValueDef (_, "f", None, Lambda ([ ("x", Some (TypeName "int")); ("y", None) ], _))) ] -> ()
+    | Result.Ok [ Def (ValueDef (_, "f", None, Kind (Lambda ([ ("x", Some (TypeName "int")); ("y", None) ], _)))) ] -> ()
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
     | Result.Error err -> failwith $"Parse failed: {err}"
