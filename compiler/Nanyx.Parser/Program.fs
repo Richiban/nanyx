@@ -6,7 +6,35 @@ open FParsec
 // AST Types - Simplified for basic parsing
 type Identifier = string
 type ModuleName = string
-type SourceRange = int * int
+
+/// Where a syntax node came from: character offsets into its file's source (`End` is one past the last
+/// character, and trailing whitespace is not included), plus the zero-based line and column of `Start`.
+type SourceSpan =
+    { File: string
+      Start: int
+      End: int
+      StartLine: int
+      StartColumn: int }
+
+module SourceSpan =
+    /// The span of a node the compiler made up rather than parsed.
+    let none = { File = ""; Start = -1; End = -1; StartLine = -1; StartColumn = -1 }
+
+    let isNone (span: SourceSpan) = span.Start < 0
+
+    /// From the start of `first` to the end of `last`; a made-up span on either side gives the other one.
+    let between (first: SourceSpan) (last: SourceSpan) =
+        if isNone first then last
+        elif isNone last then first
+        else { first with End = last.End }
+
+/// Identifies a syntax node, so that analysis results can be kept in tables keyed by node rather than in a copy
+/// of the tree. Ids are unique within a process, so nodes from different modules of a compilation never clash.
+type NodeId = int64
+
+module NodeId =
+    let private last = ref 0L
+    let next () : NodeId = System.Threading.Interlocked.Increment(&last.contents)
 
 type Literal =
     | StringLit of string
@@ -48,14 +76,36 @@ and TypeRecordField =
     | TypeField of Identifier * bool * bool * TypeExpr option * Expression option
     | TypeMember of Identifier * TypeExpr option
 
-and Expression =
+/// An expression and where it came from. Equality and comparison look only at `Kind`: two expressions are the
+/// same when they are the same code, wherever it was written. It is printed (`%A`) as its kind alone.
+and [<CustomEquality; CustomComparison; StructuredFormatDisplay("{Kind}")>] Expression =
+    { Kind: ExpressionKind
+      Span: SourceSpan
+      Id: NodeId }
+
+    override this.Equals(other) =
+        match other with
+        | :? Expression as expr -> this.Kind = expr.Kind
+        | _ -> false
+
+    override this.GetHashCode() = hash this.Kind
+
+    interface IComparable with
+        member this.CompareTo(other) =
+            match other with
+            | :? Expression as expr -> compare this.Kind expr.Kind
+            | _ -> invalidArg "other" "an Expression can only be compared with another Expression"
+
+/// The span on `FunctionCall`, `Pipe` and `MemberAccess` is that of the name (the function or the field), which
+/// is not where the expression as a whole starts.
+and ExpressionKind =
     | LiteralExpr of Literal
     | UnitExpr
-    | IdentifierExpr of Identifier * SourceRange option
-    | FunctionCall of Identifier * SourceRange option * Expression list
+    | IdentifierExpr of Identifier
+    | FunctionCall of Identifier * SourceSpan option * Expression list
     | Lambda of (Identifier * TypeExpr option) list * Expression
     | BinaryOp of string * Expression * Expression
-    | Pipe of Expression * Identifier * SourceRange option * Expression list  // expr \func or expr \func(args)
+    | Pipe of Expression * Identifier * SourceSpan option * Expression list  // expr \func or expr \func(args)
     | Block of Statement list
     | Match of Expression list * MatchArm list  // Can match on multiple values
     | TupleExpr of Expression list  // Positional-only tuple (for backward compat with existing tests)
@@ -63,7 +113,7 @@ and Expression =
     | ListExpr of Expression list
     | TagExpr of Identifier * Expression option  // #tagName or #tagName(expr)
     | IfExpr of Expression * Expression * Expression  // if condition then trueExpr else falseExpr
-    | MemberAccess of Expression * Identifier * SourceRange option  // expr.field
+    | MemberAccess of Expression * Identifier * SourceSpan option  // expr.field
     | ContextMemberAccess of TypeExpr * Identifier  // C(T).field - qualified context access (as value)
     | ContextMemberCall of TypeExpr * Identifier * Expression list  // C(T).field(args) - qualified context call
     | UseIn of UseBinding * Expression
@@ -126,6 +176,20 @@ type TopLevelItem =
     | Attribute of Identifier
 
 type Module = TopLevelItem list
+
+/// Matches an expression by its kind inside a larger pattern: `FunctionCall(_, _, [ Kind (IdentifierExpr name) ])`.
+let (|Kind|) (expr: Expression) = expr.Kind
+
+module Expression =
+    /// An expression written at `span`.
+    let at (span: SourceSpan) (kind: ExpressionKind) : Expression =
+        { Kind = kind; Span = span; Id = NodeId.next () }
+
+    /// An expression the compiler made up in place of `origin`; it is reported where `origin` was written.
+    let from (origin: Expression) (kind: ExpressionKind) = at origin.Span kind
+
+    /// An expression the compiler made up that has no source of its own.
+    let synthetic (kind: ExpressionKind) = at SourceSpan.none kind
 
 // Helper: whitespace and comment handling
 let comment () = pstring "--" >>. skipRestOfLine true
@@ -190,16 +254,45 @@ let qualifiedIdentifier: Parser<Identifier, unit> =
         (many (pchar '.' >>. identifierNoWs))
         (fun head tail -> String.concat "." (head :: tail))
 
-let posToRange (pos: Position) : SourceRange =
-    (int pos.Line - 1, int pos.Column - 1)
+let private spanOf (start: Position) (endIndex: int) : SourceSpan =
+    { File = start.StreamName
+      Start = int start.Index
+      End = max endIndex (int start.Index)
+      StartLine = int start.Line - 1
+      StartColumn = int start.Column - 1 }
 
-let identifierWithRange: Parser<Identifier * SourceRange option, unit> =
-    getPosition .>>. identifierNoWs
-    |>> (fun (pos, name) -> name, Some (posToRange pos))
+/// The index just past the last character consumed that is not whitespace. Many parsers consume the whitespace
+/// after what they parse; it is not part of a node's span.
+let private trimmedEnd: Parser<int, unit> =
+    fun stream ->
+        let mutable back = 0
+        let isTrailingSpace (offset: int) =
+            let c = stream.Peek(offset)
+            c <> CharStream.EndOfStreamChar && Char.IsWhiteSpace c
+        while isTrailingSpace (-(back + 1)) do
+            back <- back + 1
+        Reply(int stream.Index - back)
 
-let qualifiedIdentifierWithRange: Parser<Identifier * SourceRange option, unit> =
-    getPosition .>>. qualifiedIdentifier
-    |>> (fun (pos, name) -> name, Some (posToRange pos))
+/// Runs `p` and pairs its result with the span of the text it consumed.
+let withSpan (p: Parser<'a, unit>) : Parser<'a * SourceSpan, unit> =
+    pipe3 getPosition p trimmedEnd (fun start value endIndex -> value, spanOf start endIndex)
+
+/// Runs `p` and makes what it built an expression spanning the text it consumed.
+let spanned (p: Parser<ExpressionKind, unit>) : Parser<Expression, unit> =
+    withSpan p |>> fun (kind, span) -> Expression.at span kind
+
+let identifierWithSpan: Parser<Identifier * SourceSpan option, unit> =
+    withSpan identifierNoWs |>> fun (name, span) -> name, Some span
+
+let qualifiedIdentifierWithSpan: Parser<Identifier * SourceSpan option, unit> =
+    withSpan qualifiedIdentifier |>> fun (name, span) -> name, Some span
+
+/// One expression, or several separated by commas as a tuple of them.
+let private singleOrTuple (items: Parser<Expression list, unit>) : Parser<Expression, unit> =
+    withSpan items |>> fun (exprs, span) ->
+        match exprs with
+        | [single] -> single
+        | multiple -> Expression.at span (TupleExpr multiple)
 
 
 // Parser for literals
@@ -317,8 +410,7 @@ let interpolatedStringExprNoWs: Parser<Expression, unit> =
         between (pchar '{' .>> ws) (ws >>. pchar '}') expression
         |>> StringExpr
     let partsParser = many (choice [attempt holePart; textPart])
-    between (pstring "\"") (pstring "\"") partsParser
-    |>> fun parts ->
+    let toKind parts =
         match parts with
         | [] -> LiteralExpr (StringLit "")
         | _ when parts |> List.exists (function StringExpr _ -> true | _ -> false) ->
@@ -329,6 +421,7 @@ let interpolatedStringExprNoWs: Parser<Expression, unit> =
                 |> List.choose (function StringText value -> Some value | _ -> None)
                 |> String.concat ""
             LiteralExpr (StringLit text)
+    spanned (between (pstring "\"") (pstring "\"") partsParser |>> toKind)
 
 let wildcardPattern = pstring "_" >>% WildcardPattern
 let elsePattern = pstring "else" >>% ElsePattern
@@ -341,10 +434,11 @@ let literalOrRangePattern =
     choice [
         // Try integer with optional range
         attempt (
-            intLiteralNoWs >>= fun startLit ->
-            opt (pstring ".." >>. ws >>. intLiteralNoWs) >>= fun endLitOpt ->
+            withSpan intLiteralNoWs >>= fun (startLit, startSpan) ->
+            opt (pstring ".." >>. ws >>. withSpan intLiteralNoWs) >>= fun endLitOpt ->
             match endLitOpt with
-            | Some endLit -> preturn (RangePattern(LiteralExpr startLit, LiteralExpr endLit))
+            | Some (endLit, endSpan) ->
+                preturn (RangePattern(Expression.at startSpan (LiteralExpr startLit), Expression.at endSpan (LiteralExpr endLit)))
             | None -> preturn (LiteralPattern startLit)
         )
         // Or any other literal type
@@ -373,13 +467,13 @@ let private destructuringBindings (position: Position) (pattern: Pattern) (value
         | WildcardPattern -> Some []
         | TuplePattern elements ->
             elements
-            |> List.mapi (fun index element -> bind element (MemberAccess(source, string index, None)))
+            |> List.mapi (fun index element -> bind element (Expression.from value (MemberAccess(source, string index, None))))
             |> List.fold (fun acc next ->
                 match acc, next with
                 | Some bound, Some more -> Some (bound @ more)
                 | _ -> None) (Some [])
         | _ -> None
-    bind pattern (IdentifierExpr(temp, None))
+    bind pattern (Expression.from value (IdentifierExpr temp))
     |> Option.map (fun bindings -> (temp, value) :: bindings)
 
 /// `[export] def (pattern) = value`, as the export flag and the bindings it stands for.
@@ -490,7 +584,7 @@ let guardPattern =
             |>> fun (op, value) -> GuardPattern(op, value))
     let bare =
         attempt (
-            guardOp .>>. (ws >>. (literalNoWs |>> LiteralExpr))
+            guardOp .>>. (ws >>. spanned (literalNoWs |>> LiteralExpr))
             |>> fun (op, value) -> GuardPattern(op, value))
     braced <|> bare
 
@@ -759,10 +853,11 @@ let blockExpr() : Parser<Expression, unit> =
             let statementAtIndent =
                 attempt (manyMinMaxSatisfy indentLevel indentLevel (fun c -> c = ' ' || c = '\t') >>. statementItems)
 
-            pipe2
-                statementItems
-                (many (attempt (newline >>. statementAtIndent)))
-                (fun first rest -> Block (List.concat (first :: rest)))
+            spanned (
+                pipe2
+                    statementItems
+                    (many (attempt (newline >>. statementAtIndent)))
+                    (fun first rest -> Block (List.concat (first :: rest))))
         else
             pzero
 
@@ -830,10 +925,7 @@ let valueDefCore: Parser<Definition, unit> =
     getPosition >>= fun lineStart ->
         pipe2
             (opt (attempt (pstring "export" >>. ws)))
-            (parseDefWith lineStart.Column typedDefIdentifier (wsInline >>. (sepBy1 expression (pstring "," .>> ws) |>> fun exprs ->
-                match exprs with
-                | [single] -> single
-                | multiple -> TupleExpr multiple)))
+            (parseDefWith lineStart.Column typedDefIdentifier (wsInline >>. singleOrTuple (sepBy1 expression (pstring "," .>> ws))))
             (fun exportOpt (name, typeOpt, expr) -> ValueDef(exportOpt.IsSome, name, typeOpt, expr))
     <?> "value definition"
 
@@ -861,27 +953,38 @@ let forExpr : Parser<Expression, unit> =
     let keywordEnd = notFollowedBy (satisfy (fun c -> Char.IsLetterOrDigit c || c = '_'))
     let elementName = "__for_element"
     let withArms =
-        matchArms |>> fun arms -> Lambda([ (elementName, None) ], Match([ IdentifierExpr(elementName, None) ], arms))
+        withSpan matchArms |>> fun (arms, span) ->
+            let element = Expression.at span (IdentifierExpr elementName)
+            Expression.at span (Lambda([ (elementName, None) ], Expression.at span (Match([ element ], arms))))
     let withoutElement =
-        ws >>. pstring "->" >>. matchArmBody |>> fun body -> Lambda([ (elementName, None) ], body)
-    pipe2
-        (pstring "for" >>. keywordEnd >>. ws >>. expression)
-        (attempt withArms <|> withoutElement)
-        (fun iterable body -> FunctionCall("__for", None, [ iterable; body ]))
+        ws >>. withSpan (pstring "->" >>. matchArmBody) |>> fun (body, span) ->
+            Expression.at span (Lambda([ (elementName, None) ], body))
+    spanned (
+        pipe2
+            (pstring "for" >>. keywordEnd >>. ws >>. expression)
+            (attempt withArms <|> withoutElement)
+            (fun iterable body -> FunctionCall("__for", None, [ iterable; body ])))
     <?> "for loop"
 
 // Match expression parser
 do
     matchExprRef :=
-        pipe2
-            (pstring "match" >>. ws >>. sepBy1 simpleExpression (pstring "," .>> ws))  // Multiple expressions
-            matchArms
-            (fun scrutinees arms -> Match(scrutinees, arms))
+        spanned (
+            pipe2
+                (pstring "match" >>. ws >>. sepBy1 simpleExpression (pstring "," .>> ws))  // Multiple expressions
+                matchArms
+                (fun scrutinees arms -> Match(scrutinees, arms)))
         .>> skipMany (skipAnyOf " \t\r\n")
         <?> "match expression"
 
-// Operator precedence parser
-let opp = new OperatorPrecedenceParser<Expression, unit, unit>()
+// Operator precedence parser. Each operator's after-string parser returns the position just after the operator,
+// which is where a prefix operator's expression starts from (an infix one spans from its left operand).
+let opp = new OperatorPrecedenceParser<Expression, Position, unit>()
+
+let private afterOperator (whitespace: Parser<unit, unit>) : Parser<Position, unit> = getPosition .>> whitespace
+
+let private binary op (left: Expression) (right: Expression) =
+    Expression.at (SourceSpan.between left.Span right.Span) (BinaryOp(op, left, right))
 
 // Record field parser: either "name = expr" or just "expr"
 let recordField =
@@ -895,16 +998,17 @@ let recordField =
 
 // Unit literal: ()
 let unitExpr =
-    between (pstring "(") (ws >>. pstring ")") (preturn ()) |>> fun _ -> UnitExpr
+    spanned (between (pstring "(") (ws >>. pstring ")") (preturn ()) |>> fun _ -> UnitExpr)
 
 // Tuple/Record or parenthesized expression parser
 // Handles: (x), (x, y), (x = 1), (x = 1, y = 2), (x = 1, 2), etc.
 let tupleOrParenExpr =
-    (between
-        (pstring "(")
-        (ws >>. pstring ")")
-        (sepBy1 (ws >>. recordField) (pstring "," .>> ws))
-    |>> fun fields ->
+    (withSpan (
+        between
+            (pstring "(")
+            (ws >>. pstring ")")
+            (sepBy1 (ws >>. recordField) (pstring "," .>> ws)))
+    |>> fun (fields, span) ->
         match fields with
         | [PositionalField single] -> single  // Single expression in parens: (x) is just x
         | _ ->
@@ -913,10 +1017,10 @@ let tupleOrParenExpr =
             if allPositional then
                 // Pure tuple: extract expressions
                 let exprs = fields |> List.map (function PositionalField e -> e | _ -> failwith "unexpected")
-                TupleExpr exprs
+                Expression.at span (TupleExpr exprs)
             else
                 // Has named fields: use RecordExpr
-                RecordExpr fields)
+                Expression.at span (RecordExpr fields))
     <?> "tuple or record"
 
 // List expression parser. `...expr` splices a list in place: `[a, ...xs, b]` is desugared to
@@ -925,35 +1029,39 @@ let listExpr =
     let item =
         (pstring "..." >>. ws >>. expression |>> Choice2Of2)
         <|> (expression |>> Choice1Of2)
-    between
-        (pstring "[")
-        (pstring "]")
-        (sepBy (ws >>. item) (pstring "," .>> ws))
-    |>> fun items ->
+    withSpan (
+        between
+            (pstring "[")
+            (pstring "]")
+            (sepBy (ws >>. item) (pstring "," .>> ws)))
+    |>> fun (items, span) ->
+        // Each segment is a run of elements or a spread list.
         let segments =
             items
             |> List.fold (fun segments item ->
                 match item, segments with
-                | Choice1Of2 element, ListExpr elements :: rest -> ListExpr (elements @ [ element ]) :: rest
-                | Choice1Of2 element, _ -> ListExpr [ element ] :: segments
-                | Choice2Of2 spread, _ -> spread :: segments) []
+                | Choice1Of2 element, Choice1Of2 elements :: rest -> Choice1Of2 (elements @ [ element ]) :: rest
+                | Choice1Of2 element, _ -> Choice1Of2 [ element ] :: segments
+                | Choice2Of2 spread, _ -> Choice2Of2 spread :: segments) []
             |> List.rev
+            |> List.map (function
+                | Choice1Of2 elements -> Expression.at span (ListExpr elements)
+                | Choice2Of2 spread -> spread)
         match segments with
-        | [] -> ListExpr []
-        | _ -> segments |> List.reduceBack (fun left right -> BinaryOp("++", left, right))
+        | [] -> Expression.at span (ListExpr [])
+        | _ -> segments |> List.reduceBack (fun left right -> Expression.at span (BinaryOp("++", left, right)))
 
 // Tag expression parser: #tagName or #tagName(expr)
 // The payload can be a tuple-like expression with comma-separated values
 let tagExpr =
-    pstring "#" >>. identifierNoWs >>= fun tagName ->
-    opt (between 
-            (pstring "(") 
-            (pstring ")") 
-            (sepBy1 (ws >>. expression) (pstring "," .>> ws))) >>= fun payloadOpt ->
-    match payloadOpt with
-    | None -> preturn (TagExpr(tagName, None))
-    | Some [single] -> preturn (TagExpr(tagName, Some single))  // Single value
-    | Some multiple -> preturn (TagExpr(tagName, Some (TupleExpr multiple)))  // Multiple values as tuple
+    let payload =
+        between
+            (pstring "(")
+            (pstring ")")
+            (singleOrTuple (sepBy1 (ws >>. expression) (pstring "," .>> ws)))  // Multiple values as a tuple
+    spanned (
+        pstring "#" >>. identifierNoWs >>= fun tagName ->
+        opt payload |>> fun payloadOpt -> TagExpr(tagName, payloadOpt))
 
 // If-expression parser: if condition then trueExpr else falseExpr
 // `if cond then a else b`, or if-matching: `if value is pattern then body [else other]` (see the
@@ -975,10 +1083,16 @@ let ifExpr =
         |>> fun (value, pat) -> Choice2Of2 (pat, value)
     let condition = expression |>> Choice1Of2
     let head = patternBinding <|> condition
-    let desugar head thenExpr elseExpr =
+    // Spans from the head to the end of the last branch written; a left-out `else` is `()` made up at the `then`
+    // branch. The whole if is given the span of the `if` keyword onwards below.
+    let desugar head (thenExpr: Expression) (elseOpt: Expression option) =
+        let elseExpr = elseOpt |> Option.defaultWith (fun () -> Expression.from thenExpr UnitExpr)
+        let last = elseOpt |> Option.defaultValue thenExpr
         match head with
-        | Choice1Of2 cond -> IfExpr(cond, thenExpr, elseExpr)
-        | Choice2Of2 (pat, value) -> Match([ value ], [ [ pat ], thenExpr; [ WildcardPattern ], elseExpr ])
+        | Choice1Of2 (cond: Expression) ->
+            Expression.at (SourceSpan.between cond.Span last.Span) (IfExpr(cond, thenExpr, elseExpr))
+        | Choice2Of2 (pat, (value: Expression)) ->
+            Expression.at (SourceSpan.between value.Span last.Span) (Match([ value ], [ [ pat ], thenExpr; [ WildcardPattern ], elseExpr ]))
     let elseKeyword = pstring "else" >>. keywordEnd
     let conditionArm =
         pstring "|" >>. ws >>. notFollowedBy elseKeyword >>. head .>>. (ws >>. pstring "->" >>. matchArmBody)
@@ -988,32 +1102,38 @@ let ifExpr =
             (many1 (attempt (ws >>. conditionArm)))
             (opt (attempt (ws >>. elseArm)))
             (fun arms elseOpt ->
-                List.foldBack (fun (head, body) rest -> desugar head body rest) arms (defaultArg elseOpt UnitExpr))
+                match List.rev arms with
+                | [] -> failwith "unreachable: many1 parses at least one arm"
+                | (lastHead, lastBody) :: earlier ->
+                    earlier |> List.fold (fun rest (head, body) -> desugar head body (Some rest)) (desugar lastHead lastBody elseOpt))
     let singleBranch =
         pipe3
             head
             (ws >>. pstring "then" >>. keywordEnd >>. branch)
             (opt (attempt (ws >>. elseKeyword >>. branch)))
-            (fun head thenExpr elseOpt -> desugar head thenExpr (defaultArg elseOpt UnitExpr))
-    pstring "if" >>. keywordEnd >>. ws >>. (multiBranch <|> singleBranch)
+            desugar
+    withSpan (pstring "if" >>. keywordEnd >>. ws >>. (multiBranch <|> singleBranch))
+    |>> fun (expr, span) -> { expr with Span = span }
     <?> "if expression"
 
 let workflowBindExpr =
     attempt (
-        pipe2
-            (identifierNoWs .>> pchar '!' .>> ws)
-            expression
-            (fun name expr -> WorkflowBindExpr(name, expr)))
+        spanned (
+            pipe2
+                (identifierNoWs .>> pchar '!' .>> ws)
+                expression
+                (fun name expr -> WorkflowBindExpr(name, expr))))
     <?> "workflow bind"
 
 let workflowReturnExpr =
     let isIdentChar c = isLetter c || isDigit c || c = '_'
     attempt (
-        pstring "return"
-        .>> notFollowedBy (satisfy isIdentChar)
-        >>. ws
-        >>. expression
-        |>> WorkflowReturnExpr)
+        spanned (
+            pstring "return"
+            .>> notFollowedBy (satisfy isIdentChar)
+            >>. ws
+            >>. expression
+            |>> WorkflowReturnExpr))
     <?> "workflow return"
 
 // Use binding parser: `use expr` or `use C(T) = expr`
@@ -1033,10 +1153,11 @@ let useBinding =
 
 // Use-in expression: use X in expr
 let useInExpr =
-    pipe2
-        (pstring "use" >>. ws >>. useBinding .>> ws .>> pstring "in" .>> ws)
-        expression
-        (fun binding body -> UseIn(binding, body))
+    spanned (
+        pipe2
+            (pstring "use" >>. ws >>. useBinding .>> ws .>> pstring "in" .>> ws)
+            expression
+            (fun binding body -> UseIn(binding, body)))
     <?> "use-in expression"
 
 // Primary expression (literals, identifiers, function calls, lambdas, parenthesized expressions)
@@ -1059,15 +1180,16 @@ let contextMemberAccess =
     let callArgs =
         between (pstring "(") (pstring ")") 
             (opt (ws >>. (sepBy1 (ws >>. expression) (pstring "," .>> ws)) .>> ws))
-    pipe3
-        (contextTypeApply .>> pstring ".")
-        identifierNoWs
-        (opt callArgs)
-        (fun ctxType field argsOpt ->
-            match argsOpt with
-            | Some (Some args) -> ContextMemberCall(ctxType, field, args)
-            | Some None -> ContextMemberCall(ctxType, field, [])  // empty parens like f()
-            | None -> ContextMemberAccess(ctxType, field))
+    spanned (
+        pipe3
+            (contextTypeApply .>> pstring ".")
+            identifierNoWs
+            (opt callArgs)
+            (fun ctxType field argsOpt ->
+                match argsOpt with
+                | Some (Some args) -> ContextMemberCall(ctxType, field, args)
+                | Some None -> ContextMemberCall(ctxType, field, [])  // empty parens like f()
+                | None -> ContextMemberAccess(ctxType, field)))
 
 let primaryExprNoWs =
     choice [
@@ -1083,10 +1205,10 @@ let primaryExprNoWs =
         attempt contextMemberAccess  // C(T).field - must come before functionCall
         attempt functionCall
         attempt tagExpr  // #tag or #tag(expr)
-        literalNoWs |>> LiteralExpr
+        spanned (literalNoWs |>> LiteralExpr)
         listExpr
         tupleOrParenExpr
-        identifierWithRange |>> (fun (name, range) -> IdentifierExpr(name, range))
+        spanned (identifierNoWs |>> IdentifierExpr)
     ]
 
 do simpleExpressionRef := primaryExprNoWs
@@ -1105,12 +1227,17 @@ let memberAccessChain =
             |>> fun (field, value) -> NamedField(field, value)
         attempt (wsInline >>. pstring "with" >>. keywordEnd >>. ws >>. sepBy1 update (pstring "," .>> ws))
     // `..` is the range operator, not a member access.
-    let dotField = attempt (pstring "." >>. notFollowedBy (pchar '.') >>. (getPosition .>>. fieldOrIndex |>> fun (pos, field) -> field, Some (posToRange pos)))
+    let dotField = attempt (pstring "." >>. notFollowedBy (pchar '.') >>. withSpan fieldOrIndex)
     primaryExprNoWs >>= fun baseExpr ->
         many dotField >>= fun fields ->
-            let accessed = List.fold (fun expr (field, range) -> MemberAccess(expr, field, range)) baseExpr fields
-            opt withClause |>> function
-                | Some updates -> FunctionCall("__with", None, [ accessed; RecordExpr updates ])
+            let accessed =
+                fields
+                |> List.fold (fun (expr: Expression) (field, fieldSpan) ->
+                    Expression.at (SourceSpan.between expr.Span fieldSpan) (MemberAccess(expr, field, Some fieldSpan))) baseExpr
+            opt (withSpan withClause) |>> function
+                | Some (updates, updatesSpan) ->
+                    let updated = Expression.at updatesSpan (RecordExpr updates)
+                    Expression.at (SourceSpan.between accessed.Span updatesSpan) (FunctionCall("__with", None, [ accessed; updated ]))
                 | None -> accessed
 
 let primaryExpr = memberAccessChain .>> wsInline  // Consume trailing inline ws for operator parsing
@@ -1119,41 +1246,49 @@ opp.TermParser <- primaryExpr
 
 // Define operators with precedence
 // Multiplicative operators (higher precedence)
-opp.AddOperator(InfixOperator("*", ws, 7, Associativity.Left, fun x y -> BinaryOp("*", x, y)))
-opp.AddOperator(InfixOperator("/", ws, 7, Associativity.Left, fun x y -> BinaryOp("/", x, y)))
-opp.AddOperator(InfixOperator("%", ws, 7, Associativity.Left, fun x y -> BinaryOp("%", x, y)))
+opp.AddOperator(InfixOperator("*", afterOperator ws, 7, Associativity.Left, binary "*"))
+opp.AddOperator(InfixOperator("/", afterOperator ws, 7, Associativity.Left, binary "/"))
+opp.AddOperator(InfixOperator("%", afterOperator ws, 7, Associativity.Left, binary "%"))
 
 // Additive operators
-opp.AddOperator(InfixOperator("+", ws, 6, Associativity.Left, fun x y -> BinaryOp("+", x, y)))
+opp.AddOperator(InfixOperator("+", afterOperator ws, 6, Associativity.Left, binary "+"))
 // `-` must not take the start of a `->` (as in `for 1..2 -> ...`).
-opp.AddOperator(InfixOperator("-", notFollowedBy (pchar '>') >>. ws, 6, Associativity.Left, fun x y -> BinaryOp("-", x, y)))
+opp.AddOperator(InfixOperator("-", afterOperator (notFollowedBy (pchar '>') >>. ws), 6, Associativity.Left, binary "-"))
 
 // Concatenation (strings, lists): binds looser than arithmetic, tighter than comparison
-opp.AddOperator(InfixOperator("++", ws, 5, Associativity.Right, fun x y -> BinaryOp("++", x, y)))
+opp.AddOperator(InfixOperator("++", afterOperator ws, 5, Associativity.Right, binary "++"))
 
 // Comparison operators (lower precedence)
-opp.AddOperator(InfixOperator("<", ws, 4, Associativity.Left, fun x y -> BinaryOp("<", x, y)))
-opp.AddOperator(InfixOperator(">", ws, 4, Associativity.Left, fun x y -> BinaryOp(">", x, y)))
-opp.AddOperator(InfixOperator("<=", ws, 4, Associativity.Left, fun x y -> BinaryOp("<=", x, y)))
-opp.AddOperator(InfixOperator(">=", ws, 4, Associativity.Left, fun x y -> BinaryOp(">=", x, y)))
+opp.AddOperator(InfixOperator("<", afterOperator ws, 4, Associativity.Left, binary "<"))
+opp.AddOperator(InfixOperator(">", afterOperator ws, 4, Associativity.Left, binary ">"))
+opp.AddOperator(InfixOperator("<=", afterOperator ws, 4, Associativity.Left, binary "<="))
+opp.AddOperator(InfixOperator(">=", afterOperator ws, 4, Associativity.Left, binary ">="))
 
 // Equality operators 
 // A bounded range `a..b` (see the ranges page) is represented as a call to the built-in "__range". It binds
 // looser than arithmetic, so `n - 1..n + 1` is `(n - 1)..(n + 1)`. `...` is list spread, not a range.
-opp.AddOperator(InfixOperator("..", notFollowedBy (pchar '.') >>. ws, 4, Associativity.Left, fun x y -> FunctionCall("__range", None, [ x; y ])))
-opp.AddOperator(InfixOperator("==", ws, 3, Associativity.Left, fun x y -> BinaryOp("==", x, y)))
-opp.AddOperator(InfixOperator("!=", ws, 3, Associativity.Left, fun x y -> BinaryOp("!=", x, y)))
+opp.AddOperator(InfixOperator("..", afterOperator (notFollowedBy (pchar '.') >>. ws), 4, Associativity.Left, fun x y ->
+    Expression.at (SourceSpan.between x.Span y.Span) (FunctionCall("__range", None, [ x; y ]))))
+opp.AddOperator(InfixOperator("==", afterOperator ws, 3, Associativity.Left, binary "=="))
+opp.AddOperator(InfixOperator("!=", afterOperator ws, 3, Associativity.Left, binary "!="))
 
 // Boolean operations are the keywords `not`, `and` and `or` (lowest precedence; see the operators page of
 // the docs). A keyword operator must not swallow the start of an identifier such as `order` or `android`.
 // `not` binds tighter than every infix operator, so `not a == b` is `(not a) == b`, as `!` does elsewhere.
 // The symbolic `&&` and `||` predate the keywords and are kept as aliases that build the same tree.
 let private keywordOperatorEnd = notFollowedBy (satisfy (fun c -> Char.IsLetterOrDigit c || c = '_')) >>. ws
-opp.AddOperator(PrefixOperator("not", keywordOperatorEnd, 8, true, fun x -> FunctionCall("not", None, [ x ])))
-opp.AddOperator(InfixOperator("and", keywordOperatorEnd, 2, Associativity.Left, fun x y -> BinaryOp("and", x, y)))
-opp.AddOperator(InfixOperator("or", keywordOperatorEnd, 1, Associativity.Left, fun x y -> BinaryOp("or", x, y)))
-opp.AddOperator(InfixOperator("&&", ws, 2, Associativity.Left, fun x y -> BinaryOp("and", x, y)))
-opp.AddOperator(InfixOperator("||", ws, 1, Associativity.Left, fun x y -> BinaryOp("or", x, y)))
+opp.AddOperator(PrefixOperator("not", afterOperator keywordOperatorEnd, 8, true, (), fun afterNot x ->
+    let notStart =
+        { File = afterNot.StreamName
+          Start = int afterNot.Index - 3
+          End = int afterNot.Index
+          StartLine = int afterNot.Line - 1
+          StartColumn = int afterNot.Column - 4 }
+    Expression.at (SourceSpan.between notStart x.Span) (FunctionCall("not", None, [ x ]))))
+opp.AddOperator(InfixOperator("and", afterOperator keywordOperatorEnd, 2, Associativity.Left, binary "and"))
+opp.AddOperator(InfixOperator("or", afterOperator keywordOperatorEnd, 1, Associativity.Left, binary "or"))
+opp.AddOperator(InfixOperator("&&", afterOperator ws, 2, Associativity.Left, binary "and"))
+opp.AddOperator(InfixOperator("||", afterOperator ws, 1, Associativity.Left, binary "or"))
 
 // Note: Comma is NOT an operator in the OPP
 // Commas are handled explicitly in tuple/record literals and function calls
@@ -1162,11 +1297,8 @@ opp.AddOperator(InfixOperator("||", ws, 1, Associativity.Left, fun x y -> Binary
 // Pipe parser - handles expr \func or expr \func(args)
 let pipeTarget =
     pipe3
-        qualifiedIdentifierWithRange
-        (opt (between (pstring "(") (pstring ")") (ws >>. (sepBy1 expression (pstring "," .>> ws) |>> fun exprs ->
-            match exprs with
-            | [single] -> single
-            | multiple -> TupleExpr multiple))))
+        qualifiedIdentifierWithSpan
+        (opt (between (pstring "(") (pstring ")") (ws >>. singleOrTuple (sepBy1 expression (pstring "," .>> ws)))))
         (opt (attempt (wsInline >>. lambda)))
         (fun (funcName, funcRange) argOpt trailingLambdaOpt ->
             let baseArgs = match argOpt with Some arg -> [arg] | None -> []
@@ -1181,41 +1313,43 @@ let pipeTarget =
 let oppInline = new OperatorPrecedenceParser<Expression, unit, unit>()
 oppInline.TermParser <- primaryExpr
 
-oppInline.AddOperator(InfixOperator("*", wsInline, 7, Associativity.Left, fun x y -> BinaryOp("*", x, y)))
-oppInline.AddOperator(InfixOperator("/", wsInline, 7, Associativity.Left, fun x y -> BinaryOp("/", x, y)))
+oppInline.AddOperator(InfixOperator("*", wsInline, 7, Associativity.Left, binary "*"))
+oppInline.AddOperator(InfixOperator("/", wsInline, 7, Associativity.Left, binary "/"))
 
-oppInline.AddOperator(InfixOperator("+", wsInline, 6, Associativity.Left, fun x y -> BinaryOp("+", x, y)))
-oppInline.AddOperator(InfixOperator("-", wsInline, 6, Associativity.Left, fun x y -> BinaryOp("-", x, y)))
-oppInline.AddOperator(InfixOperator("++", wsInline, 5, Associativity.Right, fun x y -> BinaryOp("++", x, y)))
+oppInline.AddOperator(InfixOperator("+", wsInline, 6, Associativity.Left, binary "+"))
+oppInline.AddOperator(InfixOperator("-", wsInline, 6, Associativity.Left, binary "-"))
+oppInline.AddOperator(InfixOperator("++", wsInline, 5, Associativity.Right, binary "++"))
 
-oppInline.AddOperator(InfixOperator("<", wsInline, 4, Associativity.Left, fun x y -> BinaryOp("<", x, y)))
-oppInline.AddOperator(InfixOperator(">", wsInline, 4, Associativity.Left, fun x y -> BinaryOp(">", x, y)))
-oppInline.AddOperator(InfixOperator("<=", wsInline, 4, Associativity.Left, fun x y -> BinaryOp("<=", x, y)))
-oppInline.AddOperator(InfixOperator(">=", wsInline, 4, Associativity.Left, fun x y -> BinaryOp(">=", x, y)))
+oppInline.AddOperator(InfixOperator("<", wsInline, 4, Associativity.Left, binary "<"))
+oppInline.AddOperator(InfixOperator(">", wsInline, 4, Associativity.Left, binary ">"))
+oppInline.AddOperator(InfixOperator("<=", wsInline, 4, Associativity.Left, binary "<="))
+oppInline.AddOperator(InfixOperator(">=", wsInline, 4, Associativity.Left, binary ">="))
 
-oppInline.AddOperator(InfixOperator("==", wsInline, 3, Associativity.Left, fun x y -> BinaryOp("==", x, y)))
-oppInline.AddOperator(InfixOperator("!=", wsInline, 3, Associativity.Left, fun x y -> BinaryOp("!=", x, y)))
+oppInline.AddOperator(InfixOperator("==", wsInline, 3, Associativity.Left, binary "=="))
+oppInline.AddOperator(InfixOperator("!=", wsInline, 3, Associativity.Left, binary "!="))
+
+/// `expr \f \g(a)`: each pipe spans from the start of `expr` to the end of its own target.
+let private applyPipes (expr: Expression) pipes =
+    pipes
+    |> List.fold (fun (acc: Expression) ((funcName, nameSpan, args), targetSpan) ->
+        Expression.at (SourceSpan.between acc.Span targetSpan) (Pipe(acc, funcName, nameSpan, args))) expr
 
 let pipeExpr =
     let pipeLeadingWs =
         skipMany (skipAnyOf " \t") >>.
         skipMany (attempt (newline >>. skipMany (skipAnyOf " \t")))
-    let pipeOp = pipeLeadingWs >>. pstring "\\" >>. wsInline >>. pipeTarget
+    let pipeOp = pipeLeadingWs >>. pstring "\\" >>. wsInline >>. withSpan pipeTarget
     pipe2
         opp.ExpressionParser
         (many (attempt (pipeOp .>> wsInline)))
-        (fun expr pipes ->
-            pipes |> List.fold (fun acc (funcName, range, args) -> Pipe(acc, funcName, range, args)) expr
-        )
+        applyPipes
 
 let inlinePipeExpr =
-    let pipeOp = pstring "\\" >>. wsInline >>. pipeTarget
+    let pipeOp = pstring "\\" >>. wsInline >>. withSpan pipeTarget
     pipe2
         oppInline.ExpressionParser
         (many (attempt (pipeOp .>> wsInline)))
-        (fun expr pipes ->
-            pipes |> List.fold (fun acc (funcName, range, args) -> Pipe(acc, funcName, range, args)) expr
-        )
+        applyPipes
 
 do inlineExpressionRef := inlinePipeExpr
 
@@ -1244,8 +1378,7 @@ do
             attempt (
                 skipMany (skipAnyOf " \t\r") >>. newline >>.
                 ws >>.
-                (many1 statementLine .>> ws)
-                |>> (List.concat >> Block)
+                spanned (many1 statementLine |>> (List.concat >> Block)) .>> ws
             )
 
         let singleLine =
@@ -1255,17 +1388,21 @@ do
 
         attempt multiLine <|> singleLine
     
-    let lambdaWithParams = pipe2 (paramList .>> arrow .>> skipMany (skipAnyOf " \t")) blockBody (fun parameters body -> Lambda(parameters, body))
-    let lambdaNoParams = blockBody |>> (fun body -> Lambda([], body))
+    // Each form builds the lambda's kind given the span of the whole `{ ... }`, which is also where the
+    // parameters and expressions a shorthand stands for are made up.
+    let lambdaWithParams = pipe2 (paramList .>> arrow .>> skipMany (skipAnyOf " \t")) blockBody (fun parameters body _ -> Lambda(parameters, body))
+    let lambdaNoParams = blockBody |>> (fun body _ -> Lambda([], body))
     // `{ }`, possibly spanning lines, is a lambda that does nothing
-    let emptyLambda = skipMany (skipAnyOf " \t\r\n") >>. followedBy (pstring "}") >>% Lambda([], UnitExpr)
+    let emptyLambda = skipMany (skipAnyOf " \t\r\n") >>. followedBy (pstring "}") >>% fun span -> Lambda([], Expression.at span UnitExpr)
 
     // Shorthand lambda: { * } means { x, y -> x * y }
     let shorthandBinaryOp =
         // "++" before "+" so the longer operator wins
         let operators = ["*"; "/"; "++"; "+"; "-"; "<"; ">"; "<="; ">="; "=="; "!="]
         choice (operators |> List.map (fun op ->
-            pstring op >>. ws >>. notFollowedBy (skipAnyOf "0123456789.\"'([{") >>% Lambda([("x", None); ("y", None)], BinaryOp(op, IdentifierExpr("x", None), IdentifierExpr("y", None)))
+            pstring op >>. ws >>. notFollowedBy (skipAnyOf "0123456789.\"'([{") >>% fun span ->
+                let made kind = Expression.at span kind
+                Lambda([("x", None); ("y", None)], made (BinaryOp(op, made (IdentifierExpr "x"), made (IdentifierExpr "y"))))
         ))
     
     // Shorthand lambda: { * 2 } means { x -> x * 2 }
@@ -1277,20 +1414,23 @@ do
             ("==", "=="); ("!=", "!=")
         ]
         choice (operators |> List.map (fun (op, opStr) ->
-            pstring op >>. ws >>. primaryExpr |>> (fun rightExpr ->
-                Lambda([("x", None)], BinaryOp(opStr, IdentifierExpr("x", None), rightExpr))
+            pstring op >>. ws >>. primaryExpr |>> (fun rightExpr span ->
+                let made kind = Expression.at span kind
+                Lambda([("x", None)], made (BinaryOp(opStr, made (IdentifierExpr "x"), rightExpr)))
             )
         ))
-    
+
     // Shorthand lambda: { .name } means { x -> x.name }
     let shorthandPropertyAccess =
-        pstring "." >>. identifier |>> (fun propName ->
-            Lambda([("x", None)], MemberAccess(IdentifierExpr("x", None), propName, None))
+        pstring "." >>. identifier |>> (fun propName span ->
+            let made kind = Expression.at span kind
+            Lambda([("x", None)], made (MemberAccess(made (IdentifierExpr "x"), propName, None)))
         )
 
     // Shorthand match lambda: { | pat -> expr ... }
     let shorthandMatchLambda =
-        matchArms |>> (fun arms ->
+        matchArms |>> (fun arms span ->
+            let made kind = Expression.at span kind
             let maxArity =
                 arms
                 |> List.map (fun (patterns, _) -> patterns.Length)
@@ -1300,21 +1440,23 @@ do
                 |> List.map (fun index -> ($"arg{index}", None))
             let scrutinees =
                 argNames
-                |> List.map (fun (name, _) -> IdentifierExpr(name, None))
-            Lambda(argNames, Match(scrutinees, arms)))
-    
+                |> List.map (fun (name, _) -> made (IdentifierExpr name))
+            Lambda(argNames, made (Match(scrutinees, arms))))
+
     lambdaRef :=
-        between (pstring "{") (pstring "}") (
-            skipMany (skipAnyOf " \t") >>. choice [
-                attempt emptyLambda
-                attempt shorthandUnaryOp
-                attempt shorthandBinaryOp
-                attempt shorthandPropertyAccess
-                attempt shorthandMatchLambda
-                attempt lambdaWithParams
-                lambdaNoParams
-            ] .>> skipMany (skipAnyOf " \t\r\n")
-        )
+        withSpan (
+            between (pstring "{") (pstring "}") (
+                skipMany (skipAnyOf " \t") >>. choice [
+                    attempt emptyLambda
+                    attempt shorthandUnaryOp
+                    attempt shorthandBinaryOp
+                    attempt shorthandPropertyAccess
+                    attempt shorthandMatchLambda
+                    attempt lambdaWithParams
+                    lambdaNoParams
+                ] .>> skipMany (skipAnyOf " \t\r\n")
+            ))
+        |>> (fun (build, span) -> Expression.at span (build span))
         <?> "lambda expression"
 
 // Wire up the function call parser
@@ -1323,36 +1465,38 @@ do
     // Examples: f(a, b) { x -> x + 1 } or f { x -> x + 1 } (no parens needed if only lambda arg)
     // Note: f(a, b) creates single tuple argument: FunctionCall("f", None, [TupleExpr[a; b]])
 
-    let fieldsToExpr fields =
+    let fieldsToExpr (fields, span) =
         match fields with
         | [PositionalField single] -> single
         | _ ->
             let allPositional = fields |> List.forall (function PositionalField _ -> true | _ -> false)
             if allPositional then
                 let exprs = fields |> List.map (function PositionalField e -> e | _ -> failwith "unexpected")
-                TupleExpr exprs
+                Expression.at span (TupleExpr exprs)
             else
-                RecordExpr fields
-    
+                Expression.at span (RecordExpr fields)
+
     let callWithParensAndTrailing =
-        pipe3
-            qualifiedIdentifierWithRange
-            (between (pstring "(") (pstring ")") 
-                (opt (ws >>. (sepBy1 (ws >>. recordField) (pstring "," .>> ws) |>> fieldsToExpr) .>> ws)))
-            (opt (attempt (skipMany (skipAnyOf " \t") >>. lambda)))
-            (fun (name, range) exprOpt trailingLambdaOpt ->
-                let baseArgs = match exprOpt with Some e -> [e] | None -> []
-                match trailingLambdaOpt with
-                | Some lambdaExpr -> FunctionCall(name, range, baseArgs @ [lambdaExpr])
-                | None -> FunctionCall(name, range, baseArgs))
-    
+        spanned (
+            pipe3
+                qualifiedIdentifierWithSpan
+                (between (pstring "(") (pstring ")")
+                    (opt (ws >>. (withSpan (sepBy1 (ws >>. recordField) (pstring "," .>> ws)) |>> fieldsToExpr) .>> ws)))
+                (opt (attempt (skipMany (skipAnyOf " \t") >>. lambda)))
+                (fun (name, nameSpan) exprOpt trailingLambdaOpt ->
+                    let baseArgs = match exprOpt with Some e -> [e] | None -> []
+                    match trailingLambdaOpt with
+                    | Some lambdaExpr -> FunctionCall(name, nameSpan, baseArgs @ [lambdaExpr])
+                    | None -> FunctionCall(name, nameSpan, baseArgs)))
+
     let callWithOnlyTrailing =
         attempt (
-            qualifiedIdentifierWithRange >>= fun (name, range) ->
-                skipMany (skipAnyOf " \t") >>.
-                lookAhead (pchar '{') >>.
-                lambda |>> fun lambdaExpr ->
-                    FunctionCall(name, range, [lambdaExpr])
+            spanned (
+                qualifiedIdentifierWithSpan >>= fun (name, nameSpan) ->
+                    skipMany (skipAnyOf " \t") >>.
+                    lookAhead (pchar '{') >>.
+                    lambda |>> fun lambdaExpr ->
+                        FunctionCall(name, nameSpan, [lambdaExpr]))
         )
     
     functionCallRef :=
@@ -1378,10 +1522,7 @@ do
             | _ -> failwith "Expected type definition"
 
     let defExprParser =
-        attempt (blockExpr()) <|> (sepBy1 expression (pstring "," .>> ws) |>> fun exprs ->
-            match exprs with
-            | [single] -> single
-            | multiple -> TupleExpr multiple)
+        attempt (blockExpr()) <|> singleOrTuple (sepBy1 expression (pstring "," .>> ws))
 
     let defStatement =
         getPosition >>= fun lineStart ->
@@ -1404,7 +1545,7 @@ do
             (pstring "rec" >>. keywordEnd >>. ws >>. defNameAndType lineStart.Column typedQualifiedIdentifier)
             >>= fun (name, typeOpt) ->
                 defEqualsContinuation lineStart.Column >>. pstring "=" >>. wsNoNl() >>. defExprParser
-                |>> fun expr -> DefStatement(false, name, typeOpt, FunctionCall("__rec", None, [ expr ]))
+                |>> fun expr -> DefStatement(false, name, typeOpt, Expression.from expr (FunctionCall("__rec", None, [ expr ])))
 
     let exprStatement =
         wsNoNl()
@@ -1422,10 +1563,7 @@ let moduleDecl: Parser<TopLevelItem, unit> =
     <?> "module declaration"
 
 let private valueDefExprParser =
-    attempt (blockExpr()) <|> (wsInline >>. (sepBy1 expression (pstring "," .>> ws) |>> fun exprs ->
-        match exprs with
-        | [single] -> single
-        | multiple -> TupleExpr multiple))
+    attempt (blockExpr()) <|> (wsInline >>. singleOrTuple (sepBy1 expression (pstring "," .>> ws)))
 
 // Parser for value definition (top-level)
 let valueDef: Parser<TopLevelItem, unit> =
@@ -1575,9 +1713,10 @@ let private rewriteExpressionInModule (valueMap: Map<string, string>) (typeMap: 
             | Some qualifiedType -> qualifiedType
             | None -> rewriteQualifiedHead name
 
-    let rec rewrite e =
-        match e with
-        | IdentifierExpr(name, range) -> IdentifierExpr(rewriteName name, range)
+    let rec rewrite (e: Expression) = { e with Kind = rewriteKind e }
+    and rewriteKind e =
+        match e.Kind with
+        | IdentifierExpr name -> IdentifierExpr(rewriteName name)
         | FunctionCall(name, range, args) -> FunctionCall(rewriteName name, range, args |> List.map rewrite)
         | Lambda(args, body) -> Lambda(args, rewrite body)
         | BinaryOp(op, left, right) -> BinaryOp(op, rewrite left, rewrite right)
@@ -1622,7 +1761,7 @@ let private rewriteExpressionInModule (valueMap: Map<string, string>) (typeMap: 
         | WorkflowReturnExpr value -> WorkflowReturnExpr (rewrite value)
         | InterpolatedString parts -> InterpolatedString (parts |> List.map (function | StringText text -> StringText text | StringExpr value -> StringExpr (rewrite value)))
         | UnitExpr
-        | LiteralExpr _ -> e
+        | LiteralExpr _ -> e.Kind
     rewrite expr
 
 let rec private expandModuleBlock (prefix: string) (items: TopLevelItem list) : TopLevelItem list =
@@ -1698,9 +1837,18 @@ let private expandMidFileModules (items: TopLevelItem list) : TopLevelItem list 
     loop None items []
 
 // Public API for parsing
-let parseModule (input: string) : Result<Module, string> =
+
+/// Parses the source of the file at `filePath`, which is what the spans of the module's nodes refer to. Line
+/// endings are normalised to `\n` first, so span offsets are into the normalised source (lines and columns are
+/// unaffected).
+let parseModuleFile (filePath: string) (input: string) : Result<Module, string> =
     let normalized =
         input.Replace("\r\n", "\n").Replace("\r", "\n").TrimEnd()
-    match run moduleParser normalized with
+    match runParserOnString moduleParser () filePath normalized with
     | ParserResult.Success(result, _, _) -> Result.Ok (expandMidFileModules result)
     | ParserResult.Failure(errorMsg, _, _) -> Result.Error errorMsg
+
+
+/// Parses source that has no file of its own.
+let parseModule (input: string) : Result<Module, string> = parseModuleFile "" input
+

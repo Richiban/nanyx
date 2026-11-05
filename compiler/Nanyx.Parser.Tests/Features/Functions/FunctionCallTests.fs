@@ -20,6 +20,6 @@ let ``Parse function-calls.nyx file`` () =
         let defs = module' |> List.tail
         for def in defs do
             match def with
-            | Def (ValueDef (_, _, _, FunctionCall _)) -> ()
+            | Def (ValueDef (_, _, _, Kind (FunctionCall _))) -> ()
             | _ -> failwith "Expected all definitions to contain function calls"
     | Result.Error err -> failwith $"Parse failed: {err}"

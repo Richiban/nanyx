@@ -111,7 +111,14 @@ let private matchesAttachedInput (inputTy: Ty) (lhsType: Ty) : bool =
         | TyNominal _ -> false
         | _ -> isAssignableType inputTy lhsType
 
-let private tryResolveAttachedFunction (env: TypeEnv) (lhsType: Ty) (funcName: string) (rangeOpt: (int * int) option) : Result<string option, Diagnostic list> =
+/// The `(line, column)` a diagnostic about a node at `span` is reported at; none for a node the compiler made up.
+let private spanPosition (span: SourceSpan) : (int * int) option =
+    if SourceSpan.isNone span then None else Some (span.StartLine, span.StartColumn)
+
+let private spanOptPosition (spanOpt: SourceSpan option) : (int * int) option =
+    spanOpt |> Option.bind spanPosition
+
+let private tryResolveAttachedFunction (env: TypeEnv) (lhsType: Ty) (funcName: string) (rangeOpt: (int * int) option): Result<string option, Diagnostic list> =
     if funcName.Contains(".") then
         Ok None
     else
@@ -136,7 +143,7 @@ let private tryResolveAttachedFunction (env: TypeEnv) (lhsType: Ty) (funcName: s
             | None -> Error [ Diagnostics.error ($"Ambiguous attached function '{funcName}': {names}") ]
 
 let private tryInferAttachedLambdaInput (state: InferState) (name: Identifier) (expr: Expression) : Ty option =
-    match expr with
+    match expr.Kind with
     | Lambda(args, _) when name.Contains(".") && args.Length = 1 ->
         let dotIndex = name.LastIndexOf(".")
         let typeName = name.Substring(0, dotIndex)
@@ -374,7 +381,7 @@ let private ensureContextsExist (state: InferState) (name: Identifier) (contexts
 let private registerContextRequirement (state: InferState) (name: Identifier) (contexts: TypeExpr list) =
     { state with ContextRequirements = state.ContextRequirements |> Map.add name contexts }
 
-let private ensureContextAvailable (env: TypeEnv) (state: InferState) (name: Identifier) (contexts: TypeExpr list) (rangeOpt: SourceRange option) =
+let private ensureContextAvailable (env: TypeEnv) (state: InferState) (name: Identifier) (contexts: TypeExpr list) (rangeOpt: (int * int) option) =
     let requiredMembers =
         contexts
         |> List.collect (fun ctx ->
@@ -550,7 +557,7 @@ let private argTypesFromExpected (state: InferState) (args: (Identifier * TypeEx
 
 
 let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) : Result<TypedExpr * InferState, Diagnostic list> =
-    match expr with
+    match expr.Kind with
     | LiteralExpr literal ->
         Ok (mkTypedExpr expr (literalType literal) None None None, state)
     | InterpolatedString parts ->
@@ -569,16 +576,17 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
             Error errors
     | UnitExpr ->
         Ok (mkTypedExpr expr (TyPrimitive "unit") None None None, state)
-    | IdentifierExpr(name, rangeOpt) ->
+    | IdentifierExpr name ->
         match TypeEnv.tryFind name env with
         | Some scheme ->
             let ty, next = instantiate state scheme
             Ok (mkTypedExpr expr ty None None None, next)
         | None ->
-            match rangeOpt with
+            match spanPosition expr.Span with
             | Some (line, col) -> Error [ Diagnostics.errorAt ($"Unknown identifier '{name}'") (line, col) ]
             | None -> Error [ Diagnostics.error ($"Unknown identifier '{name}'") ]
-    | FunctionCall(name, rangeOpt, args) ->
+    | FunctionCall(name, spanOpt, args) ->
+        let rangeOpt = spanOptPosition spanOpt
         if name = "dbg" then
             match args with
             | [single] ->
@@ -604,7 +612,7 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
             // record and a record of the updated fields. The result has the record's type; every updated
             // field must exist on it, at the field's type.
             match args with
-            | [ baseExpr; RecordExpr updates ] ->
+            | [ baseExpr; Kind (RecordExpr updates) ] ->
                 match inferExpr env state baseExpr with
                 | Error err -> Error err
                 | Ok (typedBase, afterBase) ->
@@ -651,7 +659,7 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
             // `for iterable | arms`: the parser passes the iterable and a one-parameter lambda. The lambda's
             // parameter is an element of the iterable (a `list(a)` or a `seq(a)`), and the loop is unit.
             match args with
-            | [ iterable; Lambda(lambdaArgs, lambdaBody) ] ->
+            | [ iterable; Kind (Lambda(lambdaArgs, lambdaBody)) as lambdaExpr ] ->
                 match inferExpr env state iterable with
                 | Error err -> Error err
                 | Ok (typedIterable, afterIterable) ->
@@ -661,7 +669,7 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                         | _ ->
                             let elementTy, next = freshVar afterIterable
                             elementTy, addConstraint typedIterable.Type (listType elementTy) next
-                    match inferLambdaWithExpected env constrained lambdaArgs lambdaBody (Some elementTy) None with
+                    match inferLambdaWithExpected env constrained lambdaExpr lambdaArgs lambdaBody (Some elementTy) None with
                     | Ok (_, next) -> Ok (mkTypedExpr expr (TyPrimitive "unit") None None None, next)
                     | Error err -> Error err
             | _ -> Error [ Diagnostics.error "for expects an iterable and a loop body" ]
@@ -690,7 +698,7 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
 
                 let isWorkflowCall =
                     match args with
-                    | [Lambda(lambdaArgs, _)] when lambdaArgs.IsEmpty -> recordFieldsOpt
+                    | [Kind (Lambda(lambdaArgs, _))] when lambdaArgs.IsEmpty -> recordFieldsOpt
                     | _ -> None
 
                 match isWorkflowCall with
@@ -706,8 +714,8 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                     else
                         let envWithCtx = extendEnvWithRecordFields env funcTy
                         match args with
-                        | [Lambda(lambdaArgs, lambdaBody)] ->
-                            match inferLambdaWithExpected envWithCtx current lambdaArgs lambdaBody (Some (TyPrimitive "unit")) None with
+                        | [Kind (Lambda(lambdaArgs, lambdaBody)) as lambdaExpr] ->
+                            match inferLambdaWithExpected envWithCtx current lambdaExpr lambdaArgs lambdaBody (Some (TyPrimitive "unit")) None with
                             | Ok (typedLambda, next) ->
                                 let returnTy =
                                     match typedLambda.Type with
@@ -776,7 +784,7 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                     | Some (line, col) -> Error [ Diagnostics.errorAt ($"Unknown function '{name}'") (line, col) ]
                     | None -> Error [ Diagnostics.error ($"Unknown function '{name}'") ]
     | Lambda(args, body) ->
-        inferLambdaWithExpected env state args body None None
+        inferLambdaWithExpected env state expr args body None None
     | BinaryOp(_, left, right) ->
         match inferExpr env state left with
         | Error err -> Error err
@@ -785,7 +793,7 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
             | Error err -> Error err
             | Ok (rightExpr, nextState) ->
                 let constrained = addConstraint leftExpr.Type rightExpr.Type nextState
-                match expr with
+                match expr.Kind with
                 | BinaryOp("++", _, _) ->
                     // `++` concatenates two strings or two lists; both sides have the same type, which is the result.
                     // When neither side's type is known yet the result is simply that shared type.
@@ -815,18 +823,18 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                     let boolConstrained = constrained |> addConstraint leftExpr.Type (TyPrimitive "bool")
                     Ok (mkTypedExpr expr (TyPrimitive "bool") None None None, boolConstrained)
                 | _ -> Ok (mkTypedExpr expr leftExpr.Type None None None, constrained)
-    | Pipe(value, name, rangeOpt, args) ->
+    | Pipe(value, name, spanOpt, args) ->
         match inferExpr env state value with
         | Error err -> Error err
         | Ok (typedValue, nextState) ->
-            match tryResolveAttachedFunction env typedValue.Type name rangeOpt with
+            match tryResolveAttachedFunction env typedValue.Type name (spanOptPosition spanOpt) with
             | Error err -> Error err
             | Ok resolvedOpt ->
                 let resolvedName = resolvedOpt |> Option.defaultValue name
                 let callArgs = value :: args
-                match inferExpr env nextState (FunctionCall(resolvedName, rangeOpt, callArgs)) with
+                match inferExpr env nextState (Expression.from expr (FunctionCall(resolvedName, spanOpt, callArgs))) with
                 | Ok (typedCall, finalState) ->
-                    Ok ({ typedCall with Expr = Pipe(value, resolvedName, rangeOpt, args) }, finalState)
+                    Ok ({ typedCall with Expr = { expr with Kind = Pipe(value, resolvedName, spanOpt, args) } }, finalState)
                 | Error err -> Error err
     | UseIn(binding, body) ->
         match inferUseBinding env state binding with
@@ -841,7 +849,7 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
     | WorkflowReturnExpr _ ->
         Error [ Diagnostics.error "Workflow return used outside of a workflow block" ]
     | Block statements ->
-        inferBlock env state statements
+        inferBlock env state expr statements
     | TupleExpr items ->
         let mutable current = state
         let tys =
@@ -1376,9 +1384,10 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                     Ok (mkTypedExpr expr resultTy None None (Some typedArms), constrained)
             else
                 Error errors
-    | MemberAccess(baseExpr, memberName, rangeOpt) ->
-        match baseExpr with
-        | IdentifierExpr(baseName, _) ->
+    | MemberAccess(baseExpr, memberName, spanOpt) ->
+        let rangeOpt = spanOptPosition spanOpt
+        match baseExpr.Kind with
+        | IdentifierExpr baseName ->
             let qualifiedName = $"{baseName}.{memberName}"
             match TypeEnv.tryFind qualifiedName env with
             | Some scheme ->
@@ -1433,7 +1442,7 @@ and inferUseBinding (env: TypeEnv) (state: InferState) (binding: UseBinding) : R
         // TODO: Validate that expr satisfies the context type
         inferExpr env state expr
 
-and inferLambdaWithExpected (env: TypeEnv) (state: InferState) (args: (Identifier * TypeExpr option) list) (body: Expression) (expectedInputOpt: Ty option) (expectedReturnOpt: Ty option) : Result<TypedExpr * InferState, Diagnostic list> =
+and inferLambdaWithExpected (env: TypeEnv) (state: InferState) (lambda: Expression) (args: (Identifier * TypeExpr option) list) (body: Expression) (expectedInputOpt: Ty option) (expectedReturnOpt: Ty option) : Result<TypedExpr * InferState, Diagnostic list> =
     let mutable current = state
     let mutable env' = env
     let argTys =
@@ -1469,16 +1478,16 @@ and inferLambdaWithExpected (env: TypeEnv) (state: InferState) (args: (Identifie
             match expectedInputOpt with
             | Some expectedInput -> expectedInput
             | None -> inputTypeFromArgs argTys
-        Ok (mkTypedExpr (Lambda(args, body)) (TyFunc(inputTy, bodyExpr.Type)) (Some bodyExpr) None None, withReturnConstraint)
+        Ok (mkTypedExpr lambda (TyFunc(inputTy, bodyExpr.Type)) (Some bodyExpr) None None, withReturnConstraint)
     | Error err -> Error err
 
-and inferBlock (env: TypeEnv) (state: InferState) (statements: Statement list) : Result<TypedExpr * InferState, Diagnostic list> =
+and inferBlock (env: TypeEnv) (state: InferState) (block: Expression) (statements: Statement list) : Result<TypedExpr * InferState, Diagnostic list> =
     match statements with
-    | [] -> Ok (mkTypedExpr (Block []) (TyPrimitive "unit") None (Some []) None, state)
+    | [] -> Ok (mkTypedExpr block (TyPrimitive "unit") None (Some []) None, state)
     | _ ->
         let mutable current = state
         let mutable env' = env
-        let mutable lastExpr = mkTypedExpr (LiteralExpr (IntLit 0)) (TyPrimitive "unit") None None None
+        let mutable lastExpr = mkTypedExpr (Expression.synthetic (LiteralExpr (IntLit 0))) (TyPrimitive "unit") None None None
         let mutable typedStatements: TypedStatement list = []
         let mutable errors: Diagnostic list = []
         for statement in statements do
@@ -1521,16 +1530,16 @@ and inferBlock (env: TypeEnv) (state: InferState) (statements: Statement list) :
                             | Some contexts -> registerContextRequirement preboundState name contexts
                             | None -> preboundState
                         let inferResult =
-                            match expr with
+                            match expr.Kind with
                             | Lambda(args, body) when effectiveExpectedInputOpt.IsSome || expectedReturnOpt.IsSome ->
-                                inferLambdaWithExpected envWithRec nextStateWithReq args body effectiveExpectedInputOpt expectedReturnOpt
+                                inferLambdaWithExpected envWithRec nextStateWithReq expr args body effectiveExpectedInputOpt expectedReturnOpt
                             | _ -> inferExpr envWithRec nextStateWithReq expr
                         match inferResult with
                         | Ok (typedExpr, next) ->
                             let declaredTy, finalState =
                                 match expectedDeclaredOpt with
                                 | Some declaredTy ->
-                                    match expr with
+                                    match expr.Kind with
                                     | Lambda _ -> declaredTy, next
                                     | _ ->
                                         let updatedState =
@@ -1576,7 +1585,7 @@ and inferBlock (env: TypeEnv) (state: InferState) (statements: Statement list) :
                         lastExpr <- typedExpr
                     | Error err -> errors <- err
         if errors.IsEmpty then
-            let blockExpr = mkTypedExpr (Block statements) lastExpr.Type (Some lastExpr) (Some typedStatements) None
+            let blockExpr = mkTypedExpr block lastExpr.Type (Some lastExpr) (Some typedStatements) None
             Ok (blockExpr, current)
         else
             Error errors
@@ -1713,16 +1722,16 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
                     | Some contexts -> registerContextRequirement nextState2 name contexts
                     | None -> nextState2
                 let inferResult =
-                    match expr with
+                    match expr.Kind with
                     | Lambda(args, body) when effectiveExpectedInputOpt.IsSome || expectedReturnOpt.IsSome ->
-                        inferLambdaWithExpected envWithRec nextStateWithReq args body effectiveExpectedInputOpt expectedReturnOpt
+                        inferLambdaWithExpected envWithRec nextStateWithReq expr args body effectiveExpectedInputOpt expectedReturnOpt
                     | _ -> inferExpr envWithRec nextStateWithReq expr
                 match inferResult with
                 | Ok (typedExpr, next) ->
                     let declaredTy, finalState =
                         match expectedDeclaredOpt with
                         | Some declaredTy ->
-                            match expr with
+                            match expr.Kind with
                             | Lambda _ -> declaredTy, next
                             | _ ->
                                 let updatedState =

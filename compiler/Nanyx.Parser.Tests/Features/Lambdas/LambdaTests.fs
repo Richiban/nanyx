@@ -20,7 +20,7 @@ let ``Parse lambdas.nyx file`` () =
         let defs = module' |> List.tail
         for def in defs do
             match def with
-            | Def (ValueDef (_, _, _, Lambda _)) -> ()
+            | Def (ValueDef (_, _, _, Kind (Lambda _))) -> ()
             | _ -> failwith "Expected all definitions to contain lambdas"
     | Result.Error err -> failwith $"Parse failed: {err}"
 
@@ -39,10 +39,10 @@ let ``Parse shorthand-lambdas.nyx file`` () =
         let defs = module' |> List.tail
         for def in defs do
             match def with
-            | Def (ValueDef (_, _, _, Lambda _)) -> ()
-            | Def (ValueDef (_, _, _, FunctionCall (_, _, args))) ->
-                let rec hasLambda arg =
-                    match arg with
+            | Def (ValueDef (_, _, _, Kind (Lambda _))) -> ()
+            | Def (ValueDef (_, _, _, Kind (FunctionCall (_, _, args)))) ->
+                let rec hasLambda (arg: Expression) =
+                    match arg.Kind with
                     | Lambda _ -> true
                     | TupleExpr exprs -> exprs |> List.exists hasLambda
                     | _ -> false
@@ -54,6 +54,6 @@ let ``Parse shorthand-lambdas.nyx file`` () =
 [<Fact>]
 let ``an empty block is a lambda returning unit`` () =
     match parseModule "def main = {\n}\ndef noop = { }" with
-    | Result.Ok [ Def (ValueDef (_, "main", None, Lambda ([], UnitExpr))); Def (ValueDef (_, "noop", None, Lambda ([], UnitExpr))) ] -> ()
+    | Result.Ok [ Def (ValueDef (_, "main", None, Kind (Lambda ([], Kind UnitExpr)))); Def (ValueDef (_, "noop", None, Kind (Lambda ([], Kind UnitExpr)))) ] -> ()
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
     | Result.Error err -> failwith $"Parse failed: {err}"

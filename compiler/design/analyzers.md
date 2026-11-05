@@ -62,14 +62,17 @@ Every syntax node carries a `SourceSpan`:
 
 ```fsharp
 type SourceSpan =
-    { File: FileId     // index into the compilation's file table
-      Start: int       // character offset, inclusive
-      End: int }       // character offset, exclusive
+    { File: string       // the path the module was parsed from ("" for in-memory source)
+      Start: int         // character offset, inclusive
+      End: int           // character offset, exclusive; trailing whitespace is not included
+      StartLine: int     // zero-based
+      StartColumn: int } // zero-based
 ```
 
-Offsets rather than line/column: they are what FParsec's `Position.Index` gives, they make slicing and text edits
-trivial, and a per-file line table turns them into line/column (and into UTF-16 columns for LSP) when a
-diagnostic is reported.
+Offsets make slicing and text edits trivial, and they are what FParsec's `Position.Index` gives. The start's line
+and column are kept as well, so code without the source text (inference, diagnostics) can report a position; the
+end's line and column come from the source when needed. Offsets are into the source with line endings normalised
+to `\n`.
 
 The AST moves from "some cases have an optional range" to "every node has a span". The least invasive shape is a
 wrapper record around the existing unions:
@@ -86,7 +89,7 @@ and the same for `Pattern`, `Statement`, `TypeExpr` and top-level items. This is
 parser, inference and the WASM backend; it can be done one node family at a time (expressions first, since that
 is where most diagnostics land). The `SourceRange option` fields on individual cases go away.
 
-`NodeId` is a per-compilation integer assigned by the parser. It is what side tables (types, resolved symbols)
+`NodeId` is an integer, unique within the process, assigned when a node is created. It is what side tables (types, resolved symbols)
 are keyed by, so analysis results do not need a parallel copy of the tree.
 
 Once every node has a span, `annotateDiagnosticsWithSource` and `tryParseLineColumn` are deleted: a diagnostic

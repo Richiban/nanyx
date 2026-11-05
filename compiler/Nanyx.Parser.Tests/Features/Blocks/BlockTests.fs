@@ -14,14 +14,14 @@ let ``Parse block with two literals`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Block statements)) ->
+        | Def (ValueDef (_, name, _, Kind (Block statements))) ->
             name |> should equal "test"
             statements |> should haveLength 2
             match statements.[0] with
-            | ExprStatement (LiteralExpr (IntLit 1)) -> ()
+            | ExprStatement (Kind (LiteralExpr (IntLit 1))) -> ()
             | _ -> failwith "Expected first statement to be literal 1"
             match statements.[1] with
-            | ExprStatement (LiteralExpr (IntLit 2)) -> ()
+            | ExprStatement (Kind (LiteralExpr (IntLit 2))) -> ()
             | _ -> failwith "Expected second statement to be literal 2"
         | _ -> failwith "Expected a block with two literal statements"
     | Result.Error err -> failwith $"Parse failed: {err}"
@@ -48,7 +48,7 @@ let ``Parse sibling blocks`` () =
     | Result.Ok module' ->
         module' |> should haveLength 2
         match module'.[0], module'.[1] with
-        | Def (ValueDef (_, firstName, _, Block firstStatements)), Def (ValueDef (_, secondName, _, Block secondStatements)) ->
+        | Def (ValueDef (_, firstName, _, Kind (Block firstStatements))), Def (ValueDef (_, secondName, _, Kind (Block secondStatements))) ->
             firstName |> should equal "first"
             secondName |> should equal "second"
             firstStatements |> should haveLength 2
