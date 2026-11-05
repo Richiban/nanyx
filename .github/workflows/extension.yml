@@ -9,11 +9,8 @@ on:
       - ".github/workflows/extension.yml"
     tags:
       - "extension/*"
+  # No path filter: "Build and package" is a required check on main, so every PR must run it.
   pull_request:
-    paths:
-      - "extension/**"
-      - "!extension/**/*.md"
-      - ".github/workflows/extension.yml"
   workflow_dispatch:
 
 permissions:
