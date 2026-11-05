@@ -1536,6 +1536,25 @@ let ``Hover shows tags with their hash`` () =
     let union =
         "def mapOption: (#some(a) | r), (a -> b) -> (#some(b) | r) = { | #some(a), f -> #some(f(a)) | other, _ -> other }\n" +
         "def result = mapOption(#some(1), { n -> \"Mapped: {n}\" })"
-    let callee = (hoverType union (offsetOf union "mapOption(" 0 0)).Value
-    Assert.Contains("#some(int)", callee)
-    Assert.Contains("#some(string)", callee)
+    Assert.Equal(
+        Some "((#some(int) | 'a), (int -> string)) -> (#some(string) | 'a)",
+        hoverType union (offsetOf union "mapOption(" 0 0))
+
+[<Fact>]
+let ``Printed types bracket functions and unions where they would run together`` () =
+    let a = TyVar { Id = 1; Name = Some "a" }
+    let b = TyVar { Id = 2; Name = Some "b" }
+    let c = TyVar { Id = 3; Name = Some "c" }
+    let union = TyUnion [ TyTag("some", Some a); TyTag("none", None) ]
+    // `->` groups to the right: a function input is bracketed, a function result is not.
+    Assert.Equal("('a -> 'b) -> 'c", Unifier.tyToString (TyFunc(TyFunc(a, b), c)))
+    Assert.Equal("'a -> 'b -> 'c", Unifier.tyToString (TyFunc(a, TyFunc(b, c))))
+    // A union result and a union input are bracketed.
+    Assert.Equal("'a -> (#some('a) | #none)", Unifier.tyToString (TyFunc(a, union)))
+    Assert.Equal("(#some('a) | #none) -> 'a", Unifier.tyToString (TyFunc(union, a)))
+    // Items separated by commas.
+    Assert.Equal("(int, ('a -> 'b))", Unifier.tyToString (TyRecord(Map.ofList [ "0", TyPrimitive "int"; "1", TyFunc(a, b) ])))
+    Assert.Equal("map(string, ('a -> 'b))", Unifier.tyToString (TyApply("map", [ TyPrimitive "string"; TyFunc(a, b) ])))
+    // A lone argument or payload needs no brackets.
+    Assert.Equal("list('a -> 'b)", Unifier.tyToString (TyApply("list", [ TyFunc(a, b) ])))
+    Assert.Equal("#some(int)", Unifier.tyToString (TyTag("some", Some (TyPrimitive "int"))))

@@ -27,7 +27,17 @@ module Unifier =
         else
             None, namedFields
 
+    /// `ty` as it would be written in an annotation. A function or union is bracketed wherever it would otherwise
+    /// run into what surrounds it: as a function's input (`(a -> b) -> c`, since `->` groups to the right), as a
+    /// union that is a function's result (`a -> (#some(a) | #none)`), as a member of a union, and wherever items are
+    /// separated by commas (`(int, (a -> b))`).
     let rec tyToString (ty: Ty) : string =
+        // A function or union, bracketed.
+        let grouped ty =
+            match ty with
+            | TyFunc _
+            | TyUnion _ -> $"({tyToString ty})"
+            | _ -> tyToString ty
         match ty with
         | TyPrimitive name -> name
         | TyVar v ->
@@ -35,18 +45,24 @@ module Unifier =
             | Some name -> $"'{name}"
             | None -> $"'t{v.Id}"
         | TyNominal(name, _, _) -> name
-        | TyFunc(arg, ret) -> $"{tyToString arg} -> {tyToString ret}"
+        | TyFunc(arg, ret) ->
+            // `->` groups to the right, so a function result needs no brackets; a union result does.
+            let retText =
+                match ret with
+                | TyUnion _ -> grouped ret
+                | _ -> tyToString ret
+            $"{grouped arg} -> {retText}"
         | TyRecord fields ->
             match tryTupleLikeRecord fields with
             | Some tupleItems, namedFields ->
                 let tupleText =
                     tupleItems
-                    |> List.map tyToString
+                    |> List.map grouped
                     |> String.concat ", "
                 let namedText =
                     namedFields
                     |> List.sortBy fst
-                    |> List.map (fun (name, fieldTy) -> $"{name}: {tyToString fieldTy}")
+                    |> List.map (fun (name, fieldTy) -> $"{name}: {grouped fieldTy}")
                     |> String.concat ", "
                 if namedText = "" then
                     $"({tupleText})"
@@ -57,7 +73,7 @@ module Unifier =
             | None, _ ->
                 fields
                 |> Map.toList
-                |> List.map (fun (name, fieldTy) -> $"{name}: {tyToString fieldTy}")
+                |> List.map (fun (name, fieldTy) -> $"{name}: {grouped fieldTy}")
                 |> String.concat ", "
                 |> fun inner -> $"{{ {inner} }}"
         // Tags are written with their `#`, as in source: `#some(int) | #notFound`.
@@ -65,12 +81,13 @@ module Unifier =
             match payloadOpt with
             | Some payload -> $"#{name}({tyToString payload})"
             | None -> $"#{name}"
+        | TyApply(name, [ arg ]) -> $"{name}({tyToString arg})"
         | TyApply(name, args) ->
-            let argsText = args |> List.map tyToString |> String.concat ", "
+            let argsText = args |> List.map grouped |> String.concat ", "
             $"{name}({argsText})"
         | TyUnion items ->
             items
-            |> List.map tyToString
+            |> List.map grouped
             |> String.concat " | "
 
     /// The type variables of `ty` in the order `tyToString` prints them, each once. A nominal's underlying type
