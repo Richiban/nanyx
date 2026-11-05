@@ -9,7 +9,8 @@ namespace Nanyx.LanguageServer.Handlers;
 
 /// <summary>
 /// Keeps <see cref="DocumentStore"/> in step with the editor (full-text sync: the client sends the whole
-/// document on every change) and republishes diagnostics whenever a document is opened or changed.
+/// document on every change), which recompiles it, and republishes diagnostics whenever a document is opened
+/// or changed.
 /// </summary>
 public sealed class TextDocumentSyncHandler : TextDocumentSyncHandlerBase
 {
@@ -29,9 +30,8 @@ public sealed class TextDocumentSyncHandler : TextDocumentSyncHandlerBase
 
     public override Task<Unit> Handle(DidOpenTextDocumentParams request, CancellationToken cancellationToken)
     {
-        var text = request.TextDocument.Text;
-        _documents.Set(request.TextDocument.Uri, text);
-        _diagnostics.Publish(request.TextDocument.Uri, text, request.TextDocument.Version);
+        var document = _documents.Update(request.TextDocument.Uri, request.TextDocument.Text);
+        _diagnostics.Publish(request.TextDocument.Uri, document, request.TextDocument.Version);
         return Unit.Task;
     }
 
@@ -41,8 +41,8 @@ public sealed class TextDocumentSyncHandler : TextDocumentSyncHandlerBase
         var text = request.ContentChanges.LastOrDefault()?.Text;
         if (text is not null)
         {
-            _documents.Set(request.TextDocument.Uri, text);
-            _diagnostics.Publish(request.TextDocument.Uri, text, request.TextDocument.Version);
+            var document = _documents.Update(request.TextDocument.Uri, text);
+            _diagnostics.Publish(request.TextDocument.Uri, document, request.TextDocument.Version);
         }
 
         return Unit.Task;

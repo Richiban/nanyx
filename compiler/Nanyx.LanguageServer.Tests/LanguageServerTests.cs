@@ -140,6 +140,65 @@ public sealed class LanguageServerTests : IAsyncLifetime
         Assert.Empty((await NextPublished(uri)).Diagnostics!);
     }
 
+    [Fact]
+    public void Server_advertises_hover()
+    {
+        Assert.NotNull(_client.ServerSettings.Capabilities.HoverProvider);
+    }
+
+    [Fact]
+    public async Task Hover_shows_the_inferred_type_of_the_expression_under_the_pointer()
+    {
+        var uri = DocumentUri.FromFileSystemPath(Path.Combine(Path.GetTempPath(), "hover.nyx"));
+
+        // CRLF line endings: positions are still counted per line, as the editor counts them.
+        Open(uri, "def id = { x -> x }\r\ndef total = id(40) + 2\r\n");
+        Assert.Empty((await NextPublished(uri)).Diagnostics!);
+
+        // The literal `40`, innermost inside the call and the addition.
+        var literal = await HoverAt(uri, 1, 16);
+        Assert.NotNull(literal);
+        Assert.Equal("```nanyx\nint\n```", literal.Contents.MarkupContent?.Value);
+        Assert.Equal(MarkupKind.Markdown, literal.Contents.MarkupContent?.Kind);
+        Assert.Equal(new Range(1, 15, 1, 17), literal.Range);
+
+        // The polymorphic `id`, instantiated at this call.
+        var callee = await HoverAt(uri, 1, 13);
+        Assert.Equal("```nanyx\nint -> int\n```", callee?.Contents.MarkupContent?.Value);
+        Assert.Equal(new Range(1, 12, 1, 14), callee?.Range);
+
+        // The lambda in its own definition, with its type variable named for reading.
+        var lambda = await HoverAt(uri, 0, 9);
+        Assert.Equal("```nanyx\n'a -> 'a\n```", lambda?.Contents.MarkupContent?.Value);
+    }
+
+    [Fact]
+    public async Task Hover_outside_any_expression_returns_nothing()
+    {
+        var uri = DocumentUri.FromFileSystemPath(Path.Combine(Path.GetTempPath(), "hover-nothing.nyx"));
+
+        Open(uri, "def answer = 42\n");
+        Assert.Empty((await NextPublished(uri)).Diagnostics!);
+
+        Assert.Null(await HoverAt(uri, 0, 1));
+    }
+
+    [Fact]
+    public async Task Hover_in_a_document_that_does_not_type_check_returns_nothing()
+    {
+        var uri = DocumentUri.FromFileSystemPath(Path.Combine(Path.GetTempPath(), "hover-error.nyx"));
+
+        Open(uri, "def answer = missing + 1\n");
+        Assert.NotEmpty((await NextPublished(uri)).Diagnostics!);
+
+        Assert.Null(await HoverAt(uri, 0, 23));
+    }
+
+    private Task<Hover?> HoverAt(DocumentUri uri, int line, int character) =>
+        _client.TextDocument.RequestHover(
+            new HoverParams { TextDocument = new TextDocumentIdentifier(uri), Position = new Position(line, character) },
+            _cancellation.Token);
+
     private void Open(DocumentUri uri, string text) =>
         _client.DidOpenTextDocument(new DidOpenTextDocumentParams
         {

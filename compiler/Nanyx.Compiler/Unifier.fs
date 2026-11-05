@@ -72,6 +72,25 @@ module Unifier =
             |> List.map tyToString
             |> String.concat " | "
 
+    /// The type variables of `ty` in the order `tyToString` prints them, each once. A nominal's underlying type
+    /// is not printed, so its variables are not included.
+    let private varsInPrintOrder (ty: Ty) : TyVar list =
+        let rec collect ty =
+            match ty with
+            | TyVar v -> [ v ]
+            | TyPrimitive _
+            | TyNominal _ -> []
+            | TyFunc(arg, ret) -> collect arg @ collect ret
+            | TyRecord fields ->
+                match tryTupleLikeRecord fields with
+                | Some tupleItems, namedFields ->
+                    (tupleItems |> List.collect collect) @ (namedFields |> List.sortBy fst |> List.collect (snd >> collect))
+                | None, _ -> fields |> Map.toList |> List.collect (snd >> collect)
+            | TyTag(_, payload) -> payload |> Option.map collect |> Option.defaultValue []
+            | TyApply(_, args) -> args |> List.collect collect
+            | TyUnion items -> items |> List.collect collect
+        collect ty |> List.distinctBy (fun v -> v.Id)
+
     let private mismatchMessage left right =
         $"Type mismatch: {tyToString left} vs {tyToString right}."
 
@@ -157,6 +176,22 @@ module Unifier =
                 | applied -> [ applied ])
             |> TyUnion
         | TyPrimitive _ -> ty
+
+    /// `ty` for a reader: type variables the compiler made up are renamed `'a`, `'b`, ... in the order they appear,
+    /// skipping names already taken; variables named in an annotation keep their names.
+    let tyToDisplayString (ty: Ty) : string =
+        let vars = varsInPrintOrder ty
+        let taken = vars |> List.choose (fun v -> v.Name) |> Set.ofList
+        let candidates =
+            Seq.initInfinite (fun index -> if index < 26 then string (char (int 'a' + index)) else $"t{index}")
+            |> Seq.filter (fun name -> not (taken.Contains name))
+        let unnamed = vars |> List.filter (fun v -> v.Name.IsNone)
+        // Each made-up variable is replaced by a primitive that prints as its new name.
+        let names =
+            Seq.zip unnamed candidates
+            |> Seq.map (fun (v, name) -> v.Id, TyPrimitive $"'{name}")
+            |> Map.ofSeq
+        tyToString (apply names ty)
 
     let rec occurs (varId: int) (ty: Ty) : bool =
         match ty with

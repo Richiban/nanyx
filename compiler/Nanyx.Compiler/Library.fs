@@ -15,7 +15,10 @@ type CompilationPhase =
 type CompileResult =
     { Phase: CompilationPhase
       Diagnostics: Diagnostic list
-      Typed: TypedModule option }
+      Typed: TypedModule option
+      /// The root module as parsed, before desugaring: the syntax the user wrote, whose nodes the typed module's
+      /// `ExprTypes` and `CalleeTypes` are keyed by. Only present when the module type-checked.
+      Syntax: Module option }
 
 /// Where a module's source came from, which decides how its imports are resolved and what is in scope.
 type private ModuleOrigin =
@@ -34,7 +37,14 @@ type private CheckedModule =
       /// Items inlined from the modules it imports, already renamed and ready for the backend.
       Inlined: TopLevelItem list
       /// The declared module name, if any.
-      Name: string option }
+      Name: string option
+      /// The module as parsed, before desugaring.
+      Syntax: Module
+      /// The substitution unification found, which resolves the types inference recorded by node.
+      Subst: Subst
+      /// The types inference recorded by node, unresolved: only the root module's are resolved (see `compileWith`).
+      RawExprTypes: Map<NodeId, Ty>
+      RawCalleeTypes: Map<NodeId, Ty> }
 
 module Compiler =
     let private normalizeSource (source: string) =
@@ -280,8 +290,14 @@ module Compiler =
     let desugar (module': Module) =
         let isReturnKeyword keyword = keyword = "return"
 
+        // A workflow bind or return becomes a call to the workflow's members, whose type is not that of the bind as
+        // written (a bind's call is the whole rest of the workflow), so that call is a node of its own, with a new id.
+        // Everything else keeps its node's id.
         let rec desugarExpr (expr: Expression) : Expression =
-            { expr with Kind = desugarKind expr }
+            match expr.Kind with
+            | WorkflowBindExpr _
+            | WorkflowReturnExpr _ -> Expression.from expr (desugarKind expr)
+            | _ -> { expr with Kind = desugarKind expr }
         and desugarKind expr =
             match expr.Kind with
             | FunctionCall(name, rangeOpt, args) ->
@@ -342,7 +358,7 @@ module Compiler =
                 let expr' =
                     match expr.Kind with
                     | WorkflowBindExpr(keyword, value) when isReturnKeyword keyword ->
-                        { expr with Kind = FunctionCall("pure", None, [desugarExpr value]) }
+                        Expression.from expr (FunctionCall("pure", None, [desugarExpr value]))
                     | _ -> desugarExpr expr
                 DefStatement(isExport, name, typeOpt, expr')
             | ExprStatement expr -> ExprStatement (desugarExpr expr)
@@ -355,22 +371,22 @@ module Compiler =
             | DefStatement(isExport, name, typeOpt, expr) :: rest ->
                 match expr.Kind with
                 | WorkflowBindExpr(keyword, bindExpr) when isReturnKeyword keyword ->
-                    { expr with Kind = FunctionCall("pure", None, [desugarExpr bindExpr]) }
+                    Expression.from expr (FunctionCall("pure", None, [desugarExpr bindExpr]))
                 | WorkflowBindExpr(keyword, bindExpr) ->
                     let nextExpr = desugarWorkflowChain rest
-                    { expr with Kind = FunctionCall(keyword, None, [desugarExpr bindExpr; Expression.from expr (Lambda([name, None], nextExpr))]) }
+                    Expression.from expr (FunctionCall(keyword, None, [desugarExpr bindExpr; Expression.from expr (Lambda([name, None], nextExpr))]))
                 | _ ->
                     let expr' = desugarExpr expr
                     let nextExpr = desugarWorkflowChain rest
                     chainBlock expr.Span nextExpr [DefStatement(isExport, name, typeOpt, expr'); ExprStatement nextExpr]
             | ExprStatement expr :: rest ->
                 match expr.Kind with
-                | WorkflowReturnExpr value -> { expr with Kind = FunctionCall("pure", None, [desugarExpr value]) }
+                | WorkflowReturnExpr value -> Expression.from expr (FunctionCall("pure", None, [desugarExpr value]))
                 | WorkflowBindExpr(keyword, bindExpr) when isReturnKeyword keyword ->
-                    { expr with Kind = FunctionCall("pure", None, [desugarExpr bindExpr]) }
+                    Expression.from expr (FunctionCall("pure", None, [desugarExpr bindExpr]))
                 | WorkflowBindExpr(keyword, bindExpr) ->
                     let nextExpr = desugarWorkflowChain rest
-                    { expr with Kind = FunctionCall(keyword, None, [desugarExpr bindExpr; Expression.from expr (Lambda([("_", None)], nextExpr))]) }
+                    Expression.from expr (FunctionCall(keyword, None, [desugarExpr bindExpr; Expression.from expr (Lambda([("_", None)], nextExpr))]))
                 | _ ->
                     let expr' = desugarExpr expr
                     let nextExpr = desugarWorkflowChain rest
@@ -527,10 +543,11 @@ module Compiler =
                 |> Result.mapError (fun diagnostics -> Parsed, diagnostics)
                 |> Result.bind (fun ast ->
                     applyAttributes (desugar ast)
+                    |> Result.map (fun desugared -> ast, desugared)
                     |> Result.mapError (fun diagnostics -> Desugared, diagnostics))
             match resolved with
             | Result.Error failure -> Error failure
-            | Result.Ok desugared ->
+            | Result.Ok (ast, desugared) ->
                 let imports = collectImports desugared
                 let mutable env =
                     match origin with
@@ -605,10 +622,17 @@ module Compiler =
                                     { Module = inlined @ own
                                       Types = resolvedTypes
                                       TypeDefs = resolvedTypeDefs
-                                      Items = resolvedItems }
+                                      Items = resolvedItems
+                                      // Filled in for the root module only, by `compileWith`.
+                                      ExprTypes = Map.empty
+                                      CalleeTypes = Map.empty }
                                  Own = own
                                  Inlined = inlined
-                                 Name = declaredModuleName desugared }
+                                 Name = declaredModuleName desugared
+                                 Syntax = ast
+                                 Subst = subst
+                                 RawExprTypes = state.ExprTypes
+                                 RawCalleeTypes = state.CalleeTypes }
 
     let parse (source: string) : Result<Module, Diagnostic list> =
         match parseModule source with
@@ -620,11 +644,20 @@ module Compiler =
         | Result.Error (phase, diagnostics) ->
             { Phase = phase
               Diagnostics = annotateDiagnosticsWithSource source diagnostics
-              Typed = None }
+              Typed = None
+              Syntax = None }
         | Result.Ok checkedModule ->
+            // Types by node are only read for the root module, so only its are resolved: not those of every
+            // imported module (the standard library included) on every compile.
+            let resolve = Map.map (fun _ ty -> Unifier.apply checkedModule.Subst ty)
+            let typed =
+                { checkedModule.Typed with
+                    ExprTypes = resolve checkedModule.RawExprTypes
+                    CalleeTypes = resolve checkedModule.RawCalleeTypes }
             { Phase = Typed
               Diagnostics = []
-              Typed = Some checkedModule.Typed }
+              Typed = Some typed
+              Syntax = Some checkedModule.Syntax }
 
     /// Compiles the file at `filePath` up to the typed module, resolving its imports (standard-library modules
     /// from the embedded library, everything else relative to the file).
@@ -632,7 +665,8 @@ module Compiler =
         if not (File.Exists filePath) then
             { Phase = Parsed
               Diagnostics = [ Diagnostics.error ($"File not found: {filePath}") ]
-              Typed = None }
+              Typed = None
+              Syntax = None }
         else
             compileWith (SourceFile (Path.GetFullPath filePath)) (File.ReadAllText filePath)
 
