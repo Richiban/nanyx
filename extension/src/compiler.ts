@@ -9,7 +9,7 @@ import * as vscode from "vscode";
  * The compiler release the extension downloads when it finds no `nanyx` of its own. Bump it with each
  * compiler release the extension should use (the `<Version>` in NanyxCompiler.Cli.csproj at the time).
  */
-export const DEFAULT_COMPILER_VERSION = "0.2.0";
+export const DEFAULT_COMPILER_VERSION = "0.4.1";
 
 /**
  * Where a release lives. `${version}`, `${rid}` and `${ext}` are substituted; this is what the
