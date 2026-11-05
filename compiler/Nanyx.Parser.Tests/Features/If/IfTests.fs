@@ -36,6 +36,41 @@ let ``a condition without is stays a plain if, and is must end the keyword`` () 
     | Result.Error err -> failwith $"Parse failed: {err}"
 
 [<Fact>]
+let ``multi-branch if desugars to nested ifs ending in the else arm`` () =
+    match parseModule "def x = if | a -> 1 | b -> 2 | else -> 3" with
+    | Result.Ok [ Def (ValueDef (_, "x", _, IfExpr (IdentifierExpr ("a", _), LiteralExpr (IntLit 1),
+                                                    IfExpr (IdentifierExpr ("b", _), LiteralExpr (IntLit 2), LiteralExpr (IntLit 3))))) ] -> ()
+    | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
+    | Result.Error err -> failwith $"Parse failed: {err}"
+
+[<Fact>]
+let ``multi-branch if arms may test patterns with is, and a missing else is unit`` () =
+    let source =
+        "def x = { s ->\n" +
+        "  if | int.parse(s) is #some(i) -> i\n" +
+        "     | s == \"\" ->\n" +
+        "       0\n" +
+        "}\n"
+    match parseModule source with
+    | Result.Ok [ Def (ValueDef (_, "x", _, Lambda (_, Block [ ExprStatement (Match ([ FunctionCall _ ],
+                                                               [ [ TagPattern ("some", Some (IdentifierPattern "i")) ], IdentifierExpr ("i", _)
+                                                                 [ WildcardPattern ], IfExpr (BinaryOp ("==", _, _), _, UnitExpr) ])) ]))) ] -> ()
+    | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
+    | Result.Error err -> failwith $"Parse failed: {err}"
+
+[<Fact>]
+let ``multi-branch if inside a match arm stops at its else arm`` () =
+    let source =
+        "def x = match n\n" +
+        "  | 0 -> if | a -> 1 | else -> 2\n" +
+        "  | _ -> 3\n"
+    match parseModule source with
+    | Result.Ok [ Def (ValueDef (_, "x", _, Match (_, [ [ LiteralPattern (IntLit 0) ], IfExpr _
+                                                        [ WildcardPattern ], LiteralExpr (IntLit 3) ]))) ] -> ()
+    | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
+    | Result.Error err -> failwith $"Parse failed: {err}"
+
+[<Fact>]
 let ``Parse if feature files`` () =
     let unsupported = set [ "test_if_advanced.nyx" ]
 

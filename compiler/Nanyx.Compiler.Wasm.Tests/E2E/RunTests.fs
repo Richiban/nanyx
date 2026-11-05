@@ -657,6 +657,30 @@ let ``Run - if-matching`` () =
         "}\n"
     runSource source |> assertRan "got 3\ngot 5 nothing\n"
 [<Fact>]
+let ``Run - multi-branch if`` () =
+    // #76: `if | cond -> ... | value is pattern -> ... | else -> ...` was a parse error at `|`.
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def lookup: int -> #some(int) | #none = { n -> if n > 100 then #none else #some(n * 2) }\n" +
+        "def classify: int -> string = { n ->\n" +
+        "  if | n < 0 -> \"negative\"\n" +
+        "     | n == 0 ->\n" +
+        "       \"zero\"\n" +
+        "     | lookup(n) is #some(d) -> \"doubled {d}\"\n" +
+        "     | else -> \"too big\"\n" +
+        "}\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  println(classify(0 - 4))\n" +
+        "  println(classify(0))\n" +
+        "  println(classify(21))\n" +
+        "  println(classify(500))\n" +
+        "  if | classify(1) == \"zero\" -> println(\"unexpected\")\n" +
+        "     | classify(0) == \"zero\" -> println(\"no else\")\n" +
+        "}\n"
+    runSource source |> assertRan "negative\nzero\ndoubled 42\ntoo big\nno else\n"
+[<Fact>]
 let ``Run - guard patterns in the documented form`` () =
     // Regression: the docs write guards as `| { < 0 } -> ...`; the parser only knew `| < 0 ->` (#46).
     let source =

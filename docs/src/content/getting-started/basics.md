@@ -208,6 +208,8 @@ if | cond1 ->
      yetMoreCode()
 ```
 
+As with a single-branch `if`, the `else` arm may be left out when the branches are unit; if no condition holds, the `if` is `()`. An arm's condition may also be a pattern test with `is` (`| get(3) is #some(v) -> ...`), which binds the pattern's names in that arm.
+
 `if` can also test a value against a pattern with `is`, as in `if get(3) is #some(v) then println("got {v}")`; see [Pattern matching](../tour/pattern-matching#if-matching).
 
 # Unimplemented code
