@@ -2,7 +2,8 @@
 
 Work on the compiler and its tools is split into workstreams. Each has a design document here, a label on its
 issues, and a tracking issue with the plan as a checklist. The
-[Nanyx workstreams project](https://github.com/orgs/nanyx-lang/projects) shows all of them on one board.
+[Nanyx workstreams project](https://github.com/orgs/nanyx-lang/projects/1) shows all of them on one board,
+with a Stream field. An issue that serves several workstreams is placed under the one that tracks it.
 
 | Workstream | Design | Label |
 |------------|--------|-------|
