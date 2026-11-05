@@ -61,16 +61,16 @@ public sealed class DiagnosticsPublisher
             ];
         }
 
-        return document.Compiled.Diagnostics.Select(diagnostic => ToLsp(diagnostic, document.Text)).ToList();
+        return document.Compiled.Diagnostics.Select(diagnostic => ToLsp(diagnostic, document.Positions)).ToList();
     }
 
-    private static Diagnostic ToLsp(NyxCompiler.Diagnostic diagnostic, string text) =>
+    private static Diagnostic ToLsp(NyxCompiler.Diagnostic diagnostic, SourcePositions positions) =>
         new()
         {
             Severity = diagnostic.Severity.IsWarningSeverity ? DiagnosticSeverity.Warning : DiagnosticSeverity.Error,
             Source = Source,
             Message = diagnostic.Message,
-            Range = ToRange(diagnostic, text)
+            Range = ToRange(diagnostic, positions)
         };
 
     /// <summary>
@@ -78,7 +78,7 @@ public sealed class DiagnosticsPublisher
     /// identifier at that position (or one character where there is none). A diagnostic without a range is
     /// shown at the start of the file.
     /// </summary>
-    private static Range ToRange(NyxCompiler.Diagnostic diagnostic, string text)
+    private static Range ToRange(NyxCompiler.Diagnostic diagnostic, SourcePositions positions)
     {
         if (diagnostic.Range is null)
         {
@@ -86,7 +86,7 @@ public sealed class DiagnosticsPublisher
         }
 
         var (line, column) = (diagnostic.Range.Value.Item1, diagnostic.Range.Value.Item2);
-        var lineText = LineAt(text, line);
+        var lineText = positions.LineText(line);
         column = Math.Clamp(column, 0, lineText.Length);
 
         var end = column;
@@ -101,12 +101,6 @@ public sealed class DiagnosticsPublisher
         }
 
         return new Range(line, column, line, end);
-    }
-
-    private static string LineAt(string text, int line)
-    {
-        var lines = text.Split('\n');
-        return line >= 0 && line < lines.Length ? lines[line].TrimEnd('\r') : string.Empty;
     }
 
     private static bool IsIdentifierChar(char c) => char.IsLetterOrDigit(c) || c == '_';

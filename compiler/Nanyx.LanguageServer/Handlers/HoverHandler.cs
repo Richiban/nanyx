@@ -30,7 +30,7 @@ public sealed class HoverHandler : HoverHandlerBase
             return null;
         }
 
-        var positions = new SourcePositions(document.Text);
+        var positions = document.Positions;
         var info = CompilerHover.typeAt(compiled, positions.ToOffset(request.Position));
         if (info is null)
         {

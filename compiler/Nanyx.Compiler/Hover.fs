@@ -75,13 +75,15 @@ let rec private topLevelExpressions (item: TopLevelItem) : Expression list =
     | Import _
     | Attribute _ -> []
 
-/// The expressions whose spans contain `offset`, innermost first. A child is searched even when its parent's span
-/// does not contain the offset, since some made-up parents have no span of their own.
+/// The expressions whose spans contain `offset`, innermost first. Only expressions that contain the offset are
+/// searched, and those without a span of their own (made-up parents), so a lookup is proportional to depth.
 let expressionsAt (offset: int) (module': Module) : Expression list =
-    let rec search (expr: Expression) : Expression list =
-        let inner = children expr |> List.collect search
-        if contains offset expr.Span then inner @ [ expr ] else inner
-    module' |> List.collect topLevelExpressions |> List.collect search
+    // Each expression found is pushed before its children are searched, so they end up in front of it.
+    let rec search (found: Expression list) (expr: Expression) : Expression list =
+        if contains offset expr.Span then children expr |> List.fold search (expr :: found)
+        elif SourceSpan.isNone expr.Span then children expr |> List.fold search found
+        else found
+    module' |> List.collect topLevelExpressions |> List.fold search []
 
 /// The span of a call's or pipe's function name, when it has one.
 let private calleeSpan (expr: Expression) =
@@ -90,25 +92,30 @@ let private calleeSpan (expr: Expression) =
     | Pipe(_, _, nameSpan, _) -> nameSpan
     | _ -> None
 
-/// The hover for the expression at `offset` in the compiled root module: the type of the innermost expression
+/// The hover for the expression at `offset` in the compiled root module: the type of the narrowest expression
 /// there that has one, or of the function itself on a call's function name, where it is instantiated at that
 /// call. `None` when the module did not type-check or no typed expression is at `offset`.
+///
+/// The narrowest span wins rather than the deepest node, because a made-up node can sit inside the syntax it
+/// stands for: a `for` loop's element is an identifier spanning all of the loop's arms.
 let typeAt (result: CompileResult) (offset: int) : HoverInfo option =
-    match result.Syntax with
-    | None -> None
-    | Some syntax ->
-        expressionsAt offset syntax
-        |> List.tryPick (fun expr ->
-            let callee =
-                match calleeSpan expr with
-                | Some nameSpan when contains offset nameSpan ->
-                    result.CalleeTypes
-                    |> Map.tryFind expr.Id
-                    |> Option.map (fun ty -> { Type = Unifier.tyToDisplayString ty; Span = nameSpan })
-                | _ -> None
-            match callee with
-            | Some _ -> callee
-            | None ->
-                result.ExprTypes
-                |> Map.tryFind expr.Id
-                |> Option.map (fun ty -> { Type = Unifier.tyToDisplayString ty; Span = expr.Span }))
+    match result.Syntax, result.Typed with
+    | Some syntax, Some typed ->
+        let candidates =
+            expressionsAt offset syntax
+            |> List.collect (fun expr ->
+                let callee =
+                    match calleeSpan expr with
+                    | Some nameSpan when contains offset nameSpan ->
+                        typed.CalleeTypes |> Map.tryFind expr.Id |> Option.map (fun ty -> ty, nameSpan)
+                    | _ -> None
+                let own = typed.ExprTypes |> Map.tryFind expr.Id |> Option.map (fun ty -> ty, expr.Span)
+                // A callee's name is inside its call, so it comes first among equals.
+                Option.toList callee @ Option.toList own)
+        match candidates with
+        | [] -> None
+        | _ ->
+            // `minBy` keeps the first of equal spans: the innermost.
+            let ty, span = candidates |> List.minBy (fun (_, span) -> span.End - span.Start)
+            Some { Type = Unifier.tyToDisplayString ty; Span = span }
+    | _ -> None

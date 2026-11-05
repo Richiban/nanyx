@@ -1478,3 +1478,52 @@ let ``Hover on a polymorphic function shows it instantiated at the call`` () =
 let ``Type variables are shown as 'a, 'b in order of appearance`` () =
     let source = "def pair = { a, b -> (b, a) }"
     Assert.Equal(Some "('a, 'b) -> ('b, 'a)", hoverType source (offsetOf source "{" 0 0))
+
+[<Fact>]
+let ``Hover inside a for loop's arm shows the arm's expression, not the loop element`` () =
+    let source = "def f = for [\"a\"] | s -> s ++ \"!\""
+    let info = (hoverAt source (offsetOf source "\"!\"" 0 1)).Value
+    Assert.Equal("string", info.Type)
+    Assert.Equal(offsetOf source "\"!\"" 0 0, info.Span.Start)
+    Assert.Equal(Some "int", hoverType "def g = for 1..3 | i -> i * 2" (offsetOf "def g = for 1..3 | i -> i * 2" "2" 0 0))
+
+[<Fact>]
+let ``Hover inside a match arm shows the innermost expression`` () =
+    let source =
+        "def describe = { n ->\n" +
+        "  match n\n" +
+        "  | 0 -> \"zero\"\n" +
+        "  | _ -> \"many\"\n" +
+        "}\n"
+    let info = (hoverAt source (offsetOf source "\"many\"" 0 2)).Value
+    Assert.Equal("string", info.Type)
+    Assert.Equal(offsetOf source "\"many\"" 0 0, info.Span.Start)
+
+[<Fact>]
+let ``A workflow bind is not given the type of the rest of the workflow`` () =
+    let source =
+        "context AsyncWorkflow = (await: (string, (string -> int)) -> int pure: int -> int)\n" +
+        "def async: AsyncWorkflow = (await = { x, f -> f(x) }, pure = { x -> x })\n" +
+        "def result = async {\n" +
+        "  def x = await! \"a\"\n" +
+        "  return! 1\n" +
+        "}"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, sprintf "%A" result.Diagnostics)
+    let bind =
+        Hover.expressionsAt (offsetOf source "await!" 0 0) result.Syntax.Value
+        |> List.find (fun expr -> match expr.Kind with WorkflowBindExpr _ -> true | _ -> false)
+    Assert.False(result.Typed.Value.ExprTypes.ContainsKey bind.Id)
+    Assert.Equal(Some "string", hoverType source (offsetOf source "\"a\"" 0 1))
+
+[<Fact>]
+let ``Type variables named in an annotation keep their names`` () =
+    let source = "def first: (t, a) -> t = { x, y -> x }"
+    Assert.Equal(Some "('t, 'a) -> 't", hoverType source (offsetOf source "{" 0 0))
+    // A made-up variable skips the names an annotation took.
+    let mixed =
+        "def f: a -> int = { x ->\n" +
+        "  def g = { y -> (y, x) }\n" +
+        "  1\n" +
+        "}\n"
+    Assert.Equal(Some "'b -> ('b, 'a)", hoverType mixed (offsetOf mixed "{ y" 0 0))

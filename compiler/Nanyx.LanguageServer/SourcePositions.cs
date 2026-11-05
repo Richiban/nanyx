@@ -34,6 +34,18 @@ public sealed class SourcePositions
         return lineStart + Math.Clamp(position.Character, 0, lineEnd - lineStart);
     }
 
+    /// <summary>The text of a line without its line ending, or empty for a line past the end.</summary>
+    public string LineText(int line)
+    {
+        if (line < 0 || line >= _lineStarts.Count)
+        {
+            return string.Empty;
+        }
+
+        var lineEnd = line + 1 < _lineStarts.Count ? _lineStarts[line + 1] - 1 : _normalized.Length;
+        return _normalized[_lineStarts[line]..lineEnd];
+    }
+
     /// <summary>The position of <paramref name="offset"/>.</summary>
     public Position ToPosition(int offset)
     {

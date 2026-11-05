@@ -203,10 +203,9 @@ let rec private typeExprToTy (state: InferState) (typeExpr: TypeExpr) : Ty * Inf
         match state.TypeVars |> Map.tryFind name with
         | Some existing -> TyVar existing, state
         | None ->
-            let tyVar, next = freshVar state
-            match tyVar with
-            | TyVar var -> tyVar, { next with TypeVars = next.TypeVars |> Map.add name var }
-            | _ -> tyVar, next
+            // The variable keeps the annotation's name, so types are shown with the names the user wrote.
+            let var = { Id = state.NextId; Name = Some name }
+            TyVar var, { state with NextId = state.NextId + 1; TypeVars = state.TypeVars |> Map.add name var }
     | TypeUnit -> TyPrimitive "unit", state
     | TypeTuple items ->
         let mutable current = state

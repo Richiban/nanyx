@@ -24,9 +24,11 @@ what the compiler keeps: exact spans, resolved names and types.
   diagnostic with a position is shown from there to the end of the identifier; one without is shown at the start
   of the file. See [The language server](../README.md#the-language-server).
 - **Hover shows inferred types** ([#120](https://github.com/nanyx-lang/nanyx/issues/120)). Inference records the
-  resolved type of every expression by `NodeId` (`CompileResult.ExprTypes`, the `Types` table of the planned
-  [semantic model](analyzers.md#3-the-semantic-model)), and the callee's type at each call (`CalleeTypes`). Hover
-  shows the innermost typed expression under the pointer, or a call's function at that call site. Each document
+  resolved type of every expression by `NodeId` (`TypedModule.ExprTypes`, the `Types` table of the planned
+  [semantic model](analyzers.md#3-the-semantic-model)), and the callee's type at each call (`CalleeTypes`), for
+  the root module of a compile. Hover shows the narrowest typed expression under the pointer, or a call's
+  function at that call site. A desugared workflow bind or return gets a node id of its own, so the bind as
+  written has no type rather than that of the rest of the workflow. Each document
   is compiled once per change and the result cached in `DocumentStore`, shared by diagnostics and hover. A
   declared signature or doc comment needs name resolution ([#98](https://github.com/nanyx-lang/nanyx/issues/98)),
   and a file that fails to type-check shows no hover.

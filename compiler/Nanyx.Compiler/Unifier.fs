@@ -177,15 +177,20 @@ module Unifier =
             |> TyUnion
         | TyPrimitive _ -> ty
 
-    /// `ty` for a reader: its type variables are renamed `'a`, `'b`, ... in the order they appear.
+    /// `ty` for a reader: type variables the compiler made up are renamed `'a`, `'b`, ... in the order they appear,
+    /// skipping names already taken; variables named in an annotation keep their names.
     let tyToDisplayString (ty: Ty) : string =
-        // Each variable is replaced by a primitive that prints as its new name.
+        let vars = varsInPrintOrder ty
+        let taken = vars |> List.choose (fun v -> v.Name) |> Set.ofList
+        let candidates =
+            Seq.initInfinite (fun index -> if index < 26 then string (char (int 'a' + index)) else $"t{index}")
+            |> Seq.filter (fun name -> not (taken.Contains name))
+        let unnamed = vars |> List.filter (fun v -> v.Name.IsNone)
+        // Each made-up variable is replaced by a primitive that prints as its new name.
         let names =
-            varsInPrintOrder ty
-            |> List.mapi (fun index v ->
-                let name = if index < 26 then string (char (int 'a' + index)) else $"t{index}"
-                v.Id, TyPrimitive $"'{name}")
-            |> Map.ofList
+            Seq.zip unnamed candidates
+            |> Seq.map (fun (v, name) -> v.Id, TyPrimitive $"'{name}")
+            |> Map.ofSeq
         tyToString (apply names ty)
 
     let rec occurs (varId: int) (ty: Ty) : bool =

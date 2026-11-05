@@ -9,7 +9,11 @@ namespace Nanyx.LanguageServer;
 /// <param name="Text">The editor's buffer, which is usually ahead of the saved file.</param>
 /// <param name="Compiled">What the compiler made of <paramref name="Text"/>; <c>null</c> if the compiler threw.</param>
 /// <param name="CompilerFailure">The exception the compiler threw, if it did.</param>
-public sealed record OpenDocument(string Text, CompileResult? Compiled, Exception? CompilerFailure);
+public sealed record OpenDocument(string Text, CompileResult? Compiled, Exception? CompilerFailure)
+{
+    /// <summary>Converts positions in <see cref="Text"/>, built once per change rather than on every request.</summary>
+    public SourcePositions Positions { get; } = new(Text);
+}
 
 /// <summary>
 /// Every document the client has open, keyed by URI, with the last compile of its text. A document is compiled

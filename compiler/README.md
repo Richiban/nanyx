@@ -205,11 +205,11 @@ What it does today:
   there; one the compiler cannot position is shown at the start of the file.
 - A file that fails to parse gets one diagnostic for the parse error, and a compiler exception is
   reported as a diagnostic rather than taking the server down.
-- `textDocument/hover` shows the inferred type of the innermost expression under the pointer, with
-  type variables named `'a`, `'b`, ...; on a call's function name it shows the function's type at that
-  call (so `id` in `id(5)` is `int -> int`). The types come from `CompileResult.ExprTypes` and
-  `CalleeTypes`, recorded by node during inference (see `NyxCompiler.Hover`). A file that does not
-  type-check shows no hover.
+- `textDocument/hover` shows the inferred type of the narrowest expression under the pointer, with
+  made-up type variables named `'a`, `'b`, ... and annotation variables keeping their names; on a
+  call's function name it shows the function's type at that call (so `id` in `id(5)` is
+  `int -> int`). The types come from the typed module's `ExprTypes` and `CalleeTypes`, recorded by
+  node during inference (see `NyxCompiler.Hover`). A file that does not type-check shows no hover.
 
 Go-to-definition and completion are deliberately not implemented yet: each is one handler class in
 `Nanyx.LanguageServer/Handlers/`, registered in `NanyxLanguageServer.Configure`, and they wait on the

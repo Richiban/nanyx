@@ -48,7 +48,8 @@ type TypedTopLevelItem =
 type TypeDefInfo = { Parameters: TyVar list; Underlying: Ty; IsPrivate: bool }
 
 /// `ExprTypes` holds the resolved type of every expression inference typed, by node; `CalleeTypes` the type of
-/// the function at each call or pipe, by the call's node. Type variables left in them are generalised ones.
+/// the function at each call or pipe, by the call's node. Type variables left in them are generalised ones. Both are
+/// filled in for the root module of a compile only.
 type TypedModule =
     { Module: Module
       Types: Map<string, Ty>
