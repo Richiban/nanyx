@@ -832,7 +832,7 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
             | Ok resolvedOpt ->
                 let resolvedName = resolvedOpt |> Option.defaultValue name
                 let callArgs = value :: args
-                match inferExpr env nextState (Expression.from expr (FunctionCall(resolvedName, spanOpt, callArgs))) with
+                match inferExpr env nextState { expr with Kind = FunctionCall(resolvedName, spanOpt, callArgs) } with
                 | Ok (typedCall, finalState) ->
                     Ok ({ typedCall with Expr = { expr with Kind = Pipe(value, resolvedName, spanOpt, args) } }, finalState)
                 | Error err -> Error err

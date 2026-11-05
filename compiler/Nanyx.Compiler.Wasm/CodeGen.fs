@@ -2881,16 +2881,19 @@ module private LambdaLifting =
                 wrappers.[name] <- wrapperName
                 wrapperName
 
-        /// The closure block for the lifted function `liftedName` over the given captured names. (A marker
-        /// call rather than a tuple, so that `f(closure)` is not flattened into one argument per field.)
-        let closureOf (liftedName: string) (captured: string list) =
-            Expression.synthetic (FunctionCall("__closure", None,
-                Expression.synthetic (FunctionCall("__slot", None, [ Expression.synthetic (IdentifierExpr liftedName) ]))
-                :: (captured |> List.map (fun name -> Expression.synthetic (IdentifierExpr name)))))
+        /// The closure block for the lifted function `liftedName` over the given captured names, standing in for
+        /// `origin` (the lambda or function reference it replaces), whose id and span it keeps. (A marker call
+        /// rather than a tuple, so that `f(closure)` is not flattened into one argument per field.)
+        let closureOf (origin: Expression) (liftedName: string) (captured: string list) =
+            { origin with
+                Kind =
+                    FunctionCall("__closure", None,
+                        Expression.synthetic (FunctionCall("__slot", None, [ Expression.synthetic (IdentifierExpr liftedName) ]))
+                        :: (captured |> List.map (fun name -> Expression.synthetic (IdentifierExpr name)))) }
 
         /// The lifted function's lambda: the environment parameter first, then the captured names bound
-        /// from the environment's fields ahead of the original body.
-        let liftedLambda (args: (string * TypeExpr option) list) (captured: string list) (body: Expression) =
+        /// from the environment's fields ahead of the original body. It is reported where `lambda` was written.
+        let liftedLambda (lambda: Expression) (args: (string * TypeExpr option) list) (captured: string list) (body: Expression) =
             let captureBindings =
                 captured
                 |> List.mapi (fun index name ->
@@ -2900,7 +2903,7 @@ module private LambdaLifting =
                 | [], _ -> body
                 | _, Block statements -> { body with Kind = Block (captureBindings @ statements) }
                 | _, _ -> Expression.from body (Block (captureBindings @ [ ExprStatement body ]))
-            Expression.synthetic (Lambda((envParameter, None) :: args, bodyWithCaptures))
+            Expression.from lambda (Lambda((envParameter, None) :: args, bodyWithCaptures))
 
         // `scope` is every name the enclosing function binds; a lambda referring to one of them captures it.
         let rec liftExpr (scope: Set<string>) (expr: Expression) : Expression =
@@ -2911,11 +2914,11 @@ module private LambdaLifting =
             | FunctionCall("__for", range, [ iterable; Kind (Lambda(args, body)) as lambda ]) ->
                 let innerScope = Set.union (args |> List.map fst |> Set.ofList) (boundNames body |> Set.ofList)
                 rebuild (FunctionCall("__for", range, [ recur iterable; { lambda with Kind = Lambda(args, liftExpr (Set.union scope innerScope) body) } ]))
-            | Lambda(args, body) when not args.IsEmpty -> liftLambda scope args body
+            | Lambda(args, body) when not args.IsEmpty -> liftLambda scope expr args body
             | Lambda(args, body) -> rebuild (Lambda(args, recur body))
             // A top-level function used as a value: a closure over a wrapper that takes an environment.
             | IdentifierExpr name when topLevelFunctions.ContainsKey name && not (scope.Contains name) ->
-                closureOf (wrapperOf name) []
+                closureOf expr (wrapperOf name) []
             | FunctionCall(name, range, args) -> rebuild (FunctionCall(name, range, args |> List.map recur))
             | Pipe(value, name, range, args) -> rebuild (Pipe(recur value, name, range, args |> List.map recur))
             | BinaryOp(op, left, right) -> rebuild (BinaryOp(op, recur left, recur right))
@@ -2937,14 +2940,14 @@ module private LambdaLifting =
                 // A lambda bound to a context member is a function even with no parameters.
                 let liftMember contextType memberName (value: Expression) =
                     match value.Kind with
-                    | Lambda(args, body) -> liftLambda scope (annotateFromMemberType (memberType contextType memberName) args) body
+                    | Lambda(args, body) -> liftLambda scope value (annotateFromMemberType (memberType contextType memberName) args) body
                     | _ -> recur value
                 statements
                 |> List.collect (function
                     // `rec name = { ... }`: a local function that calls itself. It is lifted under a fresh
                     // name with its self-references redirected there (a self-call passes the environment on),
                     // and the local is bound to its closure.
-                    | DefStatement(isExport, name, _, Kind (FunctionCall("__rec", _, [ Kind (Lambda(args, body)) ]))) when not args.IsEmpty ->
+                    | DefStatement(isExport, name, _, Kind (FunctionCall("__rec", _, [ Kind (Lambda(args, body)) as lambda ]))) when not args.IsEmpty ->
                         let liftedName = $"__rec_{sanitizeIdentifier name}_{counter}"
                         counter <- counter + 1
                         let parameterNames = args |> List.map fst |> Set.ofList
@@ -2954,9 +2957,9 @@ module private LambdaLifting =
                             Set.difference (referencedNames liftedBody |> Set.ofList) (innerScope |> Set.add liftedName |> Set.add envParameter)
                             |> Set.intersect scope
                             |> Set.toList
-                        lifted.Add(Def (ValueDef(false, liftedName, None, liftedLambda args captured liftedBody)))
+                        lifted.Add(Def (ValueDef(false, liftedName, None, liftedLambda lambda args captured liftedBody)))
                         origins.[liftedName] <- { Owner = owner; LocalName = Some name; Captured = captured }
-                        [ DefStatement(isExport, name, None, closureOf liftedName captured) ]
+                        [ DefStatement(isExport, name, None, closureOf lambda liftedName captured) ]
                     | DefStatement(isExport, name, typeOpt, Kind (FunctionCall("__rec", _, [ rhs ]))) ->
                         [ DefStatement(isExport, name, typeOpt, recur rhs) ]
                     // A record a `use` binds below: its fields are context members.
@@ -3025,7 +3028,7 @@ module private LambdaLifting =
             | IdentifierExpr _ -> expr
 
         /// Lifts `{ args -> body }` to a fresh top-level function and returns its closure.
-        and liftLambda (scope: Set<string>) (args: (string * TypeExpr option) list) (body: Expression) : Expression =
+        and liftLambda (scope: Set<string>) (lambda: Expression) (args: (string * TypeExpr option) list) (body: Expression) : Expression =
             let parameterNames = args |> List.map fst |> Set.ofList
             let innerScope = Set.union parameterNames (boundNames body |> Set.ofList)
             // A lambda nested inside may capture what this one binds and what encloses this one alike;
@@ -3037,9 +3040,9 @@ module private LambdaLifting =
                 |> Set.toList
             let name = $"__lambda_{counter}"
             counter <- counter + 1
-            lifted.Add(Def (ValueDef(false, name, None, liftedLambda args captured liftedBody)))
+            lifted.Add(Def (ValueDef(false, name, None, liftedLambda lambda args captured liftedBody)))
             origins.[name] <- { Owner = owner; LocalName = None; Captured = captured }
-            closureOf name captured
+            closureOf lambda name captured
 
         let liftItem (item: TopLevelItem) : TopLevelItem =
             match item with

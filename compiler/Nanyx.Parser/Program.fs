@@ -76,24 +76,33 @@ and TypeRecordField =
     | TypeField of Identifier * bool * bool * TypeExpr option * Expression option
     | TypeMember of Identifier * TypeExpr option
 
-/// An expression and where it came from. Equality and comparison look only at `Kind`: two expressions are the
-/// same when they are the same code, wherever it was written. It is printed (`%A`) as its kind alone.
+/// An expression and where it came from. Equality and comparison look only at `Kind`, leaving out the name spans
+/// some kinds carry: two expressions are the same when they are the same code, wherever it was written. It is
+/// printed (`%A`) as its kind alone.
 and [<CustomEquality; CustomComparison; StructuredFormatDisplay("{Kind}")>] Expression =
     { Kind: ExpressionKind
       Span: SourceSpan
       Id: NodeId }
 
+    /// The kind without its name span. Only the top level needs it: child expressions compare by this same rule.
+    member private this.Code =
+        match this.Kind with
+        | FunctionCall(name, Some _, args) -> FunctionCall(name, None, args)
+        | Pipe(value, name, Some _, args) -> Pipe(value, name, None, args)
+        | MemberAccess(target, field, Some _) -> MemberAccess(target, field, None)
+        | kind -> kind
+
     override this.Equals(other) =
         match other with
-        | :? Expression as expr -> this.Kind = expr.Kind
+        | :? Expression as expr -> this.Code = expr.Code
         | _ -> false
 
-    override this.GetHashCode() = hash this.Kind
+    override this.GetHashCode() = hash this.Code
 
     interface IComparable with
         member this.CompareTo(other) =
             match other with
-            | :? Expression as expr -> compare this.Kind expr.Kind
+            | :? Expression as expr -> compare this.Code expr.Code
             | _ -> invalidArg "other" "an Expression can only be compared with another Expression"
 
 /// The span on `FunctionCall`, `Pipe` and `MemberAccess` is that of the name (the function or the field), which
@@ -293,6 +302,23 @@ let private singleOrTuple (items: Parser<Expression list, unit>) : Parser<Expres
         match exprs with
         | [single] -> single
         | multiple -> Expression.at span (TupleExpr multiple)
+
+/// A block of statements. It ends where its last statement's expression does: a statement may have consumed a
+/// trailing `-- comment`, which is not part of the block.
+let private blockSpanned (statements: Parser<Statement list, unit>) : Parser<Expression, unit> =
+    withSpan statements |>> fun (stmts, span) ->
+        let lastExpr =
+            match List.tryLast stmts with
+            | Some (ExprStatement expr)
+            | Some (DefStatement(_, _, _, expr))
+            | Some (UseStatement (UseValue expr))
+            | Some (UseStatement (UseContextInstance(_, expr))) -> Some expr
+            | _ -> None
+        let span =
+            match lastExpr with
+            | Some expr when not (SourceSpan.isNone expr.Span) && expr.Span.End < span.End -> { span with End = expr.Span.End }
+            | _ -> span
+        Expression.at span (Block stmts)
 
 
 // Parser for literals
@@ -853,11 +879,11 @@ let blockExpr() : Parser<Expression, unit> =
             let statementAtIndent =
                 attempt (manyMinMaxSatisfy indentLevel indentLevel (fun c -> c = ' ' || c = '\t') >>. statementItems)
 
-            spanned (
+            blockSpanned (
                 pipe2
                     statementItems
                     (many (attempt (newline >>. statementAtIndent)))
-                    (fun first rest -> Block (List.concat (first :: rest))))
+                    (fun first rest -> List.concat (first :: rest)))
         else
             pzero
 
@@ -952,8 +978,9 @@ let matchArms : Parser<(Pattern list * Expression) list, unit> =
 let forExpr : Parser<Expression, unit> =
     let keywordEnd = notFollowedBy (satisfy (fun c -> Char.IsLetterOrDigit c || c = '_'))
     let elementName = "__for_element"
+    // The whitespace before the first arm is skipped outside the span, which starts at its `|`.
     let withArms =
-        withSpan matchArms |>> fun (arms, span) ->
+        ws >>. withSpan matchArms |>> fun (arms, span) ->
             let element = Expression.at span (IdentifierExpr elementName)
             Expression.at span (Lambda([ (elementName, None) ], Expression.at span (Match([ element ], arms))))
     let withoutElement =
@@ -977,14 +1004,18 @@ do
         .>> skipMany (skipAnyOf " \t\r\n")
         <?> "match expression"
 
-// Operator precedence parser. Each operator's after-string parser returns the position just after the operator,
-// which is where a prefix operator's expression starts from (an infix one spans from its left operand).
-let opp = new OperatorPrecedenceParser<Expression, Position, unit>()
+/// An operand of an operator, with the span of all the text it was written as. That is wider than the expression's
+/// own span when the operand is in parentheses (`(1 + 2)`) or a lone spread (`[...xs]`), neither of which is a
+/// node of its own. An operator spans from its first operand's text to its last one's, so it takes in the
+/// delimiters, while an identifier in parentheses is still reported at the identifier.
+type Operand = Expression * SourceSpan
 
-let private afterOperator (whitespace: Parser<unit, unit>) : Parser<Position, unit> = getPosition .>> whitespace
+// Operator precedence parser
+let opp = new OperatorPrecedenceParser<Operand, unit, unit>()
 
-let private binary op (left: Expression) (right: Expression) =
-    Expression.at (SourceSpan.between left.Span right.Span) (BinaryOp(op, left, right))
+let private binary op ((left, leftText): Operand) ((right, rightText): Operand) : Operand =
+    let span = SourceSpan.between leftText rightText
+    Expression.at span (BinaryOp(op, left, right)), span
 
 // Record field parser: either "name = expr" or just "expr"
 let recordField =
@@ -1058,7 +1089,7 @@ let tagExpr =
         between
             (pstring "(")
             (pstring ")")
-            (singleOrTuple (sepBy1 (ws >>. expression) (pstring "," .>> ws)))  // Multiple values as a tuple
+            (ws >>. singleOrTuple (sepBy1 expression (pstring "," .>> ws)))  // Multiple values as a tuple
     spanned (
         pstring "#" >>. identifierNoWs >>= fun tagName ->
         opt payload |>> fun payloadOpt -> TagExpr(tagName, payloadOpt))
@@ -1083,37 +1114,38 @@ let ifExpr =
         |>> fun (value, pat) -> Choice2Of2 (pat, value)
     let condition = expression |>> Choice1Of2
     let head = patternBinding <|> condition
-    // Spans from the head to the end of the last branch written; a left-out `else` is `()` made up at the `then`
-    // branch. The whole if is given the span of the `if` keyword onwards below.
-    let desugar head (thenExpr: Expression) (elseOpt: Expression option) =
+    // A left-out `else` is `()` made up at the `then` branch.
+    let desugar span head (thenExpr: Expression) (elseOpt: Expression option) =
         let elseExpr = elseOpt |> Option.defaultWith (fun () -> Expression.from thenExpr UnitExpr)
-        let last = elseOpt |> Option.defaultValue thenExpr
         match head with
-        | Choice1Of2 (cond: Expression) ->
-            Expression.at (SourceSpan.between cond.Span last.Span) (IfExpr(cond, thenExpr, elseExpr))
-        | Choice2Of2 (pat, (value: Expression)) ->
-            Expression.at (SourceSpan.between value.Span last.Span) (Match([ value ], [ [ pat ], thenExpr; [ WildcardPattern ], elseExpr ]))
+        | Choice1Of2 cond -> Expression.at span (IfExpr(cond, thenExpr, elseExpr))
+        | Choice2Of2 (pat, value) -> Expression.at span (Match([ value ], [ [ pat ], thenExpr; [ WildcardPattern ], elseExpr ]))
     let elseKeyword = pstring "else" >>. keywordEnd
     let conditionArm =
         pstring "|" >>. ws >>. notFollowedBy elseKeyword >>. head .>>. (ws >>. pstring "->" >>. matchArmBody)
     let elseArm = pstring "|" >>. ws >>. elseKeyword >>. ws >>. pstring "->" >>. matchArmBody
+    // Each form builds the if given the span of the whole `if ...`. An if nested in place of a later arm spans
+    // from that arm's `|` to the end of the last arm.
     let multiBranch =
         pipe2
-            (many1 (attempt (ws >>. conditionArm)))
-            (opt (attempt (ws >>. elseArm)))
-            (fun arms elseOpt ->
-                match List.rev arms with
-                | [] -> failwith "unreachable: many1 parses at least one arm"
-                | (lastHead, lastBody) :: earlier ->
-                    earlier |> List.fold (fun rest (head, body) -> desugar head body (Some rest)) (desugar lastHead lastBody elseOpt))
+            (many1 (attempt (ws >>. withSpan conditionArm)))
+            (opt (attempt (ws >>. withSpan elseArm)))
+            (fun arms elseOpt span ->
+                let lastText = match elseOpt with Some (_, text) -> text | None -> snd (List.last arms)
+                let outer, inner = List.head arms, List.tail arms
+                let rest =
+                    List.foldBack (fun ((head, body), armText) rest ->
+                        Some (desugar (SourceSpan.between armText lastText) head body rest)) inner (Option.map fst elseOpt)
+                let (head, body), _ = outer
+                desugar span head body rest)
     let singleBranch =
         pipe3
             head
             (ws >>. pstring "then" >>. keywordEnd >>. branch)
             (opt (attempt (ws >>. elseKeyword >>. branch)))
-            desugar
+            (fun head thenExpr elseOpt span -> desugar span head thenExpr elseOpt)
     withSpan (pstring "if" >>. keywordEnd >>. ws >>. (multiBranch <|> singleBranch))
-    |>> fun (expr, span) -> { expr with Span = span }
+    |>> fun (build, span) -> build span
     <?> "if expression"
 
 let workflowBindExpr =
@@ -1219,76 +1251,84 @@ let memberAccessChain =
     let fieldOrIndex = identifierNoWs <|> tupleIndex
     // `record with field = value, ...` copies a record with some fields replaced. The parser represents it
     // as a call to "__with" with the record and a record of the updated fields, which the type checker and
-    // backend handle as a built-in (the same way `not` is a call to "not").
+    // backend handle as a built-in (the same way `not` is a call to "not"). The record of updates spans from the
+    // first update to the last.
     let withClause =
         let keywordEnd = notFollowedBy (satisfy (fun c -> Char.IsLetterOrDigit c || c = '_'))
         let update =
             (identifierNoWs .>> wsInline .>> pstring "=" .>> ws) .>>. expression
             |>> fun (field, value) -> NamedField(field, value)
-        attempt (wsInline >>. pstring "with" >>. keywordEnd >>. ws >>. sepBy1 update (pstring "," .>> ws))
+        attempt (wsInline >>. pstring "with" >>. keywordEnd >>. ws >>. withSpan (sepBy1 update (pstring "," .>> ws)))
     // `..` is the range operator, not a member access.
     let dotField = attempt (pstring "." >>. notFollowedBy (pchar '.') >>. withSpan fieldOrIndex)
-    primaryExprNoWs >>= fun baseExpr ->
+    // Each access spans from the start of the base's text, so `(a + b).x` takes in the opening parenthesis.
+    withSpan primaryExprNoWs >>= fun (baseExpr, baseText) ->
         many dotField >>= fun fields ->
-            let accessed =
+            let accessed, accessedText =
                 fields
-                |> List.fold (fun (expr: Expression) (field, fieldSpan) ->
-                    Expression.at (SourceSpan.between expr.Span fieldSpan) (MemberAccess(expr, field, Some fieldSpan))) baseExpr
-            opt (withSpan withClause) |>> function
+                |> List.fold (fun ((expr: Expression), text) (field, fieldSpan) ->
+                    let span = SourceSpan.between text fieldSpan
+                    Expression.at span (MemberAccess(expr, field, Some fieldSpan)), span) (baseExpr, baseText)
+            opt withClause |>> function
                 | Some (updates, updatesSpan) ->
                     let updated = Expression.at updatesSpan (RecordExpr updates)
-                    Expression.at (SourceSpan.between accessed.Span updatesSpan) (FunctionCall("__with", None, [ accessed; updated ]))
+                    Expression.at (SourceSpan.between accessedText updatesSpan) (FunctionCall("__with", None, [ accessed; updated ]))
                 | None -> accessed
 
 let primaryExpr = memberAccessChain .>> wsInline  // Consume trailing inline ws for operator parsing
 
-opp.TermParser <- primaryExpr
+// Boolean operations are the keywords `not`, `and` and `or` (lowest precedence; see the operators page of
+// the docs). A keyword operator must not swallow the start of an identifier such as `order` or `android`.
+// The symbolic `&&` and `||` predate the keywords and are kept as aliases that build the same tree.
+let private keywordEnd = notFollowedBy (satisfy (fun c -> Char.IsLetterOrDigit c || c = '_'))
+let private keywordOperatorEnd = keywordEnd >>. ws
+
+// `not` binds tighter than every infix operator, so `not a == b` is `(not a) == b`, as `!` does elsewhere. That
+// makes it part of the operand it applies to, so it is parsed here rather than by the operator precedence parser,
+// and spans from the keyword.
+let private operand : Parser<Operand, unit> =
+    let notKeyword = attempt (withSpan (pstring "not" .>> keywordEnd)) .>> ws
+    pipe2 (many notKeyword) (withSpan primaryExpr) (fun nots term ->
+        List.foldBack (fun (_, notSpan) ((inner: Expression), innerText) ->
+            let span = SourceSpan.between notSpan innerText
+            Expression.at span (FunctionCall("not", None, [ inner ])), span) nots term)
+
+opp.TermParser <- operand
 
 // Define operators with precedence
 // Multiplicative operators (higher precedence)
-opp.AddOperator(InfixOperator("*", afterOperator ws, 7, Associativity.Left, binary "*"))
-opp.AddOperator(InfixOperator("/", afterOperator ws, 7, Associativity.Left, binary "/"))
-opp.AddOperator(InfixOperator("%", afterOperator ws, 7, Associativity.Left, binary "%"))
+opp.AddOperator(InfixOperator("*", ws, 7, Associativity.Left, binary "*"))
+opp.AddOperator(InfixOperator("/", ws, 7, Associativity.Left, binary "/"))
+opp.AddOperator(InfixOperator("%", ws, 7, Associativity.Left, binary "%"))
 
 // Additive operators
-opp.AddOperator(InfixOperator("+", afterOperator ws, 6, Associativity.Left, binary "+"))
-// `-` must not take the start of a `->` (as in `for 1..2 -> ...`).
-opp.AddOperator(InfixOperator("-", afterOperator (notFollowedBy (pchar '>') >>. ws), 6, Associativity.Left, binary "-"))
+opp.AddOperator(InfixOperator("+", ws, 6, Associativity.Left, binary "+"))
+// `-` must not take the start of a `->` (as in `for 1..2 -> ...`) or of a `--` comment.
+let private minusEnd = notFollowedBy (anyOf ">-")
+opp.AddOperator(InfixOperator("-", minusEnd >>. ws, 6, Associativity.Left, binary "-"))
 
 // Concatenation (strings, lists): binds looser than arithmetic, tighter than comparison
-opp.AddOperator(InfixOperator("++", afterOperator ws, 5, Associativity.Right, binary "++"))
+opp.AddOperator(InfixOperator("++", ws, 5, Associativity.Right, binary "++"))
 
 // Comparison operators (lower precedence)
-opp.AddOperator(InfixOperator("<", afterOperator ws, 4, Associativity.Left, binary "<"))
-opp.AddOperator(InfixOperator(">", afterOperator ws, 4, Associativity.Left, binary ">"))
-opp.AddOperator(InfixOperator("<=", afterOperator ws, 4, Associativity.Left, binary "<="))
-opp.AddOperator(InfixOperator(">=", afterOperator ws, 4, Associativity.Left, binary ">="))
+opp.AddOperator(InfixOperator("<", ws, 4, Associativity.Left, binary "<"))
+opp.AddOperator(InfixOperator(">", ws, 4, Associativity.Left, binary ">"))
+opp.AddOperator(InfixOperator("<=", ws, 4, Associativity.Left, binary "<="))
+opp.AddOperator(InfixOperator(">=", ws, 4, Associativity.Left, binary ">="))
 
-// Equality operators 
+// Equality operators
 // A bounded range `a..b` (see the ranges page) is represented as a call to the built-in "__range". It binds
 // looser than arithmetic, so `n - 1..n + 1` is `(n - 1)..(n + 1)`. `...` is list spread, not a range.
-opp.AddOperator(InfixOperator("..", afterOperator (notFollowedBy (pchar '.') >>. ws), 4, Associativity.Left, fun x y ->
-    Expression.at (SourceSpan.between x.Span y.Span) (FunctionCall("__range", None, [ x; y ]))))
-opp.AddOperator(InfixOperator("==", afterOperator ws, 3, Associativity.Left, binary "=="))
-opp.AddOperator(InfixOperator("!=", afterOperator ws, 3, Associativity.Left, binary "!="))
+opp.AddOperator(InfixOperator("..", notFollowedBy (pchar '.') >>. ws, 4, Associativity.Left, fun (x, xText) (y, yText) ->
+    let span = SourceSpan.between xText yText
+    Expression.at span (FunctionCall("__range", None, [ x; y ])), span))
+opp.AddOperator(InfixOperator("==", ws, 3, Associativity.Left, binary "=="))
+opp.AddOperator(InfixOperator("!=", ws, 3, Associativity.Left, binary "!="))
 
-// Boolean operations are the keywords `not`, `and` and `or` (lowest precedence; see the operators page of
-// the docs). A keyword operator must not swallow the start of an identifier such as `order` or `android`.
-// `not` binds tighter than every infix operator, so `not a == b` is `(not a) == b`, as `!` does elsewhere.
-// The symbolic `&&` and `||` predate the keywords and are kept as aliases that build the same tree.
-let private keywordOperatorEnd = notFollowedBy (satisfy (fun c -> Char.IsLetterOrDigit c || c = '_')) >>. ws
-opp.AddOperator(PrefixOperator("not", afterOperator keywordOperatorEnd, 8, true, (), fun afterNot x ->
-    let notStart =
-        { File = afterNot.StreamName
-          Start = int afterNot.Index - 3
-          End = int afterNot.Index
-          StartLine = int afterNot.Line - 1
-          StartColumn = int afterNot.Column - 4 }
-    Expression.at (SourceSpan.between notStart x.Span) (FunctionCall("not", None, [ x ]))))
-opp.AddOperator(InfixOperator("and", afterOperator keywordOperatorEnd, 2, Associativity.Left, binary "and"))
-opp.AddOperator(InfixOperator("or", afterOperator keywordOperatorEnd, 1, Associativity.Left, binary "or"))
-opp.AddOperator(InfixOperator("&&", afterOperator ws, 2, Associativity.Left, binary "and"))
-opp.AddOperator(InfixOperator("||", afterOperator ws, 1, Associativity.Left, binary "or"))
+opp.AddOperator(InfixOperator("and", keywordOperatorEnd, 2, Associativity.Left, binary "and"))
+opp.AddOperator(InfixOperator("or", keywordOperatorEnd, 1, Associativity.Left, binary "or"))
+opp.AddOperator(InfixOperator("&&", ws, 2, Associativity.Left, binary "and"))
+opp.AddOperator(InfixOperator("||", ws, 1, Associativity.Left, binary "or"))
 
 // Note: Comma is NOT an operator in the OPP
 // Commas are handled explicitly in tuple/record literals and function calls
@@ -1310,14 +1350,14 @@ let pipeTarget =
         )
 
 // Inline operator precedence parser (no newlines in operator whitespace)
-let oppInline = new OperatorPrecedenceParser<Expression, unit, unit>()
-oppInline.TermParser <- primaryExpr
+let oppInline = new OperatorPrecedenceParser<Operand, unit, unit>()
+oppInline.TermParser <- withSpan primaryExpr
 
 oppInline.AddOperator(InfixOperator("*", wsInline, 7, Associativity.Left, binary "*"))
 oppInline.AddOperator(InfixOperator("/", wsInline, 7, Associativity.Left, binary "/"))
 
 oppInline.AddOperator(InfixOperator("+", wsInline, 6, Associativity.Left, binary "+"))
-oppInline.AddOperator(InfixOperator("-", wsInline, 6, Associativity.Left, binary "-"))
+oppInline.AddOperator(InfixOperator("-", minusEnd >>. wsInline, 6, Associativity.Left, binary "-"))
 oppInline.AddOperator(InfixOperator("++", wsInline, 5, Associativity.Right, binary "++"))
 
 oppInline.AddOperator(InfixOperator("<", wsInline, 4, Associativity.Left, binary "<"))
@@ -1328,11 +1368,13 @@ oppInline.AddOperator(InfixOperator(">=", wsInline, 4, Associativity.Left, binar
 oppInline.AddOperator(InfixOperator("==", wsInline, 3, Associativity.Left, binary "=="))
 oppInline.AddOperator(InfixOperator("!=", wsInline, 3, Associativity.Left, binary "!="))
 
-/// `expr \f \g(a)`: each pipe spans from the start of `expr` to the end of its own target.
-let private applyPipes (expr: Expression) pipes =
+/// `expr \f \g(a)`: each pipe spans from the start of `expr`'s text to the end of its own target.
+let private applyPipes (value: Operand) pipes =
     pipes
-    |> List.fold (fun (acc: Expression) ((funcName, nameSpan, args), targetSpan) ->
-        Expression.at (SourceSpan.between acc.Span targetSpan) (Pipe(acc, funcName, nameSpan, args))) expr
+    |> List.fold (fun ((acc: Expression), accText) ((funcName, nameSpan, args), targetSpan) ->
+        let span = SourceSpan.between accText targetSpan
+        Expression.at span (Pipe(acc, funcName, nameSpan, args)), span) value
+    |> fst
 
 let pipeExpr =
     let pipeLeadingWs =
@@ -1378,7 +1420,7 @@ do
             attempt (
                 skipMany (skipAnyOf " \t\r") >>. newline >>.
                 ws >>.
-                spanned (many1 statementLine |>> (List.concat >> Block)) .>> ws
+                blockSpanned (many1 statementLine |>> List.concat) .>> ws
             )
 
         let singleLine =

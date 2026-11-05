@@ -289,6 +289,62 @@ let private checkAllSpans (file: string) (rawSource: string) =
     all.Length
 
 [<Fact>]
+let ``an operator over parentheses or a lone spread spans the delimiters, and what is inside keeps its own span`` () =
+    let source = "def x = (1 + 2) * 3\ndef y = [...xs] ++ ys\ndef z = (a + b).c \\f\ndef w = not (n)"
+    let module' = parse source
+    let x = valueOf "x" module'
+    textOf source x.Span |> should equal "(1 + 2) * 3"
+    match x.Kind with
+    | BinaryOp ("*", sum, _) -> textOf source sum.Span |> should equal "1 + 2"
+    | other -> failwith $"Expected a product, got %A{other}"
+    textOf source (valueOf "y" module').Span |> should equal "[...xs] ++ ys"
+    let z = valueOf "z" module'
+    textOf source z.Span |> should equal "(a + b).c \\f"
+    match z.Kind with
+    | Pipe (access, "f", _, []) -> textOf source access.Span |> should equal "(a + b).c"
+    | other -> failwith $"Expected a pipe, got %A{other}"
+    let w = valueOf "w" module'
+    textOf source w.Span |> should equal "not (n)"
+    match w.Kind with
+    | FunctionCall ("not", None, [ n ]) -> textOf source n.Span |> should equal "n"
+    | other -> failwith $"Expected not, got %A{other}"
+
+[<Fact>]
+let ``a block ends at its last expression, not at a comment after it`` () =
+    let source = "def f = { x ->\n  def y = x + 1\n  y * 2 -- doubled\n}"
+    match (parse source |> valueOf "f").Kind with
+    | Lambda (_, body) -> textOf source body.Span |> should equal "def y = x + 1\n  y * 2"
+    | other -> failwith $"Expected a lambda, got %A{other}"
+    // `-` does not take the first dash of a comment.
+    let topLevel = "def a = 5 - 1 -- four"
+    textOf topLevel (parse topLevel |> valueOf "a").Span |> should equal "5 - 1"
+
+[<Fact>]
+let ``expressions are equal wherever they and the names in them were written`` () =
+    let first = parse "def x = foo(a).b \\bar" |> valueOf "x"
+    let second = parse "def x =     foo(a).b  \\bar" |> valueOf "x"
+    first.Span |> should not' (equal second.Span)
+    first |> should equal second
+    hash first |> should equal (hash second)
+    compare first second |> should equal 0
+
+[<Fact>]
+let ``nodes made up for for-arms, record updates, tag payloads and multi-branch ifs start on their own text`` () =
+    let source =
+        "def a = for xs\n  | 1 -> f(1)\n  | _ -> g()\n" +
+        "def b = alice with age = 31\n" +
+        "def c = #pair( 1, 2)\n" +
+        "def d = if\n  | p -> 1\n  | q -> 2\n  | else -> 3\n"
+    checkAllSpans "t.nyx" source |> should be (greaterThan 10)
+    let module' = parse source
+    match (valueOf "b" module').Kind with
+    | FunctionCall ("__with", None, [ _; updates ]) -> textOf source updates.Span |> should equal "age = 31"
+    | other -> failwith $"Expected a record update, got %A{other}"
+    match (valueOf "d" module').Kind with
+    | IfExpr (_, _, nested) -> textOf source nested.Span |> should equal "| q -> 2\n  | else -> 3"
+    | other -> failwith $"Expected an if, got %A{other}"
+
+[<Fact>]
 let ``every expression in the comprehensive sample has a real span within the source`` () =
     // The parser gives the nodes it makes up when desugaring (shorthand lambda parameters, `else ()`, `__range`,
     // `__with`, `__for`, destructuring temporaries, ...) the span of the construct they came from, so every node

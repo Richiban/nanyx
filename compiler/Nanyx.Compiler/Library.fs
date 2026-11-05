@@ -362,7 +362,7 @@ module Compiler =
                 | _ ->
                     let expr' = desugarExpr expr
                     let nextExpr = desugarWorkflowChain rest
-                    Expression.from expr (Block [DefStatement(isExport, name, typeOpt, expr'); ExprStatement nextExpr])
+                    chainBlock expr.Span nextExpr [DefStatement(isExport, name, typeOpt, expr'); ExprStatement nextExpr]
             | ExprStatement expr :: rest ->
                 match expr.Kind with
                 | WorkflowReturnExpr value -> { expr with Kind = FunctionCall("pure", None, [desugarExpr value]) }
@@ -374,14 +374,24 @@ module Compiler =
                 | _ ->
                     let expr' = desugarExpr expr
                     let nextExpr = desugarWorkflowChain rest
-                    Expression.from expr (Block [ExprStatement expr'; ExprStatement nextExpr])
+                    chainBlock expr.Span nextExpr [ExprStatement expr'; ExprStatement nextExpr]
             | UseStatement binding :: rest ->
                 let binding' = desugarUseBinding binding
                 let nextExpr = desugarWorkflowChain rest
-                Expression.from nextExpr (Block [UseStatement binding'; ExprStatement nextExpr])
+                let bound = match binding with UseValue expr | UseContextInstance(_, expr) -> expr
+                chainBlock bound.Span nextExpr [UseStatement binding'; ExprStatement nextExpr]
             | statement :: rest ->
                 let nextExpr = desugarWorkflowChain rest
-                Expression.from nextExpr (Block [desugarStatement statement; ExprStatement nextExpr])
+                chainBlock SourceSpan.none nextExpr [desugarStatement statement; ExprStatement nextExpr]
+        // A block made up for a statement and the rest of the chain spans from the statement to the end of the
+        // rest. The rest is a made-up `()` with no span when the statement is the last one, and a statement
+        // without an expression (an import, a type) has no span yet.
+        and chainBlock (statementSpan: SourceSpan) (nextExpr: Expression) statements =
+            let span =
+                if SourceSpan.isNone statementSpan then nextExpr.Span
+                elif SourceSpan.isNone nextExpr.Span then statementSpan
+                else SourceSpan.between statementSpan nextExpr.Span
+            Expression.at span (Block statements)
         and desugarBlock statements =
             let rec split prefix remaining =
                 match remaining with

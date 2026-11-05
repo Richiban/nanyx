@@ -25,9 +25,6 @@ type QuickPickItem = QuickPickItem & (
 	displayOnly: true?
 )
 
-type Email = s :: string where isValidEmail(s)
-
-type OrderedPair(n :: number) =
-	(x :: n, y :: n) where x < y
+type Email = private string
 
 def name = "Nyx"
