@@ -703,6 +703,43 @@ let ``Typecheck supports tag union rest parameter`` () =
     | other -> Assert.True(false, $"Unexpected rest union result type: %A{other}")
 
 [<Fact>]
+let ``Typecheck rejects an annotation more general than its body`` () =
+    let result = Compiler.compile "def f: a -> b = { x -> x }"
+    Assert.False(result.Diagnostics.IsEmpty)
+    let message = result.Diagnostics |> List.head |> fun diag -> diag.Message
+    Assert.Contains("more general than the inferred type", message)
+    Assert.Contains("`b` would have to be `a`", message)
+
+[<Fact>]
+let ``Typecheck rejects an annotation variable the body makes concrete`` () =
+    let result = Compiler.compile "def g: a -> int = { x -> x + 1 }"
+    Assert.False(result.Diagnostics.IsEmpty)
+    let message = result.Diagnostics |> List.head |> fun diag -> diag.Message
+    Assert.Contains("`a` would have to be `int`", message)
+
+[<Fact>]
+let ``Typecheck rejects a non-function annotation more general than its value`` () =
+    let result = Compiler.compile "def xs: list(a) = [1, 2]"
+    Assert.False(result.Diagnostics.IsEmpty)
+    let message = result.Diagnostics |> List.head |> fun diag -> diag.Message
+    Assert.Contains("`a` would have to be `int`", message)
+
+[<Fact>]
+let ``Typecheck accepts annotations the body proves`` () =
+    let source =
+        "def id: a -> a = { x -> x }\n" +
+        "def first: (a, b) -> a = { x, y -> x }\n" +
+        "def apply: (a -> b), a -> b = { f, x -> f(x) }\n" +
+        "def mapOption: (#some(a) | r), (a -> b) -> (#some(b) | r) = { | #some(a), f -> #some(f(a)) | other, _ -> other }\n" +
+        "def result = mapOption(#some(first(1, \"\")), { x -> apply(id, x) })"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, $"%A{result.Diagnostics}")
+    let typed = result.Typed.Value
+    match typed.Types.["result"] with
+    | TyUnion [ TyTag("some", Some (TyPrimitive "int")); TyVar _ ] -> Assert.True(true)
+    | other -> Assert.True(false, $"Unexpected result type: %A{other}")
+
+[<Fact>]
 let ``Typecheck requires catch-all for tag union rest`` () =
     let source =
         "def mapOption: ((#some(a) | r), a -> b) -> #some(b) | r = { o, f ->\n" +

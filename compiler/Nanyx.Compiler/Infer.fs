@@ -1581,6 +1581,66 @@ and inferBlock (env: TypeEnv) (state: InferState) (statements: Statement list) :
         else
             Error errors
 
+/// The names of the type variables written in an annotation, in order of first appearance.
+let rec private annotationVarNames (typeExpr: TypeExpr) : string list =
+    let ofList items = items |> List.collect annotationVarNames
+    let names =
+        match typeExpr with
+        | TypeVar name -> [ name ]
+        | TypeName _ | TypeUnit | TypeContext _ -> []
+        | TypeTuple items | TypeUnion items | TypeIntersection items -> ofList items
+        | TypeRecord fields ->
+            fields
+            |> List.collect (function
+                | TypeField(_, _, _, Some t, _) | TypeMember(_, Some t) -> annotationVarNames t
+                | _ -> [])
+        | TypeApply(_, args) -> ofList args
+        | TypeFunc(arg, ret) -> annotationVarNames arg @ annotationVarNames ret
+        | TypeTag(_, payload) -> payload |> Option.map annotationVarNames |> Option.defaultValue []
+        | TypeOptional inner | TypeWithContext(_, inner) | TypeConstraint(_, inner, _) | TypeWhere(inner, _) ->
+            annotationVarNames inner
+    names |> List.distinct
+
+/// The type variables of a def's annotation are rigid: the body has to work for every type they stand for.
+/// Once the constraints gathered so far are solved, each must still be a variable of its own. One bound to
+/// a concrete type, or to the same type as another of the annotation's variables, means the annotation is
+/// more general than the body, which would otherwise quietly narrow it.
+let private checkAnnotationIsRigid (state: InferState) (name: Identifier) (typeExpr: TypeExpr) : Result<unit, Diagnostic list> =
+    let vars =
+        annotationVarNames typeExpr
+        |> List.choose (fun varName -> state.TypeVars |> Map.tryFind varName |> Option.map (fun var -> varName, var))
+    if vars.IsEmpty then
+        Ok ()
+    else
+        match Unifier.unify state.Constraints with
+        // A conflict is reported when the module's constraints are solved.
+        | Error _ -> Ok ()
+        | Ok subst ->
+            let resolved = vars |> List.map (fun (varName, var) -> varName, Unifier.apply subst (TyVar var))
+            // Show the variables an annotation variable resolved to by that annotation variable's name.
+            let displayNames =
+                resolved
+                |> List.fold (fun acc (varName, ty) ->
+                    match ty with
+                    | TyVar image when not (acc |> Map.containsKey image.Id) -> acc |> Map.add image.Id (TyPrimitive varName)
+                    | _ -> acc) Map.empty
+            let problems =
+                resolved
+                |> List.mapi (fun index (varName, ty) ->
+                    match ty with
+                    | TyVar _ ->
+                        resolved
+                        |> List.take index
+                        |> List.tryFind (fun (_, otherTy) -> otherTy = ty)
+                        |> Option.map (fun (otherName, _) -> $"`{varName}` would have to be `{otherName}`")
+                    | concrete -> Some $"`{varName}` would have to be `{Unifier.tyToString (Unifier.apply displayNames concrete)}`")
+                |> List.choose id
+            if problems.IsEmpty then
+                Ok ()
+            else
+                let details = String.concat "; " problems
+                Error [ Diagnostics.error $"Annotation of '{name}' is more general than the inferred type: {details}" ]
+
 let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module': Module) : Result<Map<string, Ty> * TypedTopLevelItem list * InferState, Diagnostic list> =
     let mutable env = initialEnv
     let mutable state = initialState
@@ -1680,12 +1740,19 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
                                 | None -> next
                             typedExpr.Type, updatedState
                     state <- finalState
-                    // Generalize against an env without this def's own pre-binding, so the fresh
-                    // variable it was pre-bound at does not stop its type being generalized.
-                    let scheme = TypeEnv.generalize (env |> Map.remove name) declaredTy
-                    env <- TypeEnv.extend name scheme env
-                    types <- types |> Map.add name declaredTy
-                    items <- items @ [ TypedDef (TypedValueDef(isExport, name, typeOpt, typedExpr)) ]
+                    let rigidResult =
+                        match declaredTypeExprOpt with
+                        | Some declaredExpr -> checkAnnotationIsRigid finalState name declaredExpr
+                        | None -> Ok ()
+                    match rigidResult with
+                    | Error err -> errors <- err
+                    | Ok () ->
+                        // Generalize against an env without this def's own pre-binding, so the fresh
+                        // variable it was pre-bound at does not stop its type being generalized.
+                        let scheme = TypeEnv.generalize (env |> Map.remove name) declaredTy
+                        env <- TypeEnv.extend name scheme env
+                        types <- types |> Map.add name declaredTy
+                        items <- items @ [ TypedDef (TypedValueDef(isExport, name, typeOpt, typedExpr)) ]
                 | Error err -> errors <- err
         | Expr expr when errors.IsEmpty ->
             match inferExpr env state expr with
