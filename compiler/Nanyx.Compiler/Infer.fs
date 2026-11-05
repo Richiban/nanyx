@@ -758,9 +758,9 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                         |> List.mapi (fun index arg ->
                             let inferred =
                                 match arg with
-                                | Lambda(lambdaArgs, lambdaBody) ->
+                                | Kind (Lambda(lambdaArgs, lambdaBody)) ->
                                     match expectedLambdaInput index lambdaArgs with
-                                    | Some expectedInput -> inferLambdaWithExpected env current lambdaArgs lambdaBody (Some expectedInput) None
+                                    | Some expectedInput -> inferLambdaWithExpected env current arg lambdaArgs lambdaBody (Some expectedInput) None
                                     | None -> inferExpr env current arg
                                 | _ -> inferExpr env current arg
                             match inferred with
