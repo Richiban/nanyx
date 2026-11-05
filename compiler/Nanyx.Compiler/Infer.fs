@@ -512,13 +512,14 @@ let private recordFieldsSoFar (state: InferState) (ty: Ty) : Map<string, Ty> opt
     | TyNominal(_, TyRecord fields, _) -> Some fields
     | _ -> None
 /// `ty` as far as the constraints gathered so far determine it; a type variable stays one when nothing does.
+/// Variables inside it are resolved too: a call's `#some(b) | r` may already be `#some(string) | #notFound`.
 let private resolveSoFar (state: InferState) (ty: Ty) : Ty =
     match ty with
-    | TyVar _ ->
+    | TyPrimitive _ -> ty
+    | _ ->
         match Unifier.unify state.Constraints with
         | Ok subst -> Unifier.apply subst ty
         | Error _ -> ty
-    | _ -> ty
 
 /// Arithmetic and ordering work on `int` and `float`. Without numeric type classes yet, an operation is on
 /// floats when either operand is already known to be one, and defaults to `int` otherwise.
@@ -728,12 +729,46 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                             | Some (line, col) -> Error [ Diagnostics.errorAt ($"Workflow '{name}' must be called with a trailing lambda") (line, col) ]
                             | None -> Error [ Diagnostics.error ($"Workflow '{name}' must be called with a trailing lambda") ]
                 | None ->
+                    // With a known signature, each argument is checked against its parameter as it is inferred,
+                    // so a lambda argument's parameters can take their types from the signature and from the
+                    // arguments before it: in `customer \map { c -> c.name }`, `c` is already a record when
+                    // `c.name` is checked.
+                    let paramTys =
+                        match funcTy, args with
+                        | TyFunc(declaredInput, _), [ _ ] -> Some [ declaredInput ]
+                        | TyFunc(TyRecord fields, _), _ when fields.Count = args.Length ->
+                            let tys = args |> List.mapi (fun index _ -> fields |> Map.tryFind (tupleFieldName index))
+                            if tys |> List.forall Option.isSome then Some (tys |> List.choose id) else None
+                        | _ -> None
+                    let expectedLambdaInput index lambdaArgs =
+                        let unannotated = lambdaArgs |> List.forall (fun (_, typeOpt: TypeExpr option) -> typeOpt.IsNone)
+                        match paramTys |> Option.bind (List.tryItem index) with
+                        | Some (TyFunc(lambdaInput, _)) when unannotated && not (List.isEmpty lambdaArgs) ->
+                            match Unifier.unify current.Constraints with
+                            | Ok subst ->
+                                // A lambda of several parameters needs the input's fields to split between them.
+                                match Unifier.apply subst lambdaInput with
+                                | TyRecord _ as resolved -> Some resolved
+                                | resolved when lambdaArgs.Length = 1 -> Some resolved
+                                | _ -> None
+                            | Error _ -> None
+                        | _ -> None
                     let argResults =
                         args
-                        |> List.map (fun arg ->
-                            match inferExpr env current arg with
+                        |> List.mapi (fun index arg ->
+                            let inferred =
+                                match arg with
+                                | Lambda(lambdaArgs, lambdaBody) ->
+                                    match expectedLambdaInput index lambdaArgs with
+                                    | Some expectedInput -> inferLambdaWithExpected env current lambdaArgs lambdaBody (Some expectedInput) None
+                                    | None -> inferExpr env current arg
+                                | _ -> inferExpr env current arg
+                            match inferred with
                             | Ok (ty, next) ->
-                                current <- next
+                                current <-
+                                    match paramTys |> Option.bind (List.tryItem index) with
+                                    | Some paramTy -> addAssignableConstraint ty.Type paramTy next
+                                    | None -> next
                                 Ok ty
                             | Error err -> Error err)
                     let errors = argResults |> List.choose (function Error err -> Some err | _ -> None) |> List.concat
@@ -1200,15 +1235,7 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
             // exhaustiveness check it is resolved against the constraints gathered so far, and before the arms
             // add theirs: a lone `#some(_)` arm would otherwise narrow the variable to that tag first and the
             // check would pass silently (#61).
-            let resolvedScrutineeTypes =
-                let resolve (ty: Ty) =
-                    match ty with
-                    | TyVar _ ->
-                        match Unifier.unify current.Constraints with
-                        | Ok subst -> Unifier.apply subst ty
-                        | Error _ -> ty
-                    | _ -> ty
-                scrutineeTypes |> List.map resolve
+            let resolvedScrutineeTypes = scrutineeTypes |> List.map (resolveSoFar current)
             let mutable scrutineeOverrides: Map<int, Ty> = Map.empty
             for (index, scrutineeTy) in scrutineeTypes |> List.indexed do
                 let patternsAtPos = patternsForIndex index
@@ -1347,7 +1374,7 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                         | Error err -> errors <- err
             if errors.IsEmpty then
                 let hasRestUnion =
-                    scrutineeTypes
+                    resolvedScrutineeTypes
                     |> List.exists (function
                         | TyUnion items -> items |> List.exists (function TyVar _ -> true | _ -> false)
                         | _ -> false)

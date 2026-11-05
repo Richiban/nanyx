@@ -800,6 +800,79 @@ let ``Typecheck binds a catch-all after a tag arm at the union's rest`` () =
     | other -> Assert.True(false, $"Unexpected y type: %A{other}")
 
 [<Fact>]
+let ``Typecheck gives a lambda argument's parameter its type from the callee`` () =
+    // `p.x` is checked inside the lambda, before the call is solved: `p` is a `P` from `apply`'s signature.
+    let source =
+        "type P = (x: int)\n" +
+        "def apply: P, (P -> int) -> int = { p, f -> f(p) }\n" +
+        "def n = P(x = 3) \\apply { p -> p.x }"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, $"%A{result.Diagnostics}")
+    Assert.Equal(TyPrimitive "int", result.Typed.Value.Types.["n"])
+
+[<Fact>]
+let ``Typecheck gives a lambda argument's parameter a type solved from the arguments before it`` () =
+    // `a` in `mapOption`'s signature is only known from the first argument, a `#some(Customer)`.
+    let source =
+        "type Customer = (name: string)\n" +
+        "def mapOption\n" +
+        "  : (#some(a) | r), (a -> b) -> (#some(b) | r)\n" +
+        "  = { | #some(a), f -> #some(f(a))\n" +
+        "      | other, _ -> other }\n" +
+        "def c: #some(Customer) | #notFound = #notFound\n" +
+        "def name = c \\mapOption { c -> c.name }"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, $"%A{result.Diagnostics}")
+    match result.Typed.Value.Types.["name"] with
+    | TyUnion [ TyTag("some", Some (TyPrimitive "string")); TyTag("notFound", None) ] -> ()
+    | other -> Assert.True(false, $"Unexpected name type: %A{other}")
+
+[<Fact>]
+let ``Typecheck matches a call's result whose union rest is already solved`` () =
+    // `mapOption`'s result is `#some(b) | r`, but here `r` is `#notFound`, so naming both tags is exhaustive.
+    let mapOption =
+        "def mapOption\n" +
+        "  : (#some(a) | r), (a -> b) -> (#some(b) | r)\n" +
+        "  = { | #some(a), f -> #some(f(a))\n" +
+        "      | other, _ -> other }\n" +
+        "def x: #some(int) | #notFound = #notFound\n"
+    let exhaustive =
+        mapOption +
+        "def y = {\n" +
+        "  def a = x \\mapOption { n -> n + 1 }\n" +
+        "  match a\n" +
+        "    | #some(n) -> n\n" +
+        "    | #notFound -> 0\n" +
+        "}\n"
+    let result = Compiler.compile exhaustive
+    Assert.True(result.Diagnostics.IsEmpty, $"%A{result.Diagnostics}")
+    let missing =
+        mapOption +
+        "def y = {\n" +
+        "  def a = x \\mapOption { n -> n + 1 }\n" +
+        "  match a\n" +
+        "    | #some(n) -> n\n" +
+        "}\n"
+    let result = Compiler.compile missing
+    Assert.False(result.Diagnostics.IsEmpty)
+    Assert.Contains("missing tags: notFound", (List.head result.Diagnostics).Message)
+
+[<Fact>]
+let ``Typecheck rejects a tag union with a rest where a string is expected`` () =
+    // The rest `r` stands for more tags, so it cannot make `#some(string) | r` a `string`.
+    let source =
+        "def mapOption\n" +
+        "  : (#some(a) | r), (a -> b) -> (#some(b) | r)\n" +
+        "  = { | #some(a), f -> #some(f(a))\n" +
+        "      | other, _ -> other }\n" +
+        "def takesString: string -> string = { s -> s }\n" +
+        "def x: #some(int) | #notFound = #notFound\n" +
+        "def y = takesString(x \\mapOption { n -> \"{n}\" })"
+    let result = Compiler.compile source
+    Assert.False(result.Diagnostics.IsEmpty)
+    Assert.Contains("mismatch", (List.head result.Diagnostics).Message)
+
+[<Fact>]
 let ``Desugar workflow bind and return`` () =
     let source =
         "def result = async {\n" +

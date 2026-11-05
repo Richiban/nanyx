@@ -94,6 +94,13 @@ module Unifier =
             | _ -> false)
 
 
+    /// A union's rest variable stands for more tags: `#some(a) | r` is never a `string`. (Unions and
+    /// nominals are unwrapped before a lone type is matched against a union, so a tag is all that is left.)
+    let private isTagLike ty =
+        match ty with
+        | TyTag _ -> true
+        | _ -> false
+
     let private tagUnionKey ty =
         match ty with
         | TyTag(name, _) -> name
@@ -265,8 +272,8 @@ module Unifier =
                             match items with
                             | [] ->
                                 match lRest with
-                                | Some restVar -> loop subst ((TyVar restVar, ty, Equal) :: rest)
-                                | None -> Error (lastError |> Option.defaultValue (mismatchMessage l r))
+                                | Some restVar when isTagLike ty -> loop subst ((TyVar restVar, ty, Equal) :: rest)
+                                | _ -> Error (lastError |> Option.defaultValue (mismatchMessage l r))
                             | item :: restItems ->
                                 match loop subst ((item, ty, Equal) :: rest) with
                                 | Ok result -> Ok result
@@ -281,8 +288,8 @@ module Unifier =
                             match items with
                             | [] ->
                                 match rRest with
-                                | Some restVar -> loop subst ((ty, TyVar restVar, Equal) :: rest)
-                                | None -> Error (lastError |> Option.defaultValue (mismatchMessage l r))
+                                | Some restVar when isTagLike ty -> loop subst ((ty, TyVar restVar, Equal) :: rest)
+                                | _ -> Error (lastError |> Option.defaultValue (mismatchMessage l r))
                             | item :: restItems ->
                                 match loop subst ((ty, item, Equal) :: rest) with
                                 | Ok result -> Ok result
