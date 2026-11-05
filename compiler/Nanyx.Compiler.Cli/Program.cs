@@ -67,6 +67,23 @@ internal static class CliCommands
     }
 
     /// <summary>
+    /// Compile and run a built-in "hello world" program, to check that the compiler works.
+    /// </summary>
+    [Consolo("hello")]
+    public static void Hello()
+    {
+        var result = Compiler.compile(HelloWorldSource);
+        PrintDiagnostics(result.Diagnostics, Console.Error);
+        ExitWith(RunProgram(result));
+    }
+
+    private const string HelloWorldSource = """
+        import nanyx/console
+
+        println("Hello, World!")
+        """;
+
+    /// <summary>
     /// Ends the process with <paramref name="code"/> when it is not zero. Consolo's generated entry point
     /// returns its own exit code after a command runs, ignoring both the command's return value and
     /// <see cref="Environment.ExitCode"/>, so a failing command has to exit itself.
