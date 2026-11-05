@@ -60,10 +60,11 @@ module Unifier =
                 |> List.map (fun (name, fieldTy) -> $"{name}: {tyToString fieldTy}")
                 |> String.concat ", "
                 |> fun inner -> $"{{ {inner} }}"
+        // Tags are written with their `#`, as in source: `#some(int) | #notFound`.
         | TyTag(name, payloadOpt) ->
             match payloadOpt with
-            | Some payload -> $"{name}({tyToString payload})"
-            | None -> name
+            | Some payload -> $"#{name}({tyToString payload})"
+            | None -> $"#{name}"
         | TyApply(name, args) ->
             let argsText = args |> List.map tyToString |> String.concat ", "
             $"{name}({argsText})"
@@ -257,7 +258,7 @@ module Unifier =
                     match lPayload, rPayload with
                     | None, None -> loop subst rest
                     | Some lTy, Some rTy -> loop subst ((lTy, rTy, Equal) :: rest)
-                    | _ -> Error $"Tag payload mismatch: {lName}. {mismatchMessage l r}"
+                    | _ -> Error $"Tag payload mismatch: #{lName}. {mismatchMessage l r}"
                 | TyUnion lItems, TyUnion rItems ->
                     match parseTagUnion lItems, parseTagUnion rItems with
                     | Ok (lMap, lRest), Ok (rMap, rRest) ->

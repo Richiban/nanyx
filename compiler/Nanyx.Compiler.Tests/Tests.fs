@@ -1527,3 +1527,15 @@ let ``Type variables named in an annotation keep their names`` () =
         "  1\n" +
         "}\n"
     Assert.Equal(Some "'b -> ('b, 'a)", hoverType mixed (offsetOf mixed "{ y" 0 0))
+
+[<Fact>]
+let ``Hover shows tags with their hash`` () =
+    let source = "def found = #some(1)\ndef missing = #notFound"
+    Assert.Equal(Some "#some(int)", hoverType source (offsetOf source "#some" 0 1))
+    Assert.Equal(Some "#notFound", hoverType source (offsetOf source "#notFound" 0 1))
+    let union =
+        "def mapOption: (#some(a) | r), (a -> b) -> (#some(b) | r) = { | #some(a), f -> #some(f(a)) | other, _ -> other }\n" +
+        "def result = mapOption(#some(1), { n -> \"Mapped: {n}\" })"
+    let callee = (hoverType union (offsetOf union "mapOption(" 0 0)).Value
+    Assert.Contains("#some(int)", callee)
+    Assert.Contains("#some(string)", callee)
