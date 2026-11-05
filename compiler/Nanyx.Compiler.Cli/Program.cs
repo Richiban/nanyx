@@ -67,6 +67,23 @@ internal static class CliCommands
     }
 
     /// <summary>
+    /// Compile and run a built-in "hello world" program, to check that the compiler works.
+    /// </summary>
+    [Consolo("hello")]
+    public static int Hello()
+    {
+        var result = Compiler.compile(HelloWorldSource);
+        PrintDiagnostics(result.Diagnostics, Console.Error);
+        return RunProgram(result);
+    }
+
+    private const string HelloWorldSource = """
+        import nanyx/console
+
+        println("Hello, World!")
+        """;
+
+    /// <summary>
     /// Run the Nanyx language server over standard input and output (for editors; see compiler/README.md).
     /// </summary>
     [Consolo("lsp")]
