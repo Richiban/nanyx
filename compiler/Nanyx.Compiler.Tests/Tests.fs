@@ -1558,3 +1558,5 @@ let ``Printed types bracket functions and unions where they would run together``
     // A lone argument or payload needs no brackets.
     Assert.Equal("list('a -> 'b)", Unifier.tyToString (TyApply("list", [ TyFunc(a, b) ])))
     Assert.Equal("#some(int)", Unifier.tyToString (TyTag("some", Some (TyPrimitive "int"))))
+    // The unit type is written `()`.
+    Assert.Equal("() -> ()", Unifier.tyToString (TyFunc(TyPrimitive "unit", TyPrimitive "unit")))

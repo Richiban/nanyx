@@ -39,6 +39,8 @@ module Unifier =
             | TyUnion _ -> $"({tyToString ty})"
             | _ -> tyToString ty
         match ty with
+        // The unit type is written `()`; `unit` is only its internal name.
+        | TyPrimitive "unit" -> "()"
         | TyPrimitive name -> name
         | TyVar v ->
             match v.Name with
