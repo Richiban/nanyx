@@ -103,9 +103,10 @@ async function promptAndDownload(context) {
 }
 async function restartClient(context, executable) {
     await stopClient();
+    // No `transport`: stdio is the default, and naming it makes the client append `--stdio` to the args.
     const serverOptions = {
-        run: { command: executable, args: ["lsp"], transport: node_1.TransportKind.stdio },
-        debug: { command: executable, args: ["lsp"], transport: node_1.TransportKind.stdio }
+        run: { command: executable, args: ["lsp"] },
+        debug: { command: executable, args: ["lsp"] }
     };
     const clientOptions = {
         documentSelector: [{ language: "nanyx" }],
