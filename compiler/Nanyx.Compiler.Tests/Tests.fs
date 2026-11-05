@@ -389,6 +389,34 @@ let ``Typecheck allows context members with annotation`` () =
     Assert.True(result.Diagnostics.IsEmpty)
 
 [<Fact>]
+let ``Typecheck rejects an unknown context in a signature`` () =
+    let source =
+        "context MyConsole = (p: string -> ())\n" +
+        "def greet: [Bogus] string -> () = { name -> p(name) }"
+    let result = Compiler.compile source
+    let message = result.Diagnostics |> List.head |> fun diag -> diag.Message
+    Assert.Contains("Unknown context 'Bogus' in the signature of 'greet'", message)
+
+[<Fact>]
+let ``Typecheck rejects an unknown context in a local signature`` () =
+    let source =
+        "def main = {\n" +
+        "  def greet: [Bogus] string -> () = { name -> () }\n" +
+        "  greet(\"hi\")\n" +
+        "}"
+    let result = Compiler.compile source
+    let message = result.Diagnostics |> List.head |> fun diag -> diag.Message
+    Assert.Contains("Unknown context 'Bogus' in the signature of 'greet'", message)
+
+[<Fact>]
+let ``Typecheck accepts the Console context from nanyx/console`` () =
+    let source =
+        "import nanyx/console\n\n" +
+        "def greet: [Console] string -> () = { name -> println(name) }"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+
+[<Fact>]
 let ``println comes from nanyx/console with type string -> unit`` () =
     let result = Compiler.compile "import nanyx/console\n\ndef result = println(\"hi\")"
     Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
