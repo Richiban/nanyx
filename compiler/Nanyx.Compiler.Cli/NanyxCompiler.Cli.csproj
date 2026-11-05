@@ -7,7 +7,7 @@
     <AssemblyName>nanyx</AssemblyName>
     <RootNamespace>NanyxCompiler.Cli</RootNamespace>
     <!-- Bumped for each release; the compiler workflow checks that a compiler/<version> tag matches it. -->
-    <Version>0.3.0</Version>
+    <Version>0.4.0</Version>
     <InvariantGlobalization>true</InvariantGlobalization>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <ImplicitUsings>enable</ImplicitUsings>
