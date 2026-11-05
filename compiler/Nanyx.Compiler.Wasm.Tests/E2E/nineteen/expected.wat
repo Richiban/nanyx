@@ -173,33 +173,88 @@
     drop
   )
 
-  (type $ctx_fn_1 (func (param i32) (result i32)))
+  (global $heap_ptr (mut i32) (i32.const 4096))
+
+  (func $__nanyx_alloc (param $size i32) (result i32)
+    (local $ptr i32)
+    global.get $heap_ptr
+    local.set $ptr
+    local.get $ptr
+    local.get $size
+    i32.add
+    global.set $heap_ptr
+    block $fits
+      loop $grow
+        global.get $heap_ptr
+        memory.size
+        i32.const 65536
+        i32.mul
+        i32.le_u
+        br_if $fits
+        i32.const 1
+        memory.grow
+        i32.const -1
+        i32.eq
+        if
+          unreachable
+        end
+        br $grow
+      end
+    end
+    local.get $ptr
+  )
+  (func $__nanyx_record_set (param $base i32) (param $value i32) (param $offset i32) (result i32)
+    local.get $base
+    local.get $offset
+    i32.add
+    local.get $value
+    i32.store
+    local.get $base
+  )
+
   (type $ctx_fn_2 (func (param i32 i32) (result i32)))
+  (type $ctx_fn_3 (func (param i32 i32 i32) (result i32)))
   (table $ctx_table 2 funcref)
-  (elem (i32.const 0) $__ctx_main_println_0 $__ctx_main_add_1)
+  (elem (i32.const 0) $__lambda_1 $__lambda_3)
 
   (data (i32.const 256) "\05\00\00\00Hello\00")
 
   (func $f (param $__ctx_println i32) (param $__ctx_add i32) (result i32)
+    local.get $__ctx_println
     i32.const 260
     local.get $__ctx_println
-    call_indirect (type $ctx_fn_1)
+    i32.load
+    call_indirect (type $ctx_fn_2)
     drop
+    local.get $__ctx_add
     i32.const 3
     i32.const 4
     local.get $__ctx_add
-    call_indirect (type $ctx_fn_2)
+    i32.load
+    call_indirect (type $ctx_fn_3)
   )
   (export "f" (func $f))
 
-  (func $main (result i32)
+  (func $main (result i32) (local $__use_println_0 i32) (local $__use_add_2 i32)
+    i32.const 4
+    call $__nanyx_alloc
     i32.const 0
+    i32.const 0
+    call $__nanyx_record_set
+    local.set $__use_println_0
+    i32.const 4
+    call $__nanyx_alloc
     i32.const 1
+    i32.const 0
+    call $__nanyx_record_set
+    local.set $__use_add_2
+    local.get $__use_println_0
+    local.get $__use_add_2
     call $f
   )
   (export "main" (func $main))
 
-  (func $__ctx_main_println_0 (param $s i32) (result i32) (local $__dbg_tmp i32)
+  (func $__lambda_1 (param $__env i32) (param $s i32) (result i32) (local $__dbg_tmp i32)
     local.get $s
     local.tee $__dbg_tmp
     call $dbg_str
@@ -207,10 +262,12 @@
     drop
     i32.const 0
   )
+  (export "__lambda_1" (func $__lambda_1))
 
-  (func $__ctx_main_add_1 (param $x i32) (param $y i32) (result i32)
+  (func $__lambda_3 (param $__env i32) (param $x i32) (param $y i32) (result i32)
     local.get $x
     local.get $y
     i32.add
   )
+  (export "__lambda_3" (func $__lambda_3))
 )

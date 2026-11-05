@@ -281,23 +281,35 @@
     call $__nanyx_copy_bytes
     local.get $out
   )
+  (func $__nanyx_record_set (param $base i32) (param $value i32) (param $offset i32) (result i32)
+    local.get $base
+    local.get $offset
+    i32.add
+    local.get $value
+    i32.store
+    local.get $base
+  )
 
-  (type $ctx_fn_1 (func (param i32) (result i32)))
+  (type $ctx_fn_2 (func (param i32 i32) (result i32)))
   (table $ctx_table 2 funcref)
-  (elem (i32.const 0) $__ctx_main_ToString_int_toString_0 $__ctx_main_ToString_string_toString_1)
+  (elem (i32.const 0) $__lambda_1 $__lambda_3)
 
   (data (i32.const 256) "\09\00\00\00xString: \00")
   (data (i32.const 270) "\0b\00\00\00, yString: \00")
   (data (i32.const 286) "\04\00\00\00fake\00")
 
   (func $compareStrings (param $x i32) (param $y i32) (param $__ctx_ToString_a_toString i32) (param $__ctx_ToString_b_toString i32) (result i32) (local $xString i32) (local $yString i32) (local $__dbg_tmp i32)
+    local.get $__ctx_ToString_a_toString
     local.get $x
     local.get $__ctx_ToString_a_toString
-    call_indirect (type $ctx_fn_1)
+    i32.load
+    call_indirect (type $ctx_fn_2)
     local.set $xString
+    local.get $__ctx_ToString_b_toString
     local.get $y
     local.get $__ctx_ToString_b_toString
-    call_indirect (type $ctx_fn_1)
+    i32.load
+    call_indirect (type $ctx_fn_2)
     local.set $yString
     i32.const 260
     local.get $xString
@@ -316,20 +328,34 @@
   )
   (export "compareStrings" (func $compareStrings))
 
-  (func $main (result i32)
+  (func $main (result i32) (local $__use_ToString_int_toString_0 i32) (local $__use_ToString_string_toString_2 i32)
+    i32.const 4
+    call $__nanyx_alloc
+    i32.const 0
+    i32.const 0
+    call $__nanyx_record_set
+    local.set $__use_ToString_int_toString_0
+    i32.const 4
+    call $__nanyx_alloc
+    i32.const 1
+    i32.const 0
+    call $__nanyx_record_set
+    local.set $__use_ToString_string_toString_2
     i32.const 42
     i32.const 290
-    i32.const 0
-    i32.const 1
+    local.get $__use_ToString_int_toString_0
+    local.get $__use_ToString_string_toString_2
     call $compareStrings
   )
   (export "main" (func $main))
 
-  (func $__ctx_main_ToString_int_toString_0 (param $i i32) (result i32)
+  (func $__lambda_1 (param $__env i32) (param $i i32) (result i32)
     i32.const 290
   )
+  (export "__lambda_1" (func $__lambda_1))
 
-  (func $__ctx_main_ToString_string_toString_1 (param $s i32) (result i32)
+  (func $__lambda_3 (param $__env i32) (param $s i32) (result i32)
     local.get $s
   )
+  (export "__lambda_3" (func $__lambda_3))
 )

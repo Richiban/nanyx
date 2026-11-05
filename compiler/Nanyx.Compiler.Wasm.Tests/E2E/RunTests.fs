@@ -104,6 +104,82 @@ let ``Run - a use binding overrides the runtime's Console`` () =
         "greet(\"loud\")\n"
     runSource source |> assertRan "[quiet]loud\n"
 
+/// A context with one member, and a function that requires it, for the tests of what a `use` can bind (#88).
+let private myConsolePrelude =
+    "import nanyx/console\n" +
+    "\n" +
+    "context MyConsole = (p: string -> ())\n" +
+    "\n" +
+    "def greet: [MyConsole] string -> () = { name -> p(name) }\n" +
+    "\n"
+
+[<Fact>]
+let ``Run - a top-level function as a use binding`` () =
+    let source =
+        myConsolePrelude +
+        "@entry\n" +
+        "def main = {\n" +
+        "  use MyConsole(\n" +
+        "    p = println\n" +
+        "  )\n" +
+        "  greet(\"Nanyx\")\n" +
+        "}\n"
+    runSource source |> assertRan "Nanyx\n"
+
+[<Fact>]
+let ``Run - a use binding lambda that captures a local`` () =
+    let source =
+        myConsolePrelude +
+        "@entry\n" +
+        "def main = {\n" +
+        "  def prefix = \">> \"\n" +
+        "  use MyConsole(\n" +
+        "    p = { s -> println(\"{prefix}{s}\") }\n" +
+        "  )\n" +
+        "  greet(\"captured\")\n" +
+        "}\n"
+    runSource source |> assertRan ">> captured\n"
+
+[<Fact>]
+let ``Run - a parameter or local holding a function as a use binding`` () =
+    let source =
+        myConsolePrelude +
+        "def viaParameter: (string -> ()) -> () = { f ->\n" +
+        "  use MyConsole(p = f)\n" +
+        "  greet(\"parameter\")\n" +
+        "}\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  def shout = { s -> println(s ++ \"!\") }\n" +
+        "  use MyConsole(p = shout)\n" +
+        "  greet(\"local\")\n" +
+        "  viaParameter({ s -> println(\"[\" ++ s ++ \"]\") })\n" +
+        "}\n"
+    runSource source |> assertRan "local!\n[parameter]\n"
+
+[<Fact>]
+let ``Run - use bindings of parameterised contexts and records`` () =
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "context Show(a) = (show: a -> string)\n" +
+        "context Ask = (ask: () -> int)\n" +
+        "\n" +
+        "def describe: [Show(a) + Show(b)] (a, b) -> string = { x, y -> Show(a).show(x) ++ \" & \" ++ Show(b).show(y) }\n" +
+        "def twice: [Ask] () -> int = { ask() + ask() }\n" +
+        "\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  def unit = \"cm\"\n" +
+        "  use Show(int) = ( show = { n -> \"{n}{unit}\" } )\n" +
+        "  use Show(string) = ( show = { s -> s } )\n" +
+        "  println(describe(3, \"three\"))\n" +
+        "  def answers = (ask = { 21 })\n" +
+        "  use answers\n" +
+        "  println(\"{twice()}\")\n" +
+        "}\n"
+    runSource source |> assertRan "3cm & three\n42\n"
+
 [<Fact>]
 let ``Run - string concatenation and equality`` () =
     let source =
