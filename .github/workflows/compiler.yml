@@ -10,12 +10,8 @@ on:
       - ".github/workflows/compiler.yml"
     tags:
       - "compiler/*"
+  # No path filter: the tests are required checks on main, so every PR must run them.
   pull_request:
-    paths:
-      - "compiler/**"
-      - "!compiler/**/*.md"
-      - "stdlib/**"
-      - ".github/workflows/compiler.yml"
   workflow_dispatch:
 
 permissions:
