@@ -3867,8 +3867,10 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                 $"  (type $ctx_fn_{arity} (func (param {paramSig}) (result i32)))")
         |> String.concat "\n"
 
+    // A `call_indirect` needs a table to validate, even in a module that never makes a closure to put in it
+    // (a function that only calls the closures it is given).
     let contextTable =
-        if contextFnList.IsEmpty then
+        if contextFnList.IsEmpty && Seq.isEmpty functionTable.IndirectArities then
             ""
         else
             $"  (table $ctx_table {contextFnList.Length} funcref)"

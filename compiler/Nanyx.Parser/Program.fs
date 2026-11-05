@@ -171,12 +171,6 @@ let newlineIndentedContinuation (refCol: int64) : Parser<unit, unit> =
 let defEqualsContinuation (refCol: int64) : Parser<unit, unit> =
     attempt (wsNoNl() >>. followedBy (pstring "=")) <|> newlineIndentedContinuation refCol
 
-let parseDefWith (lineStartCol: int64) (identParser: Parser<Identifier * TypeExpr option, unit>) (exprParser: Parser<Expression, unit>) =
-    (pstring "def" >>. ws >>. identParser .>> wsNoNl())
-    >>= fun (name, typeOpt) ->
-        defEqualsContinuation lineStartCol >>. pstring "=" >>. wsNoNl() >>. exprParser
-        |>> fun expr -> (name, typeOpt, expr)
-
 // Parser for identifiers
 let identifierNoWs: Parser<Identifier, unit> =
     let isIdentStart c = isLetter c || c = '_'
@@ -310,6 +304,8 @@ let statement, statementRef = createParserForwardedToRef<Statement, unit>()
 /// destructuring `def (x, y) = ...` desugars into.
 let statementItems, statementItemsRef = createParserForwardedToRef<Statement list, unit>()
 let typeExpr, typeExprRef = createParserForwardedToRef<TypeExpr, unit>()
+/// The type in a def's annotation: a type expression, or bare parameters `int, int -> int` (see `typeExpr`).
+let typeSignature, typeSignatureRef = createParserForwardedToRef<TypeExpr, unit>()
 
 // Pattern parsers
 let pattern, patternRef = createParserForwardedToRef<Pattern, unit>()
@@ -688,6 +684,27 @@ do
         <|> typeArrow
 
     typeExprRef := typeWithContext
+
+    // In a def's annotation `,` binds tighter than `->`, so `int, int -> int` means `(int, int) -> int`
+    // (see the types page); a parameter that is itself a function type needs parentheses. The bare form is
+    // only allowed there: elsewhere a `,` already separates lambda parameters, tuple items or fields.
+    let bareParameterArrow =
+        attempt (
+            pipe2
+                (sepBy1 typeUnion (attempt (wsInline >>. pstring "," >>. ws)))
+                (ws >>. pstring "->" >>. ws >>. typeExpr)
+                (fun parameters result -> parameters, result)
+            >>= function
+                | (_ :: _ :: _ as parameters), result -> preturn (TypeFunc(TypeTuple parameters, result))
+                | _ -> fail "a function type with bare parameters needs at least two")
+
+    typeSignatureRef :=
+        choice [
+            attempt (pipe2 (contextSet .>> ws) bareParameterArrow (fun ctx t ->
+                TypeWithContext((match ctx with TypeContext items -> items | _ -> []), t)))
+            bareParameterArrow
+            typeExpr
+        ]
     ()
 
 let typedIdentifier: Parser<Identifier * TypeExpr option, unit> =
@@ -696,11 +713,36 @@ let typedIdentifier: Parser<Identifier * TypeExpr option, unit> =
         (opt (attempt (wsInline >>. pstring ":" >>. ws >>. typeExpr)))
         (fun name typeOpt -> (name, typeOpt))
 
+/// A def's name with an optional same-line annotation. Unlike `typedIdentifier` (lambda parameters), the
+/// annotation is a `typeSignature`.
+let typedDefIdentifier: Parser<Identifier * TypeExpr option, unit> =
+    pipe2
+        identifierNoWs
+        (opt (attempt (wsInline >>. pstring ":" >>. ws >>. typeSignature)))
+        (fun name typeOpt -> (name, typeOpt))
+
 let typedQualifiedIdentifier: Parser<Identifier * TypeExpr option, unit> =
     pipe2
         qualifiedIdentifier
-        (opt (attempt (wsInline >>. pstring ":" >>. ws >>. typeExpr)))
+        (opt (attempt (wsInline >>. pstring ":" >>. ws >>. typeSignature)))
         (fun name typeOpt -> (name, typeOpt))
+
+// A def's name and type annotation. The annotation may follow the name on the same line or start an
+// indented continuation line (`def f` / `  : T` / `  = ...`), like the `=` does.
+let defNameAndType (lineStartCol: int64) (identParser: Parser<Identifier * TypeExpr option, unit>) =
+    identParser .>> wsNoNl()
+    >>= fun (name, typeOpt) ->
+        match typeOpt with
+        | Some _ -> preturn (name, typeOpt)
+        | None ->
+            opt (attempt (newlineIndentedContinuation lineStartCol >>. pstring ":" >>. ws >>. typeSignature .>> wsNoNl()))
+            |>> fun continuationType -> (name, continuationType)
+
+let parseDefWith (lineStartCol: int64) (identParser: Parser<Identifier * TypeExpr option, unit>) (exprParser: Parser<Expression, unit>) =
+    (pstring "def" >>. ws >>. defNameAndType lineStartCol identParser)
+    >>= fun (name, typeOpt) ->
+        defEqualsContinuation lineStartCol >>. pstring "=" >>. wsNoNl() >>. exprParser
+        |>> fun expr -> (name, typeOpt, expr)
 
 let typeParam: Parser<Identifier * TypeExpr option, unit> =
     pipe2
@@ -788,7 +830,7 @@ let valueDefCore: Parser<Definition, unit> =
     getPosition >>= fun lineStart ->
         pipe2
             (opt (attempt (pstring "export" >>. ws)))
-            (parseDefWith lineStart.Column typedIdentifier (wsInline >>. (sepBy1 expression (pstring "," .>> ws) |>> fun exprs ->
+            (parseDefWith lineStart.Column typedDefIdentifier (wsInline >>. (sepBy1 expression (pstring "," .>> ws) |>> fun exprs ->
                 match exprs with
                 | [single] -> single
                 | multiple -> TupleExpr multiple)))
@@ -1215,7 +1257,9 @@ do
     
     let lambdaWithParams = pipe2 (paramList .>> arrow .>> skipMany (skipAnyOf " \t")) blockBody (fun parameters body -> Lambda(parameters, body))
     let lambdaNoParams = blockBody |>> (fun body -> Lambda([], body))
-    
+    // `{ }`, possibly spanning lines, is a lambda that does nothing
+    let emptyLambda = skipMany (skipAnyOf " \t\r\n") >>. followedBy (pstring "}") >>% Lambda([], UnitExpr)
+
     // Shorthand lambda: { * } means { x, y -> x * y }
     let shorthandBinaryOp =
         // "++" before "+" so the longer operator wins
@@ -1262,6 +1306,7 @@ do
     lambdaRef :=
         between (pstring "{") (pstring "}") (
             skipMany (skipAnyOf " \t") >>. choice [
+                attempt emptyLambda
                 attempt shorthandUnaryOp
                 attempt shorthandBinaryOp
                 attempt shorthandPropertyAccess
@@ -1356,7 +1401,7 @@ do
     let recStatement =
         let keywordEnd = notFollowedBy (satisfy (fun c -> Char.IsLetterOrDigit c || c = '_'))
         getPosition >>= fun lineStart ->
-            (pstring "rec" >>. keywordEnd >>. ws >>. typedQualifiedIdentifier .>> wsNoNl())
+            (pstring "rec" >>. keywordEnd >>. ws >>. defNameAndType lineStart.Column typedQualifiedIdentifier)
             >>= fun (name, typeOpt) ->
                 defEqualsContinuation lineStart.Column >>. pstring "=" >>. wsNoNl() >>. defExprParser
                 |>> fun expr -> DefStatement(false, name, typeOpt, FunctionCall("__rec", None, [ expr ]))
