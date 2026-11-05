@@ -193,7 +193,8 @@ can start it with `nanyx lsp` and `TransportKind.stdio`.
 
 The server lives in `Nanyx.LanguageServer` and calls the compiler as a library: on every open and
 change it runs `Compiler.compileSource` (or `Compiler.compile` for an untitled buffer) on the editor's
-text and publishes the resulting diagnostics. Standard-library imports resolve because the library is
+text, keeps the `CompileResult` in `DocumentStore`, and publishes the resulting diagnostics; hover reads
+the same result, so each change is compiled once. Standard-library imports resolve because the library is
 embedded in the compiler; imports by path resolve relative to the file as they do for `nanyx check`.
 
 What it does today:
@@ -204,12 +205,18 @@ What it does today:
   there; one the compiler cannot position is shown at the start of the file.
 - A file that fails to parse gets one diagnostic for the parse error, and a compiler exception is
   reported as a diagnostic rather than taking the server down.
+- `textDocument/hover` shows the inferred type of the innermost expression under the pointer, with
+  type variables named `'a`, `'b`, ...; on a call's function name it shows the function's type at that
+  call (so `id` in `id(5)` is `int -> int`). The types come from `CompileResult.ExprTypes` and
+  `CalleeTypes`, recorded by node during inference (see `NyxCompiler.Hover`). A file that does not
+  type-check shows no hover.
 
-Hover, go-to-definition and completion are deliberately not implemented yet: each is one handler
-class in `Nanyx.LanguageServer/Handlers/`, registered in `NanyxLanguageServer.Configure`, and they
-wait on the compiler keeping ranges for every symbol and on modules and imports settling. Two
-compiler improvements the server makes visible: a parse error currently drops the whole file (so
-one error hides everything after it), and only some diagnostics carry a range.
+Go-to-definition and completion are deliberately not implemented yet: each is one handler class in
+`Nanyx.LanguageServer/Handlers/`, registered in `NanyxLanguageServer.Configure`, and they wait on the
+compiler recording what each name refers to ([#98](https://github.com/nanyx-lang/nanyx/issues/98)).
+Hover likewise shows only types, not a name's declared signature or docs. Two compiler improvements
+the server makes visible: a parse error currently drops the whole file (so one error hides
+everything after it), and only some diagnostics carry a range.
 
 The tests in `Nanyx.LanguageServer.Tests` start the server in-process and talk to it through
 OmniSharp's LSP client over a pair of pipes, so they exercise the real wire protocol.

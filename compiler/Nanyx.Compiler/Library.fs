@@ -15,7 +15,15 @@ type CompilationPhase =
 type CompileResult =
     { Phase: CompilationPhase
       Diagnostics: Diagnostic list
-      Typed: TypedModule option }
+      Typed: TypedModule option
+      /// The root module as parsed, before desugaring: the syntax the user wrote, whose nodes `ExprTypes` and
+      /// `CalleeTypes` are keyed by. Only present when the module type-checked.
+      Syntax: Module option
+      /// The resolved type of every expression in the root module, by node (empty unless it type-checked).
+      ExprTypes: Map<NodeId, Ty>
+      /// The type of the function at each call or pipe in the root module, instantiated at that call, by the
+      /// call's node (empty unless it type-checked).
+      CalleeTypes: Map<NodeId, Ty> }
 
 /// Where a module's source came from, which decides how its imports are resolved and what is in scope.
 type private ModuleOrigin =
@@ -34,7 +42,9 @@ type private CheckedModule =
       /// Items inlined from the modules it imports, already renamed and ready for the backend.
       Inlined: TopLevelItem list
       /// The declared module name, if any.
-      Name: string option }
+      Name: string option
+      /// The module as parsed, before desugaring.
+      Syntax: Module }
 
 module Compiler =
     let private normalizeSource (source: string) =
@@ -527,10 +537,11 @@ module Compiler =
                 |> Result.mapError (fun diagnostics -> Parsed, diagnostics)
                 |> Result.bind (fun ast ->
                     applyAttributes (desugar ast)
+                    |> Result.map (fun desugared -> ast, desugared)
                     |> Result.mapError (fun diagnostics -> Desugared, diagnostics))
             match resolved with
             | Result.Error failure -> Error failure
-            | Result.Ok desugared ->
+            | Result.Ok (ast, desugared) ->
                 let imports = collectImports desugared
                 let mutable env =
                     match origin with
@@ -605,10 +616,13 @@ module Compiler =
                                     { Module = inlined @ own
                                       Types = resolvedTypes
                                       TypeDefs = resolvedTypeDefs
-                                      Items = resolvedItems }
+                                      Items = resolvedItems
+                                      ExprTypes = state.ExprTypes |> Map.map (fun _ ty -> Unifier.apply subst ty)
+                                      CalleeTypes = state.CalleeTypes |> Map.map (fun _ ty -> Unifier.apply subst ty) }
                                  Own = own
                                  Inlined = inlined
-                                 Name = declaredModuleName desugared }
+                                 Name = declaredModuleName desugared
+                                 Syntax = ast }
 
     let parse (source: string) : Result<Module, Diagnostic list> =
         match parseModule source with
@@ -620,11 +634,17 @@ module Compiler =
         | Result.Error (phase, diagnostics) ->
             { Phase = phase
               Diagnostics = annotateDiagnosticsWithSource source diagnostics
-              Typed = None }
+              Typed = None
+              Syntax = None
+              ExprTypes = Map.empty
+              CalleeTypes = Map.empty }
         | Result.Ok checkedModule ->
             { Phase = Typed
               Diagnostics = []
-              Typed = Some checkedModule.Typed }
+              Typed = Some checkedModule.Typed
+              Syntax = Some checkedModule.Syntax
+              ExprTypes = checkedModule.Typed.ExprTypes
+              CalleeTypes = checkedModule.Typed.CalleeTypes }
 
     /// Compiles the file at `filePath` up to the typed module, resolving its imports (standard-library modules
     /// from the embedded library, everything else relative to the file).
@@ -632,7 +652,10 @@ module Compiler =
         if not (File.Exists filePath) then
             { Phase = Parsed
               Diagnostics = [ Diagnostics.error ($"File not found: {filePath}") ]
-              Typed = None }
+              Typed = None
+              Syntax = None
+              ExprTypes = Map.empty
+              CalleeTypes = Map.empty }
         else
             compileWith (SourceFile (Path.GetFullPath filePath)) (File.ReadAllText filePath)
 

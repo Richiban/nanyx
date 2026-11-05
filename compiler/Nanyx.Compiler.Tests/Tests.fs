@@ -1395,3 +1395,86 @@ let ``Typecheck rejects boolean keywords on non-booleans`` () =
     Assert.False(andResult.Diagnostics.IsEmpty, "`1 and 2` should not type-check")
     let notResult = Compiler.compile "def b = not \"text\""
     Assert.False(notResult.Diagnostics.IsEmpty, "`not \"text\"` should not type-check")
+
+// Hover: the type of the expression at a position.
+
+/// The offset of the `occurrence`th (zero-based) appearance of `text` in `source`, plus `within` characters.
+let private offsetOf (source: string) (text: string) (occurrence: int) (within: int) =
+    let rec find from remaining =
+        let index = source.IndexOf(text, from, StringComparison.Ordinal)
+        if index < 0 then failwith $"'{text}' not found"
+        elif remaining = 0 then index
+        else find (index + 1) (remaining - 1)
+    find 0 occurrence + within
+
+let private hoverAt (source: string) (offset: int) =
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, sprintf "%A" result.Diagnostics)
+    Hover.typeAt result offset
+
+let private hoverType source offset =
+    hoverAt source offset |> Option.map (fun info -> info.Type)
+
+[<Fact>]
+let ``Expressions at a position are innermost first`` () =
+    let source = "def value = 1 + 2 * 3"
+    let syntax =
+        match Parser.Program.parseModule source with
+        | Ok syntax -> syntax
+        | Error message -> failwith message
+    let found = Hover.expressionsAt (offsetOf source "2" 0 0) syntax
+    match found |> List.map (fun expr -> expr.Kind) with
+    | [ LiteralExpr (IntLit 2); BinaryOp("*", _, _); BinaryOp("+", _, _) ] -> ()
+    | kinds -> failwithf "Unexpected expressions: %A" kinds
+    // Each one encloses the one before it.
+    found
+    |> List.pairwise
+    |> List.iter (fun (inner, outer) ->
+        Assert.True(outer.Span.Start <= inner.Span.Start && inner.Span.End <= outer.Span.End))
+
+[<Fact>]
+let ``Nothing is found outside every expression`` () =
+    let source = "def value = 1 + 2"
+    Assert.Equal(None, hoverType source 0)
+
+[<Fact>]
+let ``Hover shows the type of literals, locals, parameters, calls and lambdas`` () =
+    let source =
+        "def double = { n -> n * 2 }\n" +
+        "def answer = {\n" +
+        "  def half = 21\n" +
+        "  double(half)\n" +
+        "}\n"
+    // The innermost expression wins: the literal, not the multiplication around it.
+    Assert.Equal(Some "int", hoverType source (offsetOf source "2" 0 0))
+    Assert.Equal(Some "int", hoverType source (offsetOf source "n *" 0 0))
+    Assert.Equal(Some "int -> int", hoverType source (offsetOf source "{ n" 0 0))
+    Assert.Equal(Some "int", hoverType source (offsetOf source "half)" 0 0))
+    Assert.Equal(Some "int", hoverType source (offsetOf source "(half)" 0 0))
+    // On the call's function name, the function's type.
+    Assert.Equal(Some "int -> int", hoverType source (offsetOf source "double(" 0 1))
+
+[<Fact>]
+let ``Hover range is the span of the expression`` () =
+    let source = "def value = 1 + 23"
+    let info = (hoverAt source (offsetOf source "23" 0 1)).Value
+    Assert.Equal("int", info.Type)
+    Assert.Equal(offsetOf source "23" 0 0, info.Span.Start)
+    Assert.Equal(offsetOf source "23" 0 2, info.Span.End)
+
+[<Fact>]
+let ``Hover on a polymorphic function shows it instantiated at the call`` () =
+    let source =
+        "def id = { x -> x }\n" +
+        "def n = id(5)\n" +
+        "def s = id(\"a\")\n"
+    Assert.Equal(Some "'a -> 'a", hoverType source (offsetOf source "{ x" 0 0))
+    Assert.Equal(Some "'a", hoverType source (offsetOf source "-> x" 0 3))
+    Assert.Equal(Some "int -> int", hoverType source (offsetOf source "id(" 0 0))
+    Assert.Equal(Some "string -> string", hoverType source (offsetOf source "id(" 1 0))
+    Assert.Equal(Some "string", hoverType source (offsetOf source "id(" 1 4))
+
+[<Fact>]
+let ``Type variables are shown as 'a, 'b in order of appearance`` () =
+    let source = "def pair = { a, b -> (b, a) }"
+    Assert.Equal(Some "('a, 'b) -> ('b, 'a)", hoverType source (offsetOf source "{" 0 0))

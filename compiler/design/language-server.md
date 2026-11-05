@@ -20,10 +20,17 @@ what the compiler keeps: exact spans, resolved names and types.
 
 ## Where it is today
 
-- **Diagnostics only.** The server does full text sync and publishes diagnostics on open and change. A
+- **Diagnostics.** The server does full text sync and publishes diagnostics on open and change. A
   diagnostic with a position is shown from there to the end of the identifier; one without is shown at the start
   of the file. See [The language server](../README.md#the-language-server).
-- **No hover, go-to-definition or completion.** Each is one handler in `Handlers/`; they wait on the compiler
+- **Hover shows inferred types** ([#120](https://github.com/nanyx-lang/nanyx/issues/120)). Inference records the
+  resolved type of every expression by `NodeId` (`CompileResult.ExprTypes`, the `Types` table of the planned
+  [semantic model](analyzers.md#3-the-semantic-model)), and the callee's type at each call (`CalleeTypes`). Hover
+  shows the innermost typed expression under the pointer, or a call's function at that call site. Each document
+  is compiled once per change and the result cached in `DocumentStore`, shared by diagnostics and hover. A
+  declared signature or doc comment needs name resolution ([#98](https://github.com/nanyx-lang/nanyx/issues/98)),
+  and a file that fails to type-check shows no hover.
+- **No go-to-definition or completion.** Each is one handler in `Handlers/`; they wait on the compiler
   keeping a span for every node ([#96](https://github.com/nanyx-lang/nanyx/issues/96)) and recording what each name refers to ([#98](https://github.com/nanyx-lang/nanyx/issues/98)).
 - **A parse error hides the rest of the file**, because the parser has no error recovery.
 - **The extension** highlights syntax, finds `nanyx` (setting, `PATH`, or a downloaded release) and offers
@@ -42,7 +49,8 @@ _To do._ Candidate items, not yet filed, in rough dependency order:
 
 1. **Exact ranges.** Map diagnostic spans to LSP ranges once [#96](https://github.com/nanyx-lang/nanyx/issues/96) and [#97](https://github.com/nanyx-lang/nanyx/issues/97) land; report `code` and
    `relatedInformation`.
-2. **Hover.** Types from the semantic model ([#98](https://github.com/nanyx-lang/nanyx/issues/98)).
+2. **Hover.** Inferred types are done ([#120](https://github.com/nanyx-lang/nanyx/issues/120)); declared
+   signatures and docs follow from name resolution ([#98](https://github.com/nanyx-lang/nanyx/issues/98)).
 3. **Go-to-definition and find-references.** From the recorded symbols and references ([#98](https://github.com/nanyx-lang/nanyx/issues/98)).
 4. **Document symbols.** The outline view, from top-level definitions.
 5. **Completion.** Names in scope, then record members and module exports.

@@ -15,7 +15,13 @@ type InferState =
             ContextDefs: Map<string, TypeExpr>;
             ContextRequirements: Map<string, TypeExpr list>;
             LocalNominals: Set<string>;
-            LocalPrivateNominals: Set<string> }
+            LocalPrivateNominals: Set<string>;
+            /// The type of every expression inferred so far, by node. These are the types as inference first saw
+            /// them; the substitution unification finds turns them into resolved types.
+            ExprTypes: Map<NodeId, Ty>;
+            /// The callee's type at each call (and pipe), by the call's node: the function's type instantiated
+            /// at that call site, which a call's own type (its result) does not show.
+            CalleeTypes: Map<NodeId, Ty> }
 
 let emptyState =
         { NextId = 0;
@@ -25,7 +31,9 @@ let emptyState =
             ContextDefs = Map.empty;
             ContextRequirements = Map.empty;
             LocalNominals = Set.empty;
-            LocalPrivateNominals = Set.empty }
+            LocalPrivateNominals = Set.empty;
+            ExprTypes = Map.empty;
+            CalleeTypes = Map.empty }
 
 let private freshVar (state: InferState) =
     let var = { Id = state.NextId; Name = None }
@@ -557,7 +565,16 @@ let private argTypesFromExpected (state: InferState) (args: (Identifier * TypeEx
     argTys, current
 
 
+/// Records the type inference gave an expression, so it can be looked up by node once unification has resolved it.
+let private recordExprType (result: Result<TypedExpr * InferState, Diagnostic list>) =
+    result
+    |> Result.map (fun (typedExpr, state) ->
+        typedExpr, { state with ExprTypes = state.ExprTypes |> Map.add typedExpr.Expr.Id typedExpr.Type })
+
 let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) : Result<TypedExpr * InferState, Diagnostic list> =
+    inferExprKind env state expr |> recordExprType
+
+and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) : Result<TypedExpr * InferState, Diagnostic list> =
     match expr.Kind with
     | LiteralExpr literal ->
         Ok (mkTypedExpr expr (literalType literal) None None None, state)
@@ -686,7 +703,7 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
             | Some scheme ->
                 let mutable current = state
                 let funcTy, nextState = instantiate current scheme
-                current <- nextState
+                current <- { nextState with CalleeTypes = nextState.CalleeTypes |> Map.add expr.Id funcTy }
 
                 let recordFieldsOpt =
                     match funcTy with
@@ -1505,6 +1522,8 @@ and inferLambdaWithExpected (env: TypeEnv) (state: InferState) (lambda: Expressi
             | Some expectedInput -> expectedInput
             | None -> inputTypeFromArgs argTys
         Ok (mkTypedExpr lambda (TyFunc(inputTy, bodyExpr.Type)) (Some bodyExpr) None None, withReturnConstraint)
+        // Called directly for a lambda whose input is known, not only through `inferExpr`.
+        |> recordExprType
     | Error err -> Error err
 
 and inferBlock (env: TypeEnv) (state: InferState) (block: Expression) (statements: Statement list) : Result<TypedExpr * InferState, Diagnostic list> =
