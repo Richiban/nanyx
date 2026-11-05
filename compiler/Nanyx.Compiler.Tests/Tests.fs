@@ -537,7 +537,7 @@ let ``Entry attribute appends a call to the entry point`` () =
     Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
     let entryCalls =
         result.Typed.Value.Module
-        |> List.filter (function Expr (FunctionCall("main", _, [])) -> true | _ -> false)
+        |> List.filter (function Expr (Kind (FunctionCall("main", _, []))) -> true | _ -> false)
     Assert.Equal(1, entryCalls.Length)
     let hasAttribute = result.Typed.Value.Module |> List.exists (function Attribute _ -> true | _ -> false)
     Assert.False(hasAttribute)
@@ -811,14 +811,14 @@ let ``Desugar workflow bind and return`` () =
     | Result.Ok ast ->
         let desugared = Compiler.desugar ast
         match desugared with
-        | [Def (ValueDef(_, "result", _, FunctionCall("async", _, [Lambda([], Block [ExprStatement expr])])))] ->
-            match expr with
+        | [Def (ValueDef(_, "result", _, Kind (FunctionCall("async", _, [Kind (Lambda([], Kind (Block [ExprStatement expr])))]))))] ->
+            match expr.Kind with
             | FunctionCall(
                 "await",
                 _,
                 [
-                    FunctionCall("foo", _, [])
-                    Lambda([("x", None)], FunctionCall("pure", _, [MemberAccess(IdentifierExpr("x", _), "y", _)]))
+                    Kind (FunctionCall("foo", _, []))
+                    Kind (Lambda([("x", None)], Kind (FunctionCall("pure", _, [Kind (MemberAccess(Kind (IdentifierExpr "x"), "y", _))]))))
                 ]
               ) ->
                 Assert.True(true)
@@ -836,7 +836,7 @@ let ``Desugar workflow implicit return`` () =
     | Result.Ok ast ->
         let desugared = Compiler.desugar ast
         match desugared with
-        | [Def (ValueDef(_, "result", _, FunctionCall("async", _, [Lambda([], Block [ExprStatement (LiteralExpr (IntLit 1))])])))] ->
+        | [Def (ValueDef(_, "result", _, Kind (FunctionCall("async", _, [Kind (Lambda([], Kind (Block [ExprStatement (Kind (LiteralExpr (IntLit 1)))])))]))))] ->
             Assert.True(true)
         | other -> Assert.True(false, $"Unexpected desugared module: %A{other}")
 

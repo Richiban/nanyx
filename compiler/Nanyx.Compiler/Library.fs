@@ -128,9 +128,11 @@ module Compiler =
     /// (Lambda parameters and local definitions that shadow a renamed name are not accounted for.)
     let private renameReferencesInExpr (renames: Map<string, string>) (expr: Expression) : Expression =
         let rename (name: string) = renames |> Map.tryFind name |> Option.defaultValue name
-        let rec mapExpr current =
-            match current with
-            | IdentifierExpr(name, rangeOpt) -> IdentifierExpr(rename name, rangeOpt)
+        let rec mapExpr (current: Expression) : Expression =
+            { current with Kind = mapKind current }
+        and mapKind current =
+            match current.Kind with
+            | IdentifierExpr name -> IdentifierExpr(rename name)
             | FunctionCall(name, rangeOpt, args) ->
                 FunctionCall(rename name, rangeOpt, args |> List.map mapExpr)
             | Lambda(parameters, body) ->
@@ -171,7 +173,7 @@ module Compiler =
             | WorkflowReturnExpr value -> WorkflowReturnExpr(mapExpr value)
             | ContextMemberAccess _
             | UnitExpr
-            | LiteralExpr _ -> current
+            | LiteralExpr _ -> current.Kind
         and mapBinding binding =
             match binding with
             | UseValue valueExpr -> UseValue(mapExpr valueExpr)
@@ -267,8 +269,8 @@ module Compiler =
             else
                 None)
 
-    let private parseWithDiagnostics (source: string) : Result<Module, Diagnostic list> =
-        match parseModule source with
+    let private parseWithDiagnostics (filePath: string) (source: string) : Result<Module, Diagnostic list> =
+        match parseModuleFile filePath source with
         | Result.Ok ast -> Ok ast
         | Result.Error err ->
             match tryParseLineColumn err with
@@ -278,8 +280,10 @@ module Compiler =
     let desugar (module': Module) =
         let isReturnKeyword keyword = keyword = "return"
 
-        let rec desugarExpr expr =
-            match expr with
+        let rec desugarExpr (expr: Expression) : Expression =
+            { expr with Kind = desugarKind expr }
+        and desugarKind expr =
+            match expr.Kind with
             | FunctionCall(name, rangeOpt, args) ->
                 FunctionCall(name, rangeOpt, args |> List.map desugarExpr)
             | Lambda(args, body) ->
@@ -327,7 +331,7 @@ module Compiler =
                 InterpolatedString mappedParts
             | UnitExpr
             | LiteralExpr _
-            | IdentifierExpr _ -> expr
+            | IdentifierExpr _ -> expr.Kind
         and desugarUseBinding binding =
             match binding with
             | UseValue expr -> UseValue (desugarExpr expr)
@@ -336,9 +340,9 @@ module Compiler =
             match stmt with
             | DefStatement(isExport, name, typeOpt, expr) ->
                 let expr' =
-                    match expr with
+                    match expr.Kind with
                     | WorkflowBindExpr(keyword, value) when isReturnKeyword keyword ->
-                        FunctionCall("pure", None, [desugarExpr value])
+                        { expr with Kind = FunctionCall("pure", None, [desugarExpr value]) }
                     | _ -> desugarExpr expr
                 DefStatement(isExport, name, typeOpt, expr')
             | ExprStatement expr -> ExprStatement (desugarExpr expr)
@@ -347,44 +351,54 @@ module Compiler =
             | TypeDefStatement _ -> stmt
         and desugarWorkflowChain statements =
             match statements with
-            | [] -> UnitExpr
+            | [] -> Expression.synthetic UnitExpr
             | DefStatement(isExport, name, typeOpt, expr) :: rest ->
-                match expr with
+                match expr.Kind with
                 | WorkflowBindExpr(keyword, bindExpr) when isReturnKeyword keyword ->
-                    FunctionCall("pure", None, [desugarExpr bindExpr])
+                    { expr with Kind = FunctionCall("pure", None, [desugarExpr bindExpr]) }
                 | WorkflowBindExpr(keyword, bindExpr) ->
                     let nextExpr = desugarWorkflowChain rest
-                    FunctionCall(keyword, None, [desugarExpr bindExpr; Lambda([name, None], nextExpr)])
+                    { expr with Kind = FunctionCall(keyword, None, [desugarExpr bindExpr; Expression.from expr (Lambda([name, None], nextExpr))]) }
                 | _ ->
                     let expr' = desugarExpr expr
                     let nextExpr = desugarWorkflowChain rest
-                    Block [DefStatement(isExport, name, typeOpt, expr'); ExprStatement nextExpr]
+                    chainBlock expr.Span nextExpr [DefStatement(isExport, name, typeOpt, expr'); ExprStatement nextExpr]
             | ExprStatement expr :: rest ->
-                match expr with
-                | WorkflowReturnExpr value -> FunctionCall("pure", None, [desugarExpr value])
+                match expr.Kind with
+                | WorkflowReturnExpr value -> { expr with Kind = FunctionCall("pure", None, [desugarExpr value]) }
                 | WorkflowBindExpr(keyword, bindExpr) when isReturnKeyword keyword ->
-                    FunctionCall("pure", None, [desugarExpr bindExpr])
+                    { expr with Kind = FunctionCall("pure", None, [desugarExpr bindExpr]) }
                 | WorkflowBindExpr(keyword, bindExpr) ->
                     let nextExpr = desugarWorkflowChain rest
-                    FunctionCall(keyword, None, [desugarExpr bindExpr; Lambda([("_", None)], nextExpr)])
+                    { expr with Kind = FunctionCall(keyword, None, [desugarExpr bindExpr; Expression.from expr (Lambda([("_", None)], nextExpr))]) }
                 | _ ->
                     let expr' = desugarExpr expr
                     let nextExpr = desugarWorkflowChain rest
-                    Block [ExprStatement expr'; ExprStatement nextExpr]
+                    chainBlock expr.Span nextExpr [ExprStatement expr'; ExprStatement nextExpr]
             | UseStatement binding :: rest ->
                 let binding' = desugarUseBinding binding
                 let nextExpr = desugarWorkflowChain rest
-                Block [UseStatement binding'; ExprStatement nextExpr]
+                let bound = match binding with UseValue expr | UseContextInstance(_, expr) -> expr
+                chainBlock bound.Span nextExpr [UseStatement binding'; ExprStatement nextExpr]
             | statement :: rest ->
                 let nextExpr = desugarWorkflowChain rest
-                Block [desugarStatement statement; ExprStatement nextExpr]
+                chainBlock SourceSpan.none nextExpr [desugarStatement statement; ExprStatement nextExpr]
+        // A block made up for a statement and the rest of the chain spans from the statement to the end of the
+        // rest. The rest is a made-up `()` with no span when the statement is the last one, and a statement
+        // without an expression (an import, a type) has no span yet.
+        and chainBlock (statementSpan: SourceSpan) (nextExpr: Expression) statements =
+            let span =
+                if SourceSpan.isNone statementSpan then nextExpr.Span
+                elif SourceSpan.isNone nextExpr.Span then statementSpan
+                else SourceSpan.between statementSpan nextExpr.Span
+            Expression.at span (Block statements)
         and desugarBlock statements =
             let rec split prefix remaining =
                 match remaining with
                 | [] -> List.rev prefix
-                | (DefStatement(_, _, _, WorkflowBindExpr _)) :: _
-                | (ExprStatement (WorkflowBindExpr _)) :: _
-                | (ExprStatement (WorkflowReturnExpr _)) :: _ ->
+                | (DefStatement(_, _, _, Kind (WorkflowBindExpr _))) :: _
+                | (ExprStatement (Kind (WorkflowBindExpr _))) :: _
+                | (ExprStatement (Kind (WorkflowReturnExpr _))) :: _ ->
                     let chainExpr = desugarWorkflowChain remaining
                     List.rev prefix @ [ExprStatement chainExpr]
                 | stmt :: rest ->
@@ -422,8 +436,8 @@ module Compiler =
             | [] -> List.rev acc, List.rev entryCalls, List.rev errors
             | Attribute name :: rest when name <> entryAttribute ->
                 loop rest acc entryCalls (Diagnostics.error $"Unknown attribute '@{name}'" :: errors)
-            | Attribute _ :: (Def (ValueDef(_, name, _, _)) as def) :: rest ->
-                loop rest (def :: acc) (Expr (FunctionCall(name, None, [])) :: entryCalls) errors
+            | Attribute _ :: (Def (ValueDef(_, name, _, value)) as def) :: rest ->
+                loop rest (def :: acc) (Expr (Expression.from value (FunctionCall(name, None, []))) :: entryCalls) errors
             | Attribute name :: rest ->
                 loop rest acc entryCalls (Diagnostics.error $"Attribute '@{name}' must be followed by a definition" :: errors)
             | item :: rest -> loop rest (item :: acc) entryCalls errors
@@ -493,6 +507,13 @@ module Compiler =
         | StandardLibraryModule name -> StandardLibrary.importPrefix + name
         | InMemory -> "<source>"
 
+    /// The file a module's syntax nodes are reported in.
+    let private sourceFileName (origin: ModuleOrigin) =
+        match origin with
+        | SourceFile fullPath -> fullPath
+        | StandardLibraryModule name -> StandardLibrary.importPrefix + name + ".nyx"
+        | InMemory -> ""
+
     /// Parses, desugars and type-checks one module, resolving and checking the modules it imports first. An
     /// error says which phase it came from.
     let rec private typecheckModule (origin: ModuleOrigin) (source: string) (visited: Set<string>) : Result<CheckedModule, CompilationPhase * Diagnostic list> =
@@ -501,7 +522,7 @@ module Compiler =
             Error (Typed, [ Diagnostics.error ($"Import cycle detected for {key}") ])
         else
             let resolved =
-                parseWithDiagnostics source
+                parseWithDiagnostics (sourceFileName origin) source
                 |> Result.mapError (fun diagnostics -> Parsed, diagnostics)
                 |> Result.bind (fun ast ->
                     applyAttributes (desugar ast)
