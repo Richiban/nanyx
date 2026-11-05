@@ -355,6 +355,22 @@ let private extendEnvWithContexts (env: TypeEnv) (state: InferState) (contexts: 
         env' <- members |> List.fold (fun acc (name, ty) -> TypeEnv.extend name (TypeEnv.mono ty) acc) env'
     env', current
 
+let rec private unknownContextNames (state: InferState) (ctxExpr: TypeExpr) : Identifier list =
+    match ctxExpr with
+    | TypeContext contexts -> contexts |> List.collect (unknownContextNames state)
+    | TypeName name
+    | TypeApply(name, _) ->
+        if state.ContextDefs.ContainsKey name || state.TypeDefs.ContainsKey name then [] else [ name ]
+    | _ -> []
+
+let private ensureContextsExist (state: InferState) (name: Identifier) (contexts: TypeExpr list) : Result<unit, Diagnostic list> =
+    match contexts |> List.collect (unknownContextNames state) |> List.distinct with
+    | [] -> Ok ()
+    | unknown ->
+        unknown
+        |> List.map (fun ctxName -> Diagnostics.error ($"Unknown context '{ctxName}' in the signature of '{name}'"))
+        |> Error
+
 let private registerContextRequirement (state: InferState) (name: Identifier) (contexts: TypeExpr list) =
     { state with ContextRequirements = state.ContextRequirements |> Map.add name contexts }
 
@@ -1413,7 +1429,11 @@ and inferBlock (env: TypeEnv) (state: InferState) (statements: Statement list) :
             match statement with
             | DefStatement(isExport, name, typeOpt, expr) ->
                 if errors.IsEmpty then
-                    match ensureAttachedTypeExists current None name with
+                    let contextsExist =
+                        match fst (extractContextFromTypeExpr typeOpt) with
+                        | Some contexts -> ensureContextsExist current name contexts
+                        | None -> Ok ()
+                    match ensureAttachedTypeExists current None name |> Result.bind (fun () -> contextsExist) with
                     | Error err -> errors <- err
                     | Ok () ->
                         let contextOpt, declaredTypeExprOpt = extractContextFromTypeExpr typeOpt
@@ -1540,7 +1560,11 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
     for item in module' do
         match item with
         | Def (ValueDef(isExport, name, typeOpt, expr)) when errors.IsEmpty ->
-            match ensureAttachedTypeExists state currentModule name with
+            let contextsExist =
+                match fst (extractContextFromTypeExpr typeOpt) with
+                | Some contexts -> ensureContextsExist state name contexts
+                | None -> Ok ()
+            match ensureAttachedTypeExists state currentModule name |> Result.bind (fun () -> contextsExist) with
             | Error err -> errors <- err
             | Ok () ->
                 let contextOpt, declaredTypeExprOpt = extractContextFromTypeExpr typeOpt
