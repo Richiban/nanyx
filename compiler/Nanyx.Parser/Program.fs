@@ -921,6 +921,10 @@ let tagExpr =
 // Either branch may be an indented block on the following lines, and the `else` may be left out when the
 // `then` branch is unit (`if i > 0 then` followed by `println(...)` on the functions page); a missing
 // `else` is `()`.
+// The multi-branch form `if | cond1 -> a | value is pattern -> b | else -> c` tests each arm in order and is
+// desugared to nested ifs and if-matches, so `else` (or `()` when it is left out) ends up in the innermost
+// one. Nothing may follow the `else` arm, so a nested multi-branch if with an `else` cannot swallow the arms
+// of an enclosing match.
 let ifExpr =
     let keywordEnd = notFollowedBy (satisfy (fun c -> Char.IsLetterOrDigit c || c = '_'))
     let branch = attempt (blockExpr()) <|> (ws >>. expression)
@@ -928,15 +932,28 @@ let ifExpr =
         attempt (expression .>> ws .>> pstring "is" .>> keywordEnd .>> ws) .>>. pattern
         |>> fun (value, pat) -> Choice2Of2 (pat, value)
     let condition = expression |>> Choice1Of2
-    pipe3
-        (pstring "if" >>. keywordEnd >>. ws >>. (patternBinding <|> condition))
-        (ws >>. pstring "then" >>. keywordEnd >>. branch)
-        (opt (attempt (ws >>. pstring "else" >>. keywordEnd >>. branch)))
-        (fun head thenExpr elseOpt ->
-            match head with
-            | Choice1Of2 cond -> IfExpr(cond, thenExpr, defaultArg elseOpt UnitExpr)
-            | Choice2Of2 (pat, value) ->
-                Match([ value ], [ [ pat ], thenExpr; [ WildcardPattern ], defaultArg elseOpt UnitExpr ]))
+    let head = patternBinding <|> condition
+    let desugar head thenExpr elseExpr =
+        match head with
+        | Choice1Of2 cond -> IfExpr(cond, thenExpr, elseExpr)
+        | Choice2Of2 (pat, value) -> Match([ value ], [ [ pat ], thenExpr; [ WildcardPattern ], elseExpr ])
+    let elseKeyword = pstring "else" >>. keywordEnd
+    let conditionArm =
+        pstring "|" >>. ws >>. notFollowedBy elseKeyword >>. head .>>. (ws >>. pstring "->" >>. matchArmBody)
+    let elseArm = pstring "|" >>. ws >>. elseKeyword >>. ws >>. pstring "->" >>. matchArmBody
+    let multiBranch =
+        pipe2
+            (many1 (attempt (ws >>. conditionArm)))
+            (opt (attempt (ws >>. elseArm)))
+            (fun arms elseOpt ->
+                List.foldBack (fun (head, body) rest -> desugar head body rest) arms (defaultArg elseOpt UnitExpr))
+    let singleBranch =
+        pipe3
+            head
+            (ws >>. pstring "then" >>. keywordEnd >>. branch)
+            (opt (attempt (ws >>. elseKeyword >>. branch)))
+            (fun head thenExpr elseOpt -> desugar head thenExpr (defaultArg elseOpt UnitExpr))
+    pstring "if" >>. keywordEnd >>. ws >>. (multiBranch <|> singleBranch)
     <?> "if expression"
 
 let workflowBindExpr =

@@ -914,7 +914,11 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                 | Error err -> Error err
                 | Ok (elseExprTyped, finalState) ->
                     let resultTy, constrained = joinBranchTypes finalState [ thenExprTyped.Type; elseExprTyped.Type ]
-                    Ok (mkTypedExpr expr resultTy None None None, constrained)
+                    // The condition and branches are kept as statements so that walks over the typed tree (the
+                    // backend's collection of local and pattern-bound types) reach what they bind, such as a
+                    // match in the else branch of a multi-branch if.
+                    let children = [ condExpr; thenExprTyped; elseExprTyped ] |> List.map TypedExprStatement
+                    Ok (mkTypedExpr expr resultTy None (Some children) None, constrained)
     | Match(scrutinees, arms) ->
         let mutable current = state
         let scrutineeResults =
