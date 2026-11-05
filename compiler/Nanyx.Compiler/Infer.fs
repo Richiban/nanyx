@@ -487,7 +487,7 @@ let private joinBranchTypes (rowVars: Set<int>) (state: InferState) (branchTypes
             head, tail |> List.fold (fun st ty -> addConstraint head ty st) state
 
 let private mkTypedExpr expr ty body statements matchArms : TypedExpr =
-    { Expr = expr; Type = ty; Body = body; Statements = statements; MatchArms = matchArms }
+    { Expr = expr; Type = ty; Body = body; Statements = statements; MatchArms = matchArms; Arguments = None }
 
 /// The fields of a record type, looking through a nominal wrapper. Member access and `with` need a record's
 /// fields while inference is still running, so a type that is still a variable here (a call's result, or a
@@ -765,9 +765,8 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                             | Error err -> Error err)
                     let errors = argResults |> List.choose (function Error err -> Some err | _ -> None) |> List.concat
                     if errors.IsEmpty then
-                        let argTys =
-                            argResults
-                            |> List.choose (function Ok typedExpr -> Some typedExpr.Type | _ -> None)
+                        let typedArgs = argResults |> List.choose (function Ok typedExpr -> Some typedExpr | _ -> None)
+                        let argTys = typedArgs |> List.map (fun typedExpr -> typedExpr.Type)
                         // When the callee's type is already a function (an annotated or already-inferred
                         // def), its return type is the call's type directly, so a member access or match on
                         // the result can see it without waiting for the constraint below to be solved.
@@ -779,7 +778,7 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                         let inputTy = inputTypeFromArgs argTys
                         let withFuncConstraint = addConstraint funcTy (TyFunc(expectedInput, retTy)) nextState2
                         let withAssignable = addAssignableConstraint inputTy expectedInput withFuncConstraint
-                        Ok (mkTypedExpr expr retTy None None None, withAssignable)
+                        Ok ({ mkTypedExpr expr retTy None None None with Arguments = Some typedArgs }, withAssignable)
                     else
                         Error errors
             | None ->
