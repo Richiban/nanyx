@@ -86,8 +86,9 @@ internal static class CliCommands
     /// <summary>
     /// Run the Nanyx language server over standard input and output (for editors; see compiler/README.md).
     /// </summary>
+    /// <param name="stdio">Accepted and ignored: stdio is the only transport, but LSP clients conventionally pass it.</param>
     [Consolo("lsp")]
-    public static void Lsp()
+    public static void Lsp([Consolo("stdio")] bool stdio = false)
     {
         Nanyx.LanguageServer.NanyxLanguageServer.RunStdioAsync().GetAwaiter().GetResult();
     }

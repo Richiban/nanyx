@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind } from "vscode-languageclient/node";
+import { LanguageClient, LanguageClientOptions, ServerOptions } from "vscode-languageclient/node";
 import { downloadCompiler, locateCompiler, readSettings } from "./compiler";
 
 const COMMAND_DOWNLOAD = "nanyx.downloadCompiler";
@@ -90,9 +90,10 @@ async function promptAndDownload(context: vscode.ExtensionContext): Promise<stri
 async function restartClient(context: vscode.ExtensionContext, executable: string): Promise<void> {
   await stopClient();
 
+  // No `transport`: stdio is the default, and naming it makes the client append `--stdio` to the args.
   const serverOptions: ServerOptions = {
-    run: { command: executable, args: ["lsp"], transport: TransportKind.stdio },
-    debug: { command: executable, args: ["lsp"], transport: TransportKind.stdio }
+    run: { command: executable, args: ["lsp"] },
+    debug: { command: executable, args: ["lsp"] }
   };
 
   const clientOptions: LanguageClientOptions = {
