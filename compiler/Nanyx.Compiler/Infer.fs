@@ -443,11 +443,21 @@ let private instantiate (state: InferState) (scheme: TypeScheme) : Ty * InferSta
 /// annotation. Same-named tags unify their payloads, so `#some(1)` against `#some("a")` is still an
 /// error. If any branch is not a tag, the branches have to agree as before: every later branch is
 /// constrained equal to the first.
-let private joinBranchTypes (state: InferState) (branchTypes: Ty list) : Ty * InferState =
+///
+/// `rowVars` are the rest variables of the tag unions being matched on. A branch of one of those types
+/// (a catch-all arm returning what it caught) joins the union as its rest, so
+/// `| #some(a), f -> #some(f(a)) | other, _ -> other` is `#some(b) | r`.
+let private joinBranchTypes (rowVars: Set<int>) (state: InferState) (branchTypes: Ty list) : Ty * InferState =
+    let isUnionItem ty =
+        match ty with
+        | TyTag _ -> true
+        | TyVar v -> rowVars.Contains v.Id
+        | _ -> false
     let tagsOf ty =
         match ty with
         | TyTag _ -> Some [ ty ]
-        | TyUnion items when items |> List.forall (function TyTag _ -> true | _ -> false) -> Some items
+        | TyVar v when rowVars.Contains v.Id -> Some [ ty ]
+        | TyUnion items when items |> List.forall isUnionItem -> Some items
         | _ -> None
     match branchTypes with
     | [] -> TyPrimitive "unit", state
@@ -455,15 +465,21 @@ let private joinBranchTypes (state: InferState) (branchTypes: Ty list) : Ty * In
         let branchTags = branchTypes |> List.map tagsOf
         if branchTags |> List.forall Option.isSome then
             // Merge in order of first appearance; an existing tag of the same name unifies with the new one.
+            // A union has one rest, so a second rest variable is unified with the first.
+            let items = branchTags |> List.choose id |> List.concat
+            let tags = items |> List.filter (function TyTag _ -> true | _ -> false)
+            let rests = items |> List.filter (function TyVar _ -> true | _ -> false) |> List.distinct
             let merged, nextState =
-                branchTags
-                |> List.choose id
-                |> List.concat
+                tags
                 |> List.fold (fun (acc: Ty list, st) tag ->
                     let name = match tag with TyTag(n, _) -> n | _ -> ""
                     match acc |> List.tryFind (function TyTag(n, _) -> n = name | _ -> false) with
                     | Some existing -> acc, addConstraint existing tag st
                     | None -> acc @ [ tag ], st) ([], state)
+            let merged, nextState =
+                match rests with
+                | [] -> merged, nextState
+                | rest :: others -> merged @ [ rest ], others |> List.fold (fun st other -> addConstraint rest other st) nextState
             match merged with
             | [ single ] -> single, nextState
             | items -> TyUnion items, nextState
@@ -929,7 +945,7 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                 match inferExpr env nextState elseExpr with
                 | Error err -> Error err
                 | Ok (elseExprTyped, finalState) ->
-                    let resultTy, constrained = joinBranchTypes finalState [ thenExprTyped.Type; elseExprTyped.Type ]
+                    let resultTy, constrained = joinBranchTypes Set.empty finalState [ thenExprTyped.Type; elseExprTyped.Type ]
                     // The condition and branches are kept as statements so that walks over the typed tree (the
                     // backend's collection of local and pattern-bound types) reach what they bind, such as a
                     // match in the else branch of a multi-branch if.
@@ -1258,13 +1274,53 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                             else
                                 None)
                 |> List.choose id
-            for (patterns, expr) in arms do
+            // A tag that an earlier arm handles in full (its payload and every other position are catch-alls)
+            // cannot reach a later arm, so a name bound by a catch-all in a later arm has the scrutinee's union
+            // without those tags; with only the rest left, it has the rest's type. That is what lets
+            // `| #some(a), f -> #some(f(a)) | other, _ -> other` be `(#some(a) | r), (a -> b) -> (#some(b) | r)`.
+            let tagsHandledBefore armIndex index =
+                arms
+                |> List.take armIndex
+                |> List.choose (fun (patterns, _) ->
+                    let othersCatchAll =
+                        patterns |> List.indexed |> List.forall (fun (i, pat) -> i = index || isCatchAllPattern pat)
+                    match List.tryItem index patterns with
+                    | Some (TagPattern(tagName, payloadOpt)) when othersCatchAll && payloadOpt |> Option.forall isCatchAllPattern ->
+                        Some tagName
+                    | _ -> None)
+                |> Set.ofList
+            let restRowTy index =
+                match scrutineeOverrides |> Map.tryFind index with
+                | Some (TyUnion items) -> items |> List.tryPick (function TyVar _ as rest -> Some rest | _ -> None)
+                | _ -> None
+            let catchAllBindingTy armIndex index =
+                match scrutineeOverrides |> Map.tryFind index, restRowTy index with
+                | Some (TyUnion items), Some _ ->
+                    let handled = tagsHandledBefore armIndex index
+                    if handled.IsEmpty then
+                        None
+                    else
+                        match items |> List.filter (function TyTag(name, _) -> not (handled.Contains name) | _ -> true) with
+                        | [ single ] -> Some single
+                        | remaining -> Some (TyUnion remaining)
+                | _ -> None
+            let rowVars =
+                scrutineeTypes
+                |> List.indexed
+                |> List.choose (fun (index, _) -> restRowTy index)
+                |> List.choose (function TyVar v -> Some v.Id | _ -> None)
+                |> Set.ofList
+            for (armIndex, (patterns, expr)) in List.indexed arms do
                 if errors.IsEmpty then
                     let mutable env' = env
                     let mutable state' = current
                     let effectiveScrutineeTypes =
                         scrutineeTypes
-                        |> List.mapi (fun idx ty -> scrutineeOverrides |> Map.tryFind idx |> Option.defaultValue ty)
+                        |> List.mapi (fun idx ty ->
+                            match List.tryItem idx patterns with
+                            | Some (IdentifierPattern _) when (catchAllBindingTy armIndex idx).IsSome ->
+                                (catchAllBindingTy armIndex idx).Value
+                            | _ -> scrutineeOverrides |> Map.tryFind idx |> Option.defaultValue ty)
                     let patternPairs = List.zip patterns effectiveScrutineeTypes
                     let mutable typedPatterns: TypedPattern list = []
                     for (pattern, scrutineeTy) in patternPairs do
@@ -1316,7 +1372,7 @@ let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) 
                         Error exhaustivenessErrors
                     else
                     let armTypes = armExprs |> List.rev |> List.map (fun typedExpr -> typedExpr.Type)
-                    let resultTy, constrained = joinBranchTypes current armTypes
+                    let resultTy, constrained = joinBranchTypes rowVars current armTypes
                     Ok (mkTypedExpr expr resultTy None None (Some typedArms), constrained)
             else
                 Error errors

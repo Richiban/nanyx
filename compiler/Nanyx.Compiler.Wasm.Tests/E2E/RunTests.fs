@@ -894,3 +894,35 @@ let ``Run - a match with no matching arm exits 1 with a runtime error`` () =
     Assert.Equal(1, outcome.ExitCode)
     Assert.Contains("Runtime error", outcome.StandardError)
     Assert.Contains("unreachable", outcome.StandardError)
+
+[<Fact>]
+let ``Run - a tag union rest passes the tags a match does not name through`` () =
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def mapOption\n" +
+        "  : (#some(a) | r), (a -> b) -> (#some(b) | r)\n" +
+        "  = { | #some(a), f -> #some(f(a))\n" +
+        "      | other, _ -> other }\n" +
+        "\n" +
+        "def show: (#some(string) | #notFound | #error) -> string = { | #some(s) -> s\n" +
+        "                                                       | #notFound -> \"notFound\"\n" +
+        "                                                       | #error -> \"error\" }\n" +
+        "\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  def x: (#some(int) | #notFound | #error) = #some(20)\n" +
+        "  def y: (#some(int) | #notFound | #error) = #error\n" +
+        "  println(show(mapOption(x, { n -> \"{n + 1}\" })))\n" +
+        "  println(show(mapOption(y, { n -> \"{n + 1}\" })))\n" +
+        "}\n"
+    runSource source |> assertRan "21\nerror\n"
+
+[<Fact>]
+let ``Run - a function that only calls the closure it is given compiles without making one`` () =
+    let source =
+        "def apply: (int -> int), int -> int = { f, x -> f(x) }\n" +
+        "\n" +
+        "@entry\n" +
+        "def main = { }\n"
+    runSource source |> assertRan ""

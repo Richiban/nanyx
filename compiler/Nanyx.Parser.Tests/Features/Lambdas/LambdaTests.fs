@@ -50,3 +50,10 @@ let ``Parse shorthand-lambdas.nyx file`` () =
                 foundLambda |> should equal true
             | _ -> failwith "Expected lambda or function call with lambda"
     | Result.Error err -> failwith $"Parse failed: {err}"
+
+[<Fact>]
+let ``an empty block is a lambda returning unit`` () =
+    match parseModule "def main = {\n}\ndef noop = { }" with
+    | Result.Ok [ Def (ValueDef (_, "main", None, Lambda ([], UnitExpr))); Def (ValueDef (_, "noop", None, Lambda ([], UnitExpr))) ] -> ()
+    | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
+    | Result.Error err -> failwith $"Parse failed: {err}"

@@ -732,8 +732,35 @@ let ``Typecheck tag union width and rest regression`` () =
     Assert.True(result.Diagnostics.IsEmpty)
     let typed = result.Typed.Value
     match typed.Types.["l2"] with
-    | TyUnion [ TyTag("some", Some (TyPrimitive "int")); TyUnion [ TyTag("nil", None) ] ] -> Assert.True(true)
+    | TyUnion [ TyTag("some", Some (TyPrimitive "int")); TyTag("nil", None) ] -> Assert.True(true)
     | other -> Assert.True(false, $"Unexpected l2 type: %A{other}")
+
+[<Fact>]
+let ``Typecheck binds a catch-all after a tag arm at the union's rest`` () =
+    // `other` cannot be a `#some`, so it is the rest `r`: returning it does not force `a` and `b` together.
+    let source =
+        "def mapOption\n" +
+        "  : (#some(a) | r), (a -> b) -> (#some(b) | r)\n" +
+        "  = { | #some(a), f -> #some(f(a))\n" +
+        "      | other, _ -> other }\n" +
+        "def x: #some(int) | #notFound | #error = #some(1)\n" +
+        "def y = mapOption(x, { n -> \"{n}\" })"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, sprintf "%A" result.Diagnostics)
+    let typed = result.Typed.Value
+    match typed.Types.["mapOption"] with
+    | TyFunc(TyRecord fields, TyUnion [ TyTag("some", Some (TyVar b)); TyVar resultRest ]) ->
+        match fields.["0"], fields.["1"] with
+        | TyUnion [ TyTag("some", Some (TyVar a)); TyVar inputRest ], TyFunc(TyVar fa, TyVar fb) ->
+            Assert.NotEqual(a.Id, b.Id)
+            Assert.Equal(a.Id, fa.Id)
+            Assert.Equal(b.Id, fb.Id)
+            Assert.Equal(inputRest.Id, resultRest.Id)
+        | other -> Assert.True(false, $"Unexpected mapOption parameters: %A{other}")
+    | other -> Assert.True(false, $"Unexpected mapOption type: %A{other}")
+    match typed.Types.["y"] with
+    | TyUnion [ TyTag("some", Some (TyPrimitive "string")); TyTag("error", None); TyTag("notFound", None) ] -> ()
+    | other -> Assert.True(false, $"Unexpected y type: %A{other}")
 
 [<Fact>]
 let ``Desugar workflow bind and return`` () =

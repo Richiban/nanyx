@@ -141,7 +141,14 @@ module Unifier =
             fields |> Map.map (fun _ v -> apply subst v) |> TyRecord
         | TyTag(name, payload) -> TyTag(name, payload |> Option.map (apply subst))
         | TyApply(name, args) -> TyApply(name, args |> List.map (apply subst))
-        | TyUnion items -> TyUnion(items |> List.map (apply subst))
+        // A rest variable solved to a union (`r` := `#notFound`) is spliced into the union it is the rest of.
+        | TyUnion items ->
+            items
+            |> List.collect (fun item ->
+                match apply subst item with
+                | TyUnion inner -> inner
+                | applied -> [ applied ])
+            |> TyUnion
         | TyPrimitive _ -> ty
 
     let rec occurs (varId: int) (ty: Ty) : bool =
