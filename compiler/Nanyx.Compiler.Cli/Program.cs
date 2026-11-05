@@ -20,11 +20,11 @@ internal static class CliCommands
     /// <param name="inputFile">The path to the .nyx file to compile.</param>
     /// <param name="outputPath">Optional output path for generated artifacts.</param>
     [Consolo("parse")]
-    public static void Parse(
+    public static int Parse(
         string inputFile,
         [Consolo("out", Alias = "o")] string? outputPath = null)
     {
-        ExitWith(Execute(inputFile, Target.Parse, outputPath));
+        return Execute(inputFile, Target.Parse, outputPath);
     }
 
     /// <summary>
@@ -33,11 +33,11 @@ internal static class CliCommands
     /// <param name="inputFile">The path to the .nyx file to compile.</param>
     /// <param name="outputPath">Optional output path for generated artifacts.</param>
     [Consolo("check")]
-    public static void Check(
+    public static int Check(
         string inputFile,
         [Consolo("out", Alias = "o")] string? outputPath = null)
     {
-        ExitWith(Execute(inputFile, Target.Check, outputPath));
+        return Execute(inputFile, Target.Check, outputPath);
     }
 
     /// <summary>
@@ -46,11 +46,11 @@ internal static class CliCommands
     /// <param name="inputFile">The path to the .nyx file to compile.</param>
     /// <param name="outputPath">Optional output path for generated artifacts.</param>
     [Consolo("wasm")]
-    public static void Wasm(
+    public static int Wasm(
         string inputFile,
         [Consolo("out", Alias = "o")] string? outputPath = null)
     {
-        ExitWith(Execute(inputFile, Target.Wasm, outputPath));
+        return Execute(inputFile, Target.Wasm, outputPath);
     }
 
     /// <summary>
@@ -59,26 +59,11 @@ internal static class CliCommands
     /// <param name="inputFile">The path to the .nyx file to compile.</param>
     /// <param name="outputPath">Optional output path for generated artifacts.</param>
     [Consolo("run")]
-    public static void Run(
+    public static int Run(
         string inputFile,
         [Consolo("out", Alias = "o")] string? outputPath = null)
     {
-        ExitWith(Execute(inputFile, Target.Run, outputPath));
-    }
-
-    /// <summary>
-    /// Ends the process with <paramref name="code"/> when it is not zero. Consolo's generated entry point
-    /// returns its own exit code after a command runs, ignoring both the command's return value and
-    /// <see cref="Environment.ExitCode"/>, so a failing command has to exit itself.
-    /// </summary>
-    private static void ExitWith(int code)
-    {
-        if (code != 0)
-        {
-            Console.Out.Flush();
-            Console.Error.Flush();
-            Environment.Exit(code);
-        }
+        return Execute(inputFile, Target.Run, outputPath);
     }
 
     /// <summary>
