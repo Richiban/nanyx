@@ -1139,16 +1139,16 @@ let ``Desugar workflow bind and return`` () =
         let desugared = Compiler.desugar ast
         // `async { ... }` is its block, each keyword calling the builder's member through a local of its own.
         match desugared with
-        | [Def (ValueDef(_, "result", _, Kind (Block [ExprStatement expr])))] ->
+        | [Def (ValueDef(_, "result", _, Kind (Block [Kind (ExprStatement expr)])))] ->
             match expr.Kind with
             | Block [
-                DefStatement(_, awaitLocal, None, Kind (MemberAccess(Kind (IdentifierExpr "async"), "await", _)))
-                ExprStatement (Kind (FunctionCall(awaitCall, _, [ Kind (FunctionCall("foo", _, [])); Kind (Lambda([("x", None)], continuation)) ])))
+                Kind (DefStatement(_, awaitLocal, None, Kind (MemberAccess(Kind (IdentifierExpr "async"), "await", _))))
+                Kind (ExprStatement (Kind (FunctionCall(awaitCall, _, [ Kind (FunctionCall("foo", _, [])); Kind (Lambda([("x", None)], continuation)) ]))))
               ] when awaitCall = awaitLocal ->
                 match continuation.Kind with
                 | Block [
-                    DefStatement(_, returnLocal, None, Kind (MemberAccess(Kind (IdentifierExpr "async"), "return", _)))
-                    ExprStatement (Kind (FunctionCall(returnCall, _, [ Kind (MemberAccess(Kind (IdentifierExpr "x"), "y", _)) ])))
+                    Kind (DefStatement(_, returnLocal, None, Kind (MemberAccess(Kind (IdentifierExpr "async"), "return", _))))
+                    Kind (ExprStatement (Kind (FunctionCall(returnCall, _, [ Kind (MemberAccess(Kind (IdentifierExpr "x"), "y", _)) ]))))
                   ] when returnCall = returnLocal -> ()
                 | other -> Assert.True(false, $"Unexpected workflow continuation: %A{other}")
             | other -> Assert.True(false, $"Unexpected workflow desugar: %A{other}")
@@ -1165,7 +1165,7 @@ let ``Desugar workflow implicit return`` () =
     | Result.Ok ast ->
         let desugared = Compiler.desugar ast
         match desugared with
-        | [Def (ValueDef(_, "result", _, Kind (FunctionCall("async", _, [Kind (Lambda([], Kind (Block [ExprStatement (Kind (LiteralExpr (IntLit 1)))])))]))))] ->
+        | [Def (ValueDef(_, "result", _, Kind (FunctionCall("async", _, [Kind (Lambda([], Kind (Block [Kind (ExprStatement (Kind (LiteralExpr (IntLit 1))))])))]))))] ->
             Assert.True(true)
         | other -> Assert.True(false, $"Unexpected desugared module: %A{other}")
 
@@ -1255,8 +1255,8 @@ let ``A try nested in an expression of a proc block is bound before its statemen
             | Block statements ->
                 statements
                 |> List.collect (function
-                    | DefStatement(_, _, _, value)
-                    | ExprStatement value -> boundCalls value
+                    | Kind (DefStatement(_, _, _, value))
+                    | Kind (ExprStatement value) -> boundCalls value
                     | _ -> [])
             | FunctionCall(_, _, [ Kind (FunctionCall("f", _, [ argument ])); Kind (Lambda(_, rest)) ]) ->
                 argument :: boundCalls rest

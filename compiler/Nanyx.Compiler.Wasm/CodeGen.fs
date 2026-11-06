@@ -787,7 +787,7 @@ let rec private collectExprLocalNames (expr: Expression) : string list =
     | IdentifierExpr _ -> []
 
 and private collectStatementLocalNames (statements: Statement list) : string list =
-    statements
+    statements |> List.map _.Kind
     |> List.collect (function
         | DefStatement(_, name, _, rhs) -> name :: collectExprLocalNames rhs
         | ExprStatement expr -> collectExprLocalNames expr
@@ -831,7 +831,7 @@ let rec private collectPayloadLocalsExpr (expr: Expression) =
     | Lambda(_, body) -> collectPayloadLocalsExpr body
     | Pipe(value, _, _, args) -> List.append (collectPayloadLocalsExpr value) (args |> List.collect collectPayloadLocalsExpr)
     | Block statements ->
-        statements |> List.collect (function
+        statements |> List.map _.Kind |> List.collect (function
             | DefStatement(_, _, _, rhs) -> collectPayloadLocalsExpr rhs
             | ExprStatement value -> collectPayloadLocalsExpr value
             | _ -> [])
@@ -1146,7 +1146,7 @@ let rec private tryGetExprTypeName (env: TranspileEnv) (expr: Expression) =
         tryGetExprTypeName env thenExpr |> Option.orElseWith (fun () -> tryGetExprTypeName env elseExpr)
     | Block statements ->
         match List.tryLast statements with
-        | Some (ExprStatement last) -> tryGetExprTypeName env last
+        | Some (Kind (ExprStatement last)) -> tryGetExprTypeName env last
         | _ -> None
     | _ -> fromInferredType ()
 
@@ -1164,7 +1164,7 @@ let private exprChildren (expr: Expression) : Expression list =
     | InterpolatedString parts ->
         parts |> List.choose (function StringExpr value -> Some value | StringText _ -> None)
     | Block statements ->
-        statements
+        statements |> List.map _.Kind
         |> List.choose (function
             | DefStatement(_, _, _, rhs) -> Some rhs
             | ExprStatement value -> Some value
@@ -1267,7 +1267,7 @@ let rec private countMatchExpressions (expr: Expression) : int =
     | Lambda(_, body) -> countMatchExpressions body
     | Pipe(value, _, _, args) -> countMatchExpressions value + (args |> List.sumBy countMatchExpressions)
     | Block statements ->
-        statements
+        statements |> List.map _.Kind
         |> List.sumBy (function
             | DefStatement(_, _, _, rhs) -> countMatchExpressions rhs
             | ExprStatement value -> countMatchExpressions value
@@ -1313,7 +1313,7 @@ and countMatchArity (expr: Expression) : int =
     | Lambda(_, body) -> countMatchArity body
     | Pipe(value, _, _, args) -> max (countMatchArity value) (args |> List.map countMatchArity |> maxOrZero)
     | Block statements ->
-        statements
+        statements |> List.map _.Kind
         |> List.map (function
             | DefStatement(_, _, _, rhs) -> countMatchArity rhs
             | ExprStatement value -> countMatchArity value
@@ -1383,7 +1383,7 @@ let rec private existsExpr (predicate: Expression -> bool) (expr: Expression) : 
        | IdentifierExpr _ -> false
 
 and private existsStatements (predicate: Expression -> bool) (statements: Statement list) : bool =
-    statements
+    statements |> List.map _.Kind
     |> List.exists (function
         | DefStatement(_, _, _, rhs) -> existsExpr predicate rhs
         | ExprStatement expr -> existsExpr predicate expr
@@ -1429,7 +1429,7 @@ let rec private containsDbgCallExpr (expr: Expression) : bool =
     | IdentifierExpr _ -> false
 
 and private containsDbgCallStatements (statements: Statement list) : bool =
-    statements
+    statements |> List.map _.Kind
     |> List.exists (function
         | DefStatement(_, _, _, rhs) -> containsDbgCallExpr rhs
         | ExprStatement expr -> containsDbgCallExpr expr
@@ -1466,7 +1466,7 @@ let rec private usesHeapAllocationExpr (expr: Expression) : bool =
     | IdentifierExpr _ -> false
 
 and private usesHeapAllocationStatements (statements: Statement list) : bool =
-    statements
+    statements |> List.map _.Kind
     |> List.exists (function
         | DefStatement(_, _, _, rhs) -> usesHeapAllocationExpr rhs
         | ExprStatement expr -> usesHeapAllocationExpr expr
@@ -1582,7 +1582,7 @@ and private collectStringLiteralsPattern (pattern: Pattern) : string list =
     | ElsePattern -> []
 
 and private collectStringLiteralsStatements (statements: Statement list) : string list =
-    statements
+    statements |> List.map _.Kind
     |> List.collect (function
         | DefStatement(_, _, _, rhs) -> collectStringLiteralsExpr rhs
         | ExprStatement expr -> collectStringLiteralsExpr expr
@@ -1591,7 +1591,7 @@ and private collectStringLiteralsStatements (statements: Statement list) : strin
         | UseStatement _ -> [])
 
 and private collectDbgTagNamesStatements (statements: Statement list) : string list =
-    statements
+    statements |> List.map _.Kind
     |> List.collect (function
         | DefStatement(_, _, _, value) -> collectDbgTagNamesExpr value
         | ExprStatement value -> collectDbgTagNamesExpr value
@@ -1645,7 +1645,7 @@ let rec private collectDbgTagPayloadNamesExpr (expr: Expression) : string list =
     | IdentifierExpr _ -> []
 
 and private collectDbgTagPayloadNamesStatements (statements: Statement list) : string list =
-    statements
+    statements |> List.map _.Kind
     |> List.collect (function
         | DefStatement(_, _, _, value) -> collectDbgTagPayloadNamesExpr value
         | ExprStatement value -> collectDbgTagPayloadNamesExpr value
@@ -1714,7 +1714,7 @@ and private containsDbgStringLiteralExpr (expr: Expression) : bool =
         containsDbgStringLiteralExpr cond || containsDbgStringLiteralExpr thenExpr || containsDbgStringLiteralExpr elseExpr
     | Lambda(_, body) -> containsDbgStringLiteralExpr body
     | Pipe(value, _, _, args) -> containsDbgStringLiteralExpr value || (args |> List.exists containsDbgStringLiteralExpr)
-    | Block statements -> statements |> List.exists (function
+    | Block statements -> statements |> List.map _.Kind |> List.exists (function
         | DefStatement(_, _, _, rhs) -> containsDbgStringLiteralExpr rhs
         | ExprStatement expr -> containsDbgStringLiteralExpr expr
         | ImportStatement _
@@ -1747,7 +1747,7 @@ and private containsDbgStringLiteralExpr (expr: Expression) : bool =
     | IdentifierExpr _ -> false
 
 and private containsRegularDbgStatements (statements: Statement list) : bool =
-    statements
+    statements |> List.map _.Kind
     |> List.exists (function
         | DefStatement(_, _, _, value) -> containsRegularDbgExpr value
         | ExprStatement value -> containsRegularDbgExpr value
@@ -1798,7 +1798,7 @@ let rec private collectTagNamesExpr (expr: Expression) : string list =
     | IdentifierExpr _ -> []
 
 and private collectTagNamesStatements (statements: Statement list) : string list =
-    statements
+    statements |> List.map _.Kind
     |> List.collect (function
         | DefStatement(_, _, _, value) -> collectTagNamesExpr value
         | ExprStatement value -> collectTagNamesExpr value
@@ -2712,7 +2712,7 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
             | ImportStatement _ :: _
             | TypeDefStatement _ :: _ ->
                 failwith "Unsupported statement form for WASM MVP backend"
-        transpileStatements env statements
+        transpileStatements env (statements |> List.map _.Kind)
     | _ ->
         failwith $"Unsupported expression for WASM MVP backend: {expr}"
 
@@ -2757,7 +2757,7 @@ module private LambdaLifting =
         | LiteralExpr _ -> []
 
     and private referencedNamesStatement (statement: Statement) : string list =
-        match statement with
+        match statement.Kind with
         | DefStatement(_, _, _, rhs) -> referencedNames rhs
         | ExprStatement value -> referencedNames value
         | UseStatement binding -> referencedNamesBinding binding
@@ -2809,7 +2809,7 @@ module private LambdaLifting =
         match expr.Kind with
         | Lambda(args, body) -> (args |> List.map fst) @ boundNames body
         | Block statements ->
-            statements
+            statements |> List.map _.Kind
             |> List.collect (function
                 | DefStatement(_, name, _, rhs) -> name :: boundNames rhs
                 | ExprStatement value -> boundNames value
@@ -2865,10 +2865,11 @@ module private LambdaLifting =
         | IfExpr(cond, thenExpr, elseExpr) -> rebuild (IfExpr(recur cond, recur thenExpr, recur elseExpr))
         | Block statements ->
             statements
-            |> List.map (function
-                | DefStatement(isExport, name, typeOpt, rhs) -> DefStatement(isExport, name, typeOpt, recur rhs)
-                | ExprStatement value -> ExprStatement(recur value)
-                | other -> other)
+            |> List.map (fun statement ->
+                match statement.Kind with
+                | DefStatement(isExport, name, typeOpt, rhs) -> { statement with Kind = DefStatement(isExport, name, typeOpt, recur rhs) }
+                | ExprStatement value -> { statement with Kind = ExprStatement(recur value) }
+                | _ -> statement)
             |> Block
             |> rebuild
         | Match(values, arms) -> rebuild (Match(values |> List.map recur, arms |> List.map (fun (patterns, body) -> patterns, recur body)))
@@ -3010,12 +3011,12 @@ module private LambdaLifting =
             let captureBindings =
                 captured
                 |> List.mapi (fun index name ->
-                    DefStatement(false, name, None, Expression.synthetic (MemberAccess(Expression.synthetic (IdentifierExpr envParameter), string (index + 1), None))))
+                    Statement.synthetic (DefStatement(false, name, None, Expression.synthetic (MemberAccess(Expression.synthetic (IdentifierExpr envParameter), string (index + 1), None)))))
             let bodyWithCaptures =
                 match captureBindings, body.Kind with
                 | [], _ -> body
                 | _, Block statements -> { body with Kind = Block (captureBindings @ statements) }
-                | _, _ -> Expression.from body (Block (captureBindings @ [ ExprStatement body ]))
+                | _, _ -> Expression.from body (Block (captureBindings @ [ Statement.from body (ExprStatement body) ]))
             Expression.from lambda (Lambda((envParameter, None) :: args, bodyWithCaptures))
 
         // `scope` is every name the enclosing function binds; a lambda referring to one of them captures it.
@@ -3041,13 +3042,13 @@ module private LambdaLifting =
                 let localRecords =
                     statements
                     |> List.choose (function
-                        | DefStatement(_, name, _, Kind (RecordExpr fields)) -> Some (name, fields)
+                        | Kind (DefStatement(_, name, _, Kind (RecordExpr fields))) -> Some (name, fields)
                         | _ -> None)
                     |> Map.ofList
                 let usedRecords =
                     statements
                     |> List.choose (function
-                        | UseStatement(UseValue(Kind (IdentifierExpr name))) when localRecords.ContainsKey name -> Some name
+                        | Kind (UseStatement(UseValue(Kind (IdentifierExpr name)))) when localRecords.ContainsKey name -> Some name
                         | _ -> None)
                     |> Set.ofList
                 // A lambda bound to a context member is a function even with no parameters.
@@ -3056,7 +3057,9 @@ module private LambdaLifting =
                     | Lambda(args, body) -> liftLambda scope value (annotateFromMemberType (memberType contextType memberName) args) body
                     | _ -> recur value
                 statements
-                |> List.collect (function
+                |> List.collect (fun statement ->
+                    let keep kind = { statement with Kind = kind }
+                    match statement.Kind with
                     // `rec name = { ... }`: a local function that calls itself. It is lifted under a fresh
                     // name with its self-references redirected there (a self-call passes the environment on),
                     // and the local is bound to its closure.
@@ -3072,9 +3075,9 @@ module private LambdaLifting =
                             |> Set.toList
                         lifted.Add(Def (ValueDef(false, liftedName, None, liftedLambda lambda args captured liftedBody)))
                         origins.[liftedName] <- { Owner = owner; LocalName = Some name; Captured = captured; Source = None }
-                        [ DefStatement(isExport, name, None, closureOf lambda liftedName captured) ]
+                        [ keep (DefStatement(isExport, name, None, closureOf lambda liftedName captured)) ]
                     | DefStatement(isExport, name, typeOpt, Kind (FunctionCall("__rec", _, [ rhs ]))) ->
-                        [ DefStatement(isExport, name, typeOpt, recur rhs) ]
+                        [ keep (DefStatement(isExport, name, typeOpt, recur rhs)) ]
                     // A record a `use` binds below: its fields are context members.
                     | DefStatement(isExport, name, typeOpt, (Kind (RecordExpr fields) as record)) when usedRecords.Contains name ->
                         let fields =
@@ -3082,10 +3085,10 @@ module private LambdaLifting =
                             |> List.map (function
                                 | NamedField(memberName, value) -> NamedField(memberName, liftMember None memberName value)
                                 | PositionalField value -> PositionalField(recur value))
-                        [ DefStatement(isExport, name, typeOpt, { record with Kind = RecordExpr fields }) ]
-                    | DefStatement(isExport, name, typeOpt, rhs) -> [ DefStatement(isExport, name, typeOpt, recur rhs) ]
-                    | ExprStatement value -> [ ExprStatement(recur value) ]
-                    | UseStatement binding as statement ->
+                        [ keep (DefStatement(isExport, name, typeOpt, { record with Kind = RecordExpr fields })) ]
+                    | DefStatement(isExport, name, typeOpt, rhs) -> [ keep (DefStatement(isExport, name, typeOpt, recur rhs)) ]
+                    | ExprStatement value -> [ keep (ExprStatement(recur value)) ]
+                    | UseStatement binding ->
                         let namedFields (fields: RecordField list) =
                             fields |> List.choose (function NamedField(name, value) -> Some (name, value) | PositionalField _ -> None)
                         let contextType, bindings =
@@ -3107,9 +3110,9 @@ module private LambdaLifting =
                                     let local = $"__use_{sanitizeIdentifier key}_{counter}"
                                     counter <- counter + 1
                                     key, local, liftMember contextType memberName value)
-                            [ yield! locals |> List.map (fun (_, local, value) -> DefStatement(false, local, None, value))
-                              UseStatement(UseValue(Expression.synthetic (RecordExpr(locals |> List.map (fun (key, local, _) -> NamedField(key, Expression.synthetic (IdentifierExpr local))))))) ]
-                    | other -> [ other ])
+                            [ yield! locals |> List.map (fun (_, local, value) -> Statement.from value (DefStatement(false, local, None, value)))
+                              keep (UseStatement(UseValue(Expression.synthetic (RecordExpr(locals |> List.map (fun (key, local, _) -> NamedField(key, Expression.synthetic (IdentifierExpr local)))))))) ]
+                    | ImportStatement _ | TypeDefStatement _ -> [ statement ])
                 |> Block
                 |> rebuild
             | Match(values, arms) -> rebuild (Match(values |> List.map recur, arms |> List.map (fun (patterns, body) -> patterns, recur body)))
@@ -3715,7 +3718,7 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                 [ yield! (localNames |> List.map (fun localName -> localMap.[localName]))
                   yield! matchTempNames
                   yield! payloadLocalNames
-                  yield! interpolationLocalsFor (Expression.synthetic (Block (topLevelExprs |> List.map ExprStatement)))
+                  yield! interpolationLocalsFor (Expression.synthetic (Block (topLevelExprs |> List.map (fun expr -> Statement.from expr (ExprStatement expr)))))
                   yield! (topLevelExprs |> List.collect (collectForLoopLocals 0))
                   match dbgLocalName with
                   | Some name -> yield name

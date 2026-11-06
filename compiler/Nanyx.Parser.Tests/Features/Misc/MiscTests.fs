@@ -10,8 +10,8 @@ let ``try applied to a value is a workflow bind`` () =
     match parseModule "def f = proc {\n  def a = try g(1)\n  return a\n}\n" with
     | Result.Ok [ Def (ValueDef (_, "f", None, Kind (FunctionCall ("proc", _, [ Kind (Lambda ([], Kind (Block statements))) ])))) ] ->
         match statements with
-        | [ DefStatement (_, "a", None, Kind (WorkflowBindExpr ("try", Kind (FunctionCall ("g", _, _)))))
-            ExprStatement (Kind (WorkflowReturnExpr (Kind (IdentifierExpr "a")))) ] -> ()
+        | [ Kind (DefStatement (_, "a", None, Kind (WorkflowBindExpr ("try", Kind (FunctionCall ("g", _, _))))))
+            Kind (ExprStatement (Kind (WorkflowReturnExpr (Kind (IdentifierExpr "a"))))) ] -> ()
         | other -> failwith $"Unexpected statements: %A{other}"
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
     | Result.Error err -> failwith $"Parse failed: {err}"
@@ -21,7 +21,7 @@ let ``try can be applied inside an expression, and takes in the rest of it`` () 
     match parseModule "def f = proc {\n  return R(a = try g(1) \\h, b = 2)\n}\n" with
     | Result.Ok [ Def (ValueDef (_, "f", None, Kind (FunctionCall ("proc", _, [ Kind (Lambda ([], body)) ])))) ] ->
         match body.Kind with
-        | Block [ ExprStatement (Kind (WorkflowReturnExpr (Kind (FunctionCall ("R", _, [ Kind (RecordExpr fields) ]))))) ] ->
+        | Block [ Kind (ExprStatement (Kind (WorkflowReturnExpr (Kind (FunctionCall ("R", _, [ Kind (RecordExpr fields) ])))))) ] ->
             match fields with
             | [ NamedField ("a", Kind (WorkflowBindExpr ("try", Kind (Pipe (_, "h", _, []))))); NamedField ("b", _) ] -> ()
             | other -> failwith $"Unexpected fields: %A{other}"

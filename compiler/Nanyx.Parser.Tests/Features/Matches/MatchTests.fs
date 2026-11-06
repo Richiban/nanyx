@@ -42,7 +42,7 @@ let ``An or-pattern arm becomes one arm per alternative`` () =
         "    | _ -> \"weekday\"\n" +
         "}"
     match parseModule source with
-    | Result.Ok [ Def (ValueDef (_, "f", _, Kind (Lambda (_, Kind (Block [ ExprStatement (Kind (Match (_, arms))) ]))))) ] ->
+    | Result.Ok [ Def (ValueDef (_, "f", _, Kind (Lambda (_, Kind (Block [ Kind (ExprStatement (Kind (Match (_, arms)))) ]))))) ] ->
         let patterns = arms |> List.map (fst >> List.map (fun pattern -> pattern.Kind))
         patterns |> should equal [ [ LiteralPattern (StringLit "Sat") ]; [ LiteralPattern (StringLit "Sun") ]; [ WildcardPattern ] ]
         // Both alternatives share the same body.
@@ -60,7 +60,7 @@ let ``An or-pattern may put each alternative on its own line`` () =
         "    | _ -> 0\n" +
         "}"
     match parseModule source with
-    | Result.Ok [ Def (ValueDef (_, "f", _, Kind (Lambda (_, Kind (Block [ ExprStatement (Kind (Match (_, arms))) ]))))) ] ->
+    | Result.Ok [ Def (ValueDef (_, "f", _, Kind (Lambda (_, Kind (Block [ Kind (ExprStatement (Kind (Match (_, arms)))) ]))))) ] ->
         arms
         |> List.map (fst >> List.map (fun pattern -> pattern.Kind))
         |> should equal [ [ TagPattern ("sat", None) ]; [ TagPattern ("sun", None) ]; [ WildcardPattern ] ]
@@ -70,7 +70,7 @@ let ``An or-pattern may put each alternative on its own line`` () =
 /// The scrutinees of the one match in `def f = { x -> <body> }`, or the parse error.
 let private scrutineesOf (body: string) =
     match parseModule ("def f = { x ->\n" + body + "\n}") with
-    | Result.Ok [ Def (ValueDef (_, "f", _, Kind (Lambda (_, Kind (Block [ ExprStatement (Kind (Match (scrutinees, _))) ]))))) ] ->
+    | Result.Ok [ Def (ValueDef (_, "f", _, Kind (Lambda (_, Kind (Block [ Kind (ExprStatement (Kind (Match (scrutinees, _)))) ]))))) ] ->
         Result.Ok scrutinees
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
     | Result.Error err -> Result.Error err
@@ -96,7 +96,7 @@ let ``A scrutinee may be a block indented more than the match and its arms`` () 
         "    | [a, b] -> a\n" +
         "    | _ -> \"\""
     match scrutineesOf body with
-    | Result.Ok [ Kind (Block [ DefStatement _; ExprStatement (Kind (Pipe (_, "split", _, _))) ]) ] -> ()
+    | Result.Ok [ Kind (Block [ Kind (DefStatement _); Kind (ExprStatement (Kind (Pipe (_, "split", _, _)))) ]) ] -> ()
     | other -> failwith $"Unexpected scrutinees: %A{other}"
 
 [<Fact>]
@@ -116,7 +116,7 @@ let ``A block scrutinee is measured against the match line, not the match keywor
         "  n\n" +
         "}"
     match parseModule source with
-    | Result.Ok [ Def (ValueDef (_, "f", _, Kind (Lambda (_, Kind (Block [ DefStatement (_, _, _, Kind (Match ([ Kind (Pipe _) ], _))); _ ]))))) ] -> ()
+    | Result.Ok [ Def (ValueDef (_, "f", _, Kind (Lambda (_, Kind (Block [ Kind (DefStatement (_, _, _, Kind (Match ([ Kind (Pipe _) ], _)))); _ ]))))) ] -> ()
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
     | Result.Error err -> failwith $"Parse failed: {err}"
 

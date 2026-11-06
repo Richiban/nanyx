@@ -34,9 +34,10 @@ only then design the public contract that Nanyx-authored analyzers will be writt
 
 ## Where the compiler is today
 
-- **Spans cover expressions and patterns** ([#96](https://github.com/nanyx-lang/nanyx/issues/96)). Every
-  expression, pattern and import has a `SourceSpan`, expressions and patterns have a `NodeId`, and declarations'
-  names are kept beside the tree (below). Statements, type expressions and top-level items have none yet.
+- **Spans cover expressions, patterns and statements** ([#96](https://github.com/nanyx-lang/nanyx/issues/96)).
+  Every expression, pattern, statement and import has a `SourceSpan`, expressions, patterns and statements have a
+  `NodeId`, and declarations' names are kept beside the tree (below). Type expressions and top-level items have
+  none yet.
 - **Diagnostics are structured** ([#97](https://github.com/nanyx-lang/nanyx/issues/97)). `Diagnostic` is the
   record in [section 2](#2-structured-diagnostics), every compiler error has a code from the table in
   `Diagnostics.fs`, and each is created with the span of the node it is about, in that node's file, so a

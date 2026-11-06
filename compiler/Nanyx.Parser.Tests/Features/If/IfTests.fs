@@ -52,9 +52,9 @@ let ``multi-branch if arms may test patterns with is, and a missing else is unit
         "       0\n" +
         "}\n"
     match parseModule source with
-    | Result.Ok [ Def (ValueDef (_, "x", _, Kind (Lambda (_, Kind (Block [ ExprStatement (Kind (Match ([ Kind (FunctionCall _) ],
+    | Result.Ok [ Def (ValueDef (_, "x", _, Kind (Lambda (_, Kind (Block [ Kind (ExprStatement (Kind (Match ([ Kind (FunctionCall _) ],
                                                                                 [ [ Kind (TagPattern ("some", Some (Kind (IdentifierPattern "i")))) ], Kind (IdentifierExpr "i")
-                                                                                  [ Kind WildcardPattern ], Kind (IfExpr (Kind (BinaryOp ("==", _, _)), _, Kind UnitExpr)) ]))) ]))))) ] -> ()
+                                                                                  [ Kind WildcardPattern ], Kind (IfExpr (Kind (BinaryOp ("==", _, _)), _, Kind UnitExpr)) ])))) ]))))) ] -> ()
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
     | Result.Error err -> failwith $"Parse failed: {err}"
 

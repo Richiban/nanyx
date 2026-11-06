@@ -117,6 +117,33 @@ and PatternKind =
     | GuardPattern of string * Expression  // operator (>, <, >=, <=, ==, !=) and value
     | TagPattern of Identifier * Pattern option  // #tagName or #tagName(pattern)
 
+/// A statement in a block and where it came from. Like `Expression`, equality and comparison look only at `Kind`,
+/// and it is printed (`%A`) as its kind alone. Like `Pattern`, it is declared before `Expression`.
+and [<CustomEquality; CustomComparison; StructuredFormatDisplay("{Kind}")>] Statement =
+    { Kind: StatementKind
+      Span: SourceSpan
+      Id: NodeId }
+
+    override this.Equals(other) =
+        match other with
+        | :? Statement as statement -> this.Kind = statement.Kind
+        | _ -> false
+
+    override this.GetHashCode() = hash this.Kind
+
+    interface IComparable with
+        member this.CompareTo(other) =
+            match other with
+            | :? Statement as statement -> compare this.Kind statement.Kind
+            | _ -> invalidArg "other" "a Statement can only be compared with another Statement"
+
+and StatementKind =
+    | DefStatement of bool * Identifier * TypeExpr option * Expression
+    | TypeDefStatement of Identifier * TypeDefModifier list * (Identifier * TypeExpr option) list * TypeExpr
+    | ImportStatement of ImportItem list
+    | UseStatement of UseBinding
+    | ExprStatement of Expression
+
 /// An expression and where it came from. Equality and comparison look only at `Kind`, leaving out the name spans
 /// some kinds carry: two expressions are the same when they are the same code, wherever it was written. It is
 /// printed (`%A`) as its kind alone.
@@ -182,13 +209,6 @@ and RecordField =
 
 and MatchArm = Pattern list * Expression  // Multiple patterns for multi-value match
 
-and Statement =
-    | DefStatement of bool * Identifier * TypeExpr option * Expression
-    | TypeDefStatement of Identifier * TypeDefModifier list * (Identifier * TypeExpr option) list * TypeExpr
-    | ImportStatement of ImportItem list
-    | UseStatement of UseBinding
-    | ExprStatement of Expression
-
 and UseBinding =
     | UseValue of Expression
     | UseContextInstance of TypeExpr * Expression  // use C(T) = expr
@@ -213,7 +233,7 @@ type TopLevelItem =
 
 type Module = TopLevelItem list
 
-/// Matches a node (an expression or a pattern) by its kind inside a larger pattern:
+/// Matches a node (an expression, a pattern or a statement) by its kind inside a larger pattern:
 /// `FunctionCall(_, _, [ Kind (IdentifierExpr name) ])`, `TagPattern(_, Some (Kind (IdentifierPattern name)))`.
 let inline (|Kind|) (node: ^Node) = (^Node: (member Kind: ^Kind) node)
 
@@ -232,6 +252,27 @@ module Pattern =
     /// A pattern written at `span`.
     let at (span: SourceSpan) (kind: PatternKind) : Pattern =
         { Pattern.Kind = kind; Span = span; Id = NodeId.next () }
+
+module Statement =
+    /// A statement written at `span`.
+    let at (span: SourceSpan) (kind: StatementKind) : Statement =
+        { Statement.Kind = kind; Span = span; Id = NodeId.next () }
+
+    /// A statement the compiler made up in place of `origin`; it is reported where `origin` was written.
+    let from (origin: Expression) (kind: StatementKind) = at origin.Span kind
+
+    /// A statement the compiler made up that has no source of its own.
+    let synthetic (kind: StatementKind) = at SourceSpan.none kind
+
+    /// The expression a statement ends with, if it ends with one.
+    let finalExpression (kind: StatementKind) : Expression option =
+        match kind with
+        | ExprStatement expr
+        | DefStatement(_, _, _, expr)
+        | UseStatement (UseValue expr)
+        | UseStatement (UseContextInstance(_, expr)) -> Some expr
+        | ImportStatement _
+        | TypeDefStatement _ -> None
 
 /// How a node declares names. One node can declare in more than one way: `def f = { x -> x }` declares `f` by
 /// the lambda as a def's value, and `x` by the lambda's parameters.
@@ -402,21 +443,28 @@ let private singleOrTuple (items: Parser<Expression list, ParseState>) : Parser<
         | [single] -> single
         | multiple -> Expression.at span (TupleExpr multiple)
 
-/// A block of statements. It ends where its last statement's expression does: a statement may have consumed a
-/// trailing `-- comment`, which is not part of the block.
+/// `span`, ending no later than `last` does when `last` has a span of its own.
+let private endingAt (last: SourceSpan) (span: SourceSpan) =
+    if not (SourceSpan.isNone last) && last.End < span.End then { span with End = last.End } else span
+
+/// Runs `p` and makes what it built a statement spanning the text it consumed. A statement that ends with an
+/// expression ends where that expression does: it may have consumed a trailing `-- comment`, which is not part of
+/// the statement.
+let private spannedStatement (p: Parser<StatementKind, ParseState>) : Parser<Statement, ParseState> =
+    withSpan p |>> fun (kind, span) ->
+        let span =
+            match Statement.finalExpression kind with
+            | Some expr -> endingAt expr.Span span
+            | None -> span
+        Statement.at span kind
+
+/// A block of statements. It ends where its last statement does.
 let private blockSpanned (statements: Parser<Statement list, ParseState>) : Parser<Expression, ParseState> =
     withSpan statements |>> fun (stmts, span) ->
-        let lastExpr =
-            match List.tryLast stmts with
-            | Some (ExprStatement expr)
-            | Some (DefStatement(_, _, _, expr))
-            | Some (UseStatement (UseValue expr))
-            | Some (UseStatement (UseContextInstance(_, expr))) -> Some expr
-            | _ -> None
         let span =
-            match lastExpr with
-            | Some expr when not (SourceSpan.isNone expr.Span) && expr.Span.End < span.End -> { span with End = expr.Span.End }
-            | _ -> span
+            match List.tryLast stmts with
+            | Some last -> endingAt last.Span span
+            | None -> span
         Expression.at span (Block stmts)
 
 
@@ -1137,7 +1185,7 @@ do
                         // A block of one expression is just that expression.
                         let scrutinee =
                             match block.Kind with
-                            | Block [ ExprStatement expr ] -> expr
+                            | Block [ Kind (ExprStatement expr) ] -> expr
                             | _ -> block
                         [ scrutinee ], Some blockStart.Column
         let armsAfter blockColumn =
@@ -1636,7 +1684,7 @@ do
     
     // Lambda body: allow multi-line statement blocks or a single expression
     let blockBody =
-        let matchStatement = wsInline >>. matchExpr |>> ExprStatement |>> List.singleton
+        let matchStatement = wsInline >>. spannedStatement (matchExpr |>> ExprStatement) |>> List.singleton
         let statementLine =
             attempt (
                 ws >>.
@@ -1805,11 +1853,13 @@ do
                 (parseDefWith lineStart.Column typedQualifiedIdentifier defExprParser)
                 (fun exportOpt (name, typeOpt, expr) -> DefStatement(exportOpt.IsSome, name, typeOpt, expr))
 
+    // Each def a destructuring def stands for spans the whole `def (...) = value`.
     let destructuringDefStatement =
         getPosition >>= fun lineStart ->
-            destructuringDefWith lineStart.Column defExprParser
-            |>> fun (isExport, bindings) ->
-                bindings |> List.mapi (fun index (name, value) -> DefStatement(isExport && index > 0, name, None, value))
+            withSpan (destructuringDefWith lineStart.Column defExprParser)
+            |>> fun ((isExport, bindings), span) ->
+                let span = match List.tryHead bindings with Some (_, value) -> endingAt value.Span span | None -> span
+                bindings |> List.mapi (fun index (name, value) -> Statement.at span (DefStatement(isExport && index > 0, name, None, value)))
     // `rec name = { ... }` is a local definition that can refer to itself (see the functions page). It is a
     // def whose value is wrapped in a call to the built-in "__rec", which tells the backend to compile the
     // lambda as a function that may call itself.
@@ -1829,9 +1879,10 @@ do
         .>> statementTail
         |>> ExprStatement  // Consume trailing inline comments without consuming newlines
     
-    statementRef := (attempt importStatement <|> attempt typeDefStatement <|> attempt defStatement <|> attempt useStatement <|> exprStatement) <?> "statement"
     statementItemsRef := (attempt destructuringDefStatement <|> (statement |>> List.singleton)) <?> "statement"
-    statementRef := (attempt importStatement <|> attempt typeDefStatement <|> attempt defStatement <|> attempt recStatement <|> attempt useStatement <|> exprStatement) <?> "statement"
+    statementRef :=
+        spannedStatement (attempt importStatement <|> attempt typeDefStatement <|> attempt defStatement <|> attempt recStatement <|> attempt useStatement <|> exprStatement)
+        <?> "statement"
 
 // Parser for module declaration
 let moduleDecl: Parser<TopLevelItem, ParseState> =
@@ -2003,22 +2054,7 @@ let private rewriteExpressionInModule (valueMap: Map<string, string>) (typeMap: 
         | Lambda(args, body) -> Lambda(args, rewrite body)
         | BinaryOp(op, left, right) -> BinaryOp(op, rewrite left, rewrite right)
         | Pipe(value, funcName, range, args) -> Pipe(rewrite value, rewriteName funcName, range, args |> List.map rewrite)
-        | Block statements ->
-            Block (
-                statements
-                |> List.map (function
-                    | DefStatement(isExport, name, typeOpt, valueExpr) -> DefStatement(isExport, name, typeOpt |> Option.map (rewriteTypeExprInModule typeMap), rewrite valueExpr)
-                    | TypeDefStatement(name, modifiers, typeParams, typeExpr) ->
-                        let mappedParams = typeParams |> List.map (fun (paramName, paramTypeOpt) -> paramName, paramTypeOpt |> Option.map (rewriteTypeExprInModule typeMap))
-                        TypeDefStatement(name, modifiers, mappedParams, rewriteTypeExprInModule typeMap typeExpr)
-                    | ImportStatement items -> ImportStatement items
-                    | UseStatement binding -> 
-                        let mapped = 
-                            match binding with 
-                            | UseValue boundExpr -> UseValue (rewrite boundExpr)
-                            | UseContextInstance(ctxType, boundExpr) -> UseContextInstance(rewriteTypeExprInModule typeMap ctxType, rewrite boundExpr)
-                        UseStatement mapped
-                    | ExprStatement bodyExpr -> ExprStatement (rewrite bodyExpr)))
+        | Block statements -> Block (statements |> List.map (fun statement -> { statement with Kind = rewriteStatement statement.Kind }))
         | Match(values, arms) -> Match(values |> List.map rewrite, arms |> List.map (fun (patterns, body) -> patterns, rewrite body))
         | TupleExpr items -> TupleExpr (items |> List.map rewrite)
         | RecordExpr fields ->
@@ -2044,6 +2080,20 @@ let private rewriteExpressionInModule (valueMap: Map<string, string>) (typeMap: 
         | InterpolatedString parts -> InterpolatedString (parts |> List.map (function | StringText text -> StringText text | StringExpr value -> StringExpr (rewrite value)))
         | UnitExpr
         | LiteralExpr _ -> e.Kind
+    and rewriteStatement kind =
+        match kind with
+        | DefStatement(isExport, name, typeOpt, valueExpr) -> DefStatement(isExport, name, typeOpt |> Option.map (rewriteTypeExprInModule typeMap), rewrite valueExpr)
+        | TypeDefStatement(name, modifiers, typeParams, typeExpr) ->
+            let mappedParams = typeParams |> List.map (fun (paramName, paramTypeOpt) -> paramName, paramTypeOpt |> Option.map (rewriteTypeExprInModule typeMap))
+            TypeDefStatement(name, modifiers, mappedParams, rewriteTypeExprInModule typeMap typeExpr)
+        | ImportStatement items -> ImportStatement items
+        | UseStatement binding ->
+            let mapped =
+                match binding with
+                | UseValue boundExpr -> UseValue (rewrite boundExpr)
+                | UseContextInstance(ctxType, boundExpr) -> UseContextInstance(rewriteTypeExprInModule typeMap ctxType, rewrite boundExpr)
+            UseStatement mapped
+        | ExprStatement bodyExpr -> ExprStatement (rewrite bodyExpr)
     rewrite expr
 
 let rec private expandModuleBlock (prefix: string) (items: TopLevelItem list) : TopLevelItem list =

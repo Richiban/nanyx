@@ -153,7 +153,7 @@ let ``spans in a multi-line lambda have the lines and columns they were written 
     value.Span.StartLine |> should equal 0
     value.Span.StartColumn |> should equal 8
     match value.Kind with
-    | Lambda ([ ("x", None) ], Kind (Block [ DefStatement (_, "y", None, yValue); ExprStatement result ])) ->
+    | Lambda ([ ("x", None) ], Kind (Block [ Kind (DefStatement (_, "y", None, yValue)); Kind (ExprStatement result) ])) ->
         textOf source yValue.Span |> should equal "x + 1"
         yValue.Span.StartLine |> should equal 1
         yValue.Span.StartColumn |> should equal 10
@@ -199,7 +199,7 @@ let rec private expressionsOfKind (kind: ExpressionKind) : Expression list =
 and private expressions (expr: Expression) : Expression list = expr :: expressionsOfKind expr.Kind
 
 and private expressionsOfStatement (statement: Statement) =
-    match statement with
+    match statement.Kind with
     | DefStatement (_, _, typeOpt, value) ->
         (typeOpt |> Option.toList |> List.collect expressionsOfType) @ expressions value
     | TypeDefStatement (_, _, parameters, typeExpr) ->
@@ -285,8 +285,15 @@ let private armPatterns (expr: Expression) =
     | Match (_, arms) -> arms |> List.collect (fst >> List.collect patternsWithin)
     | _ -> []
 
-/// Checks that every expression and pattern parsed from `source` has a span within it that starts and ends on a
-/// non-whitespace character, whose line and column agree with its offset. Returns how many nodes it checked.
+/// The statements of `expr`, if it is a block.
+let private blockStatements (expr: Expression) =
+    match expr.Kind with
+    | Block statements -> statements
+    | _ -> []
+
+/// Checks that every expression, pattern and statement parsed from `source` has a span within it that starts and
+/// ends on a non-whitespace character, whose line and column agree with its offset. Returns how many nodes it
+/// checked.
 let private checkAllSpans (file: string) (rawSource: string) =
     // Spans are offsets into the source as the parser normalises it.
     let source = rawSource.Replace("\r\n", "\n").Replace("\r", "\n").TrimEnd()
@@ -296,6 +303,7 @@ let private checkAllSpans (file: string) (rawSource: string) =
         | Result.Error err -> failwith $"Parse failed for {file}: {err}"
     let expressions = module' |> List.collect expressionsOfItem
     let patterns = expressions |> List.collect armPatterns
+    let statements = expressions |> List.collect blockStatements
     let check (span: SourceSpan) (describe: unit -> string) =
         if SourceSpan.isNone span then failwith $"No span: {describe ()}"
         if span.File <> file then failwith $"Wrong file: {describe ()}"
@@ -312,7 +320,9 @@ let private checkAllSpans (file: string) (rawSource: string) =
         check expr.Span (fun () -> $"{file}: %A{expr.Span} of %A{expr.Kind}")
     for pattern in patterns do
         check pattern.Span (fun () -> $"{file}: %A{pattern.Span} of pattern %A{pattern.Kind}")
-    expressions.Length + patterns.Length
+    for statement in statements do
+        check statement.Span (fun () -> $"{file}: %A{statement.Span} of statement %A{statement.Kind}")
+    expressions.Length + patterns.Length + statements.Length
 
 [<Fact>]
 let ``an operator over parentheses or a lone spread spans the delimiters, and what is inside keeps its own span`` () =
@@ -489,6 +499,53 @@ let ``patterns are equal wherever they were written`` () =
     let first = parse "def f = match v\n  | #some((a, _)) -> a" |> armsOf "f"
     let second = parse "def f = match v\n  |   #some(( a,  _ )) -> a" |> armsOf "f"
     first.[0].[0].Span |> should not' (equal second.[0].[0].Span)
+    first |> should equal second
+    hash first |> should equal (hash second)
+    compare first second |> should equal 0
+
+/// The statements of the block that is the body of the lambda `def name` is bound to.
+let private lambdaStatements name (module': Module) =
+    match (valueOf name module').Kind with
+    | Lambda (_, Kind (Block statements)) -> statements
+    | other -> failwith $"Expected a lambda with a block body, got %A{other}"
+
+[<Fact>]
+let ``each statement in a block spans its text, without a comment after it`` () =
+    let source =
+        "def f = { x ->\n" +
+        "  def y = x + 1 -- one more\n" +
+        "  type Point = (x: int, y: int)\n" +
+        "  use ctx\n" +
+        "  print(y) -- noted\n" +
+        "  match y\n" +
+        "    | 0 -> 1\n" +
+        "    | _ -> 2\n" +
+        "  y * 2\n" +
+        "}"
+    let statements = parse source |> lambdaStatements "f"
+    statements
+    |> List.map (fun statement -> textOf source statement.Span)
+    |> should equal [ "def y = x + 1"; "type Point = (x: int, y: int)"; "use ctx"; "print(y)"; "match y\n    | 0 -> 1\n    | _ -> 2"; "y * 2" ]
+    let def = statements.[0]
+    def.Span.StartLine |> should equal 1
+    def.Span.StartColumn |> should equal 2
+
+[<Fact>]
+let ``each def a destructuring def stands for spans the whole def`` () =
+    let source = "def f = { pair ->\n  def (a, b) = pair -- both\n  a + b\n}"
+    let statements = parse source |> lambdaStatements "f"
+    // The whole value under a temporary name, then one def per name.
+    statements |> should haveLength 4
+    statements
+    |> List.take 3
+    |> List.map (fun statement -> textOf source statement.Span)
+    |> should equal [ "def (a, b) = pair"; "def (a, b) = pair"; "def (a, b) = pair" ]
+
+[<Fact>]
+let ``statements are equal wherever they were written`` () =
+    let first = parse "def f = { x ->\n  def y = x\n  y\n}" |> lambdaStatements "f"
+    let second = parse "def f = { x ->\n    def y =   x\n    y\n}" |> lambdaStatements "f"
+    first.[0].Span |> should not' (equal second.[0].Span)
     first |> should equal second
     hash first |> should equal (hash second)
     compare first second |> should equal 0
