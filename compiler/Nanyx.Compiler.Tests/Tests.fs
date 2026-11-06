@@ -1485,9 +1485,9 @@ let ``Type variables are shown as α, β in order of appearance`` () =
     Assert.Equal(Some "(α, β) -> (β, α)", hoverType source (offsetOf source "{" 0 0))
 
 [<Fact>]
-let ``Type variables are shown as 'a, 'b when Latin names are asked for`` () =
+let ``Type variables are shown as a, b when Latin names are asked for`` () =
     let source = "def pair = { a, b -> (b, a) }"
-    Assert.Equal(Some "('a, 'b) -> ('b, 'a)", latinHoverType source (offsetOf source "{" 0 0))
+    Assert.Equal(Some "(a, b) -> (b, a)", latinHoverType source (offsetOf source "{" 0 0))
 
 [<Fact>]
 let ``Greek type variable names go through the alphabet, then start again with a subscript`` () =
@@ -1533,17 +1533,17 @@ let ``A workflow bind is not given the type of the rest of the workflow`` () =
     Assert.Equal(Some "string", hoverType source (offsetOf source "\"a\"" 0 1))
 
 [<Fact>]
-let ``Type variables named in an annotation keep their names`` () =
+let ``Type variables named in an annotation keep their names, written as in the annotation`` () =
     let source = "def first: (t, a) -> t = { x, y -> x }"
-    Assert.Equal(Some "('t, 'a) -> 't", hoverType source (offsetOf source "{" 0 0))
+    Assert.Equal(Some "(t, a) -> t", hoverType source (offsetOf source "{" 0 0))
     let mixed =
         "def f: a -> int = { x ->\n" +
         "  def g = { y -> (y, x) }\n" +
         "  1\n" +
         "}\n"
-    Assert.Equal(Some "α -> (α, 'a)", hoverType mixed (offsetOf mixed "{ y" 0 0))
+    Assert.Equal(Some "α -> (α, a)", hoverType mixed (offsetOf mixed "{ y" 0 0))
     // A made-up Latin name skips the names an annotation took.
-    Assert.Equal(Some "'b -> ('b, 'a)", latinHoverType mixed (offsetOf mixed "{ y" 0 0))
+    Assert.Equal(Some "b -> (b, a)", latinHoverType mixed (offsetOf mixed "{ y" 0 0))
 
 [<Fact>]
 let ``Hover shows tags with their hash`` () =
@@ -1564,16 +1564,16 @@ let ``Printed types bracket functions and unions where they would run together``
     let c = TyVar { Id = 3; Name = Some "c" }
     let union = TyUnion [ TyTag("some", Some a); TyTag("none", None) ]
     // `->` groups to the right: a function input is bracketed, a function result is not.
-    Assert.Equal("('a -> 'b) -> 'c", Unifier.tyToString (TyFunc(TyFunc(a, b), c)))
-    Assert.Equal("'a -> 'b -> 'c", Unifier.tyToString (TyFunc(a, TyFunc(b, c))))
+    Assert.Equal("(a -> b) -> c", Unifier.tyToString (TyFunc(TyFunc(a, b), c)))
+    Assert.Equal("a -> b -> c", Unifier.tyToString (TyFunc(a, TyFunc(b, c))))
     // A union result and a union input are bracketed.
-    Assert.Equal("'a -> (#some('a) | #none)", Unifier.tyToString (TyFunc(a, union)))
-    Assert.Equal("(#some('a) | #none) -> 'a", Unifier.tyToString (TyFunc(union, a)))
+    Assert.Equal("a -> (#some(a) | #none)", Unifier.tyToString (TyFunc(a, union)))
+    Assert.Equal("(#some(a) | #none) -> a", Unifier.tyToString (TyFunc(union, a)))
     // Items separated by commas.
-    Assert.Equal("(int, ('a -> 'b))", Unifier.tyToString (TyRecord(Map.ofList [ "0", TyPrimitive "int"; "1", TyFunc(a, b) ])))
-    Assert.Equal("map(string, ('a -> 'b))", Unifier.tyToString (TyApply("map", [ TyPrimitive "string"; TyFunc(a, b) ])))
+    Assert.Equal("(int, (a -> b))", Unifier.tyToString (TyRecord(Map.ofList [ "0", TyPrimitive "int"; "1", TyFunc(a, b) ])))
+    Assert.Equal("map(string, (a -> b))", Unifier.tyToString (TyApply("map", [ TyPrimitive "string"; TyFunc(a, b) ])))
     // A lone argument or payload needs no brackets.
-    Assert.Equal("list('a -> 'b)", Unifier.tyToString (TyApply("list", [ TyFunc(a, b) ])))
+    Assert.Equal("list(a -> b)",Unifier.tyToString (TyApply("list", [ TyFunc(a, b) ])))
     Assert.Equal("#some(int)", Unifier.tyToString (TyTag("some", Some (TyPrimitive "int"))))
     // The unit type is written `()`.
     Assert.Equal("() -> ()", Unifier.tyToString (TyFunc(TyPrimitive "unit", TyPrimitive "unit")))

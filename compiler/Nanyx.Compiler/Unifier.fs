@@ -9,7 +9,7 @@ type Subst = Map<int, Ty>
 type TypeVarNames =
     /// `α`, `β`, `γ`, ... through the Greek alphabet.
     | Greek
-    /// `'a`, `'b`, `'c`, ... as an annotation would write them.
+    /// `a`, `b`, `c`, ...
     | Latin
 
 module Unifier =
@@ -49,10 +49,11 @@ module Unifier =
         // The unit type is written `()`; `unit` is only its internal name.
         | TyPrimitive "unit" -> "()"
         | TyPrimitive name -> name
+        // A type variable is written bare, as in an annotation: `(t, a) -> t`.
         | TyVar v ->
             match v.Name with
-            | Some name -> $"'{name}"
-            | None -> $"'t{v.Id}"
+            | Some name -> name
+            | None -> $"t{v.Id}"
         | TyNominal(name, _, _) -> name
         | TyFunc(arg, ret) ->
             // `->` groups to the right, so a function result needs no brackets; a union result does.
@@ -211,7 +212,7 @@ module Unifier =
         string index |> String.map (fun digit -> char (int '₀' + int digit - int '0'))
 
     /// `ty` for a reader: type variables the compiler made up are renamed in the order they appear, `α`, `β`, ...
-    /// (`α₁` and on after `ω`) or `'a`, `'b`, ..., skipping names already taken; variables named in an annotation
+    /// (`α₁` and on after `ω`) or `a`, `b`, ..., skipping names already taken; variables named in an annotation
     /// keep their names.
     let tyToDisplayString (names: TypeVarNames) (ty: Ty) : string =
         let vars = varsInPrintOrder ty
@@ -223,11 +224,9 @@ module Unifier =
                     let letter = greekLetters[index % greekLetters.Length]
                     let round = index / greekLetters.Length
                     if round = 0 then string letter else $"{letter}{subscript round}")
-                |> Seq.filter (fun name -> not (taken.Contains name))
             | Latin ->
                 Seq.initInfinite (fun index -> if index < 26 then string (char (int 'a' + index)) else $"t{index}")
-                |> Seq.filter (fun name -> not (taken.Contains name))
-                |> Seq.map (fun name -> $"'{name}")
+            |> Seq.filter (fun name -> not (taken.Contains name))
         let unnamed = vars |> List.filter (fun v -> v.Name.IsNone)
         // Each made-up variable is replaced by a primitive that prints as its new name.
         let renamed =
@@ -267,7 +266,7 @@ module Unifier =
                 | TyVar v, ty
                 | ty, TyVar v ->
                     if occurs v.Id ty then
-                        Error $"Occurs check failed: {tyToString ty} contains 't{v.Id}."
+                        Error $"Occurs check failed: {tyToString ty} contains {tyToString (TyVar v)}."
                     else
                         let newSubst = subst |> Map.add v.Id ty
                         loop newSubst rest

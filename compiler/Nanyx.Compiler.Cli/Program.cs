@@ -87,7 +87,7 @@ internal static class CliCommands
     /// Run the Nanyx language server over standard input and output (for editors; see compiler/README.md).
     /// </summary>
     /// <param name="stdio">Accepted and ignored: stdio is the only transport, but LSP clients conventionally pass it.</param>
-    /// <param name="latinTypeVars">Name inferred type variables 'a, 'b, ... in hovers, rather than α, β, ...</param>
+    /// <param name="latinTypeVars">Name inferred type variables a, b, ... in hovers, rather than α, β, ...</param>
     [Consolo("lsp")]
     public static void Lsp(
         [Consolo("stdio")] bool stdio = false,

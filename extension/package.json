@@ -76,7 +76,7 @@
         "nanyx.greekTypeVariables": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Name inferred type variables `α`, `β`, `γ`, ... in hovers. Turn off for `'a`, `'b`, `'c`, ... (passes `--latin-type-vars` to `nanyx lsp`, which needs a compiler that has it)."
+          "markdownDescription": "Name inferred type variables `α`, `β`, `γ`, ... in hovers. Turn off for `a`, `b`, `c`, ... (passes `--latin-type-vars` to `nanyx lsp`, which needs a compiler that has it)."
         }
       }
     }
