@@ -218,26 +218,67 @@ module Unifier =
     let private subscript (index: int) =
         string index |> String.map (fun digit -> char (int '₀' + int digit - int '0'))
 
-    /// `ty` for a reader: type variables the compiler made up are renamed in the order they appear, `α`, `β`, ...
-    /// (`α₁` and on after `ω`) or `a`, `b`, ..., skipping names already taken; variables named in an annotation
-    /// keep their names.
+    let private latinLetters = "abcdefghijklmnopqrstuvwxyz"
+
+    /// The ids of the variables in `ty` that stand for the rest of a union: `r` in `#some(a) | r`.
+    let private restVarIds (ty: Ty) : Set<int> =
+        let rec collect ty =
+            match ty with
+            | TyVar _
+            | TyPrimitive _
+            | TyNominal _ -> Set.empty
+            | TyFunc(arg, ret) -> Set.union (collect arg) (collect ret)
+            | TyRecord fields -> fields |> Map.toList |> List.map (snd >> collect) |> Set.unionMany
+            | TyTag(_, payload) -> payload |> Option.map collect |> Option.defaultValue Set.empty
+            | TyApply(_, args) -> args |> List.map collect |> Set.unionMany
+            | TyUnion items ->
+                let rests = items |> List.choose (function TyVar v -> Some v.Id | _ -> None) |> Set.ofList
+                items |> List.map collect |> Set.unionMany |> Set.union rests
+        collect ty
+
+    /// `ty` for a reader: type variables the compiler made up are renamed in the order they appear, through the
+    /// Greek (`α`, `β`, ...) or Latin (`a`, `b`, ...) alphabet, skipping names already taken; variables named in an
+    /// annotation keep their names. A union's rest variable is named from the other end of the alphabet, as in
+    /// `#some(α) | ω`.
+    ///
+    /// When the two ends run into each other, the alphabet is split where they met while giving out its letters
+    /// the first time, and each end goes round its own part again with a suffix: `α₁`, `ω₁` (`a1`, `z1`).
     let tyToDisplayString (names: TypeVarNames) (ty: Ty) : string =
+        let alphabet, suffix =
+            match names with
+            | Greek -> greekLetters, subscript
+            | Latin -> latinLetters, string
         let vars = varsInPrintOrder ty
         let taken = vars |> List.choose (fun v -> v.Name) |> Set.ofList
-        let candidates =
-            match names with
-            | Greek ->
-                Seq.initInfinite (fun index ->
-                    let letter = greekLetters[index % greekLetters.Length]
-                    let round = index / greekLetters.Length
-                    if round = 0 then string letter else $"{letter}{subscript round}")
-            | Latin ->
-                Seq.initInfinite (fun index -> if index < 26 then string (char (int 'a' + index)) else $"t{index}")
-            |> Seq.filter (fun name -> not (taken.Contains name))
+        // The letters an annotation took are left out before the alphabet is shared between its two ends.
+        let letters =
+            match alphabet |> String.filter (fun letter -> not (taken.Contains (string letter))) with
+            | "" -> alphabet
+            | free -> free
         let unnamed = vars |> List.filter (fun v -> v.Name.IsNone)
+        let rests = restVarIds ty
+        let isRest (v: TyVar) = rests.Contains v.Id
+        let ordinary, rest = unnamed |> List.partition (isRest >> not)
+        // The front's share of the alphabet: the letters it gave out before meeting the back, keeping at least
+        // one for each end that has variables.
+        let frontCount =
+            let firstPass = unnamed |> List.truncate letters.Length |> List.filter (isRest >> not) |> List.length
+            if ordinary.IsEmpty || rest.IsEmpty then firstPass else firstPass |> max 1 |> min (letters.Length - 1)
+        let backCount = letters.Length - frontCount
+        // The names from `count` letters, going round them again and again; `letterAt` picks one by its position.
+        let goRound count letterAt =
+            if count = 0 then Seq.empty
+            else
+                Seq.initInfinite (fun i ->
+                    let letter = letters[letterAt (i % count)]
+                    let round = i / count
+                    if round = 0 then string letter else $"{letter}{suffix round}")
+        let fromFront = goRound frontCount id
+        let fromBack = goRound backCount (fun position -> letters.Length - 1 - position)
+        let free = Seq.filter (fun name -> not (taken.Contains name))
         // Each made-up variable is replaced by a primitive that prints as its new name.
         let renamed =
-            Seq.zip unnamed candidates
+            Seq.append (Seq.zip ordinary (free fromFront)) (Seq.zip rest (free fromBack))
             |> Seq.map (fun (v, name) -> v.Id, TyPrimitive name)
             |> Map.ofSeq
         tyToString (apply renamed ty)
