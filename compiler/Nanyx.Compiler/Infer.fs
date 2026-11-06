@@ -1217,7 +1217,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                 | _ -> None
             // The variables a pattern binds are declared by the body of its arm, `armBody`.
             let rec inferPattern (armBody: NodeId) (env': TypeEnv) (state': InferState) (scrutineeTy: Ty) (pattern: Pattern) =
-                match pattern with
+                match pattern.Kind with
                 | WildcardPattern
                 | ElsePattern -> Ok (env', state', mkTypedPattern pattern scrutineeTy)
                 | IdentifierPattern name ->
@@ -1296,7 +1296,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                         | Error err -> innerErrors <- err
                     let innerStateWithSplat =
                         match splatOpt with
-                        | Some (IdentifierPattern name) ->
+                        | Some (Kind (IdentifierPattern name)) ->
                             let symbol, declared = declareSymbol ArmBody armBody name PatternVariable false innerState
                             innerEnv <- TypeEnv.declare name symbol (TypeEnv.mono (listType elementTy)) innerEnv
                             recordSymbolType symbol (listType elementTy) declared
@@ -1374,16 +1374,16 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
             let mutable armExprs: TypedExpr list = []
             let mutable typedArms: TypedMatchArm list = []
             let mutable errors: Diagnostic list = []
-            let rec isCatchAllPattern pattern =
-                match pattern with
+            let rec isCatchAllPattern (pattern: Pattern) =
+                match pattern.Kind with
                 | WildcardPattern
                 | ElsePattern
                 | IdentifierPattern _ -> true
                 // `(a, _)` matches every tuple: a tuple pattern is irrefutable when each element is.
                 | TuplePattern elements -> elements |> List.forall isCatchAllPattern
                 | _ -> false
-            let tryGetTagName pattern =
-                match pattern with
+            let tryGetTagName (pattern: Pattern) =
+                match pattern.Kind with
                 | TagPattern(tagName, _) -> Some tagName
                 | _ -> None
             let tryGetTagUnion ty =
@@ -1413,12 +1413,12 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                 let hasEmpty =
                     patternsAtPos
                     |> List.exists (function
-                        | ListPattern(patterns, None) when patterns.IsEmpty -> true
+                        | Kind (ListPattern(patterns, None)) when patterns.IsEmpty -> true
                         | _ -> false)
                 let hasSplat =
                     patternsAtPos
                     |> List.exists (function
-                        | ListPattern(_, Some _) -> true
+                        | Kind (ListPattern(_, Some _)) -> true
                         | _ -> false)
                 hasEmpty && hasSplat
             let isRecordType ty =
@@ -1445,11 +1445,11 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                 let nonCatchAll = patternsAtPos |> List.filter (fun pat -> not (isCatchAllPattern pat))
                 let allTagPatterns =
                     not nonCatchAll.IsEmpty
-                    && (nonCatchAll |> List.forall (function TagPattern _ -> true | _ -> false))
+                    && (nonCatchAll |> List.forall (function Kind (TagPattern _) -> true | _ -> false))
                 if allTagPatterns then
                     let tagInfos =
                         nonCatchAll
-                        |> List.choose (function TagPattern(tagName, payloadOpt) -> Some (tagName, payloadOpt) | _ -> None)
+                        |> List.choose (function Kind (TagPattern(tagName, payloadOpt)) -> Some (tagName, payloadOpt) | _ -> None)
                         |> List.groupBy fst
                         |> List.sortBy fst
                     // The arms describe the scrutinee's union. With a catch-all arm they need not name every
@@ -1527,7 +1527,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                     let othersCatchAll =
                         patterns |> List.indexed |> List.forall (fun (i, pat) -> i = index || isCatchAllPattern pat)
                     match List.tryItem index patterns with
-                    | Some (TagPattern(tagName, payloadOpt)) when othersCatchAll && payloadOpt |> Option.forall isCatchAllPattern ->
+                    | Some (Kind (TagPattern(tagName, payloadOpt))) when othersCatchAll && payloadOpt |> Option.forall isCatchAllPattern ->
                         Some tagName
                     | _ -> None)
                 |> Set.ofList
@@ -1560,7 +1560,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                         scrutineeTypes
                         |> List.mapi (fun idx ty ->
                             match List.tryItem idx patterns with
-                            | Some (IdentifierPattern _) when (catchAllBindingTy armIndex idx).IsSome ->
+                            | Some (Kind (IdentifierPattern _)) when (catchAllBindingTy armIndex idx).IsSome ->
                                 (catchAllBindingTy armIndex idx).Value
                             | _ -> scrutineeOverrides |> Map.tryFind idx |> Option.defaultValue ty)
                     let patternPairs = List.zip patterns effectiveScrutineeTypes
@@ -1592,9 +1592,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                             |> List.exists (fun (patterns, _) ->
                                 patterns
                                 |> List.exists (function
-                                    | WildcardPattern
-                                    | ElsePattern
-                                    | IdentifierPattern _ -> true
+                                    | Kind (WildcardPattern | ElsePattern | IdentifierPattern _) -> true
                                     | _ -> false))
                         if hasCatchAll then
                             None

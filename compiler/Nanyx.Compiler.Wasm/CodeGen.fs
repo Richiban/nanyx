@@ -800,7 +800,7 @@ let private collectBlockLocalNames (statements: Statement list) =
 
 /// Every identifier a pattern binds, however deeply nested.
 let rec private nestedPatternIdentifiers (pattern: Pattern) : string list =
-    match pattern with
+    match pattern.Kind with
     | IdentifierPattern ident -> [ ident ]
     | TagPattern(_, Some payload) -> nestedPatternIdentifiers payload
     | ListPattern(elements, restOpt) ->
@@ -814,9 +814,9 @@ let rec private nestedPatternIdentifiers (pattern: Pattern) : string list =
 /// rests, and tuple elements. (A plain identifier pattern at the top of an arm aliases the scrutinee local
 /// and needs no local of its own.)
 let private patternBoundIdentifiers (pattern: Pattern) : string list =
-    match pattern with
+    match pattern.Kind with
     | IdentifierPattern _ -> []
-    | nested -> nestedPatternIdentifiers nested
+    | _ -> nestedPatternIdentifiers pattern
 
 let rec private collectPayloadLocalsExpr (expr: Expression) =
     match expr.Kind with
@@ -977,7 +977,7 @@ let private patternBoundValueTypes (typedPattern: TypedPattern) : (string * stri
     let rec boundTypes (pattern: Pattern) (ty: Ty) : (string * string) list =
         let under (tyOpt: Ty option) (inner: Pattern) =
             tyOpt |> Option.map (boundTypes inner) |> Option.defaultValue []
-        match pattern with
+        match pattern.Kind with
         | IdentifierPattern ident ->
             trySimpleTypeName ty |> Option.map (fun tyName -> ident, tyName) |> Option.toList
         | TagPattern(tagName, Some payload) -> under (tryTagPayloadType tagName ty) payload
@@ -986,7 +986,7 @@ let private patternBoundValueTypes (typedPattern: TypedPattern) : (string * stri
             let elementBindings = elements |> List.collect (under elementTy)
             let restBinding =
                 match restOpt with
-                | Some (IdentifierPattern ident) -> [ ident, "list" ]
+                | Some (Kind (IdentifierPattern ident)) -> [ ident, "list" ]
                 | Some rest -> boundTypes rest ty
                 | None -> []
             elementBindings @ restBinding
@@ -1563,7 +1563,7 @@ and private collectStringLiteralsExpr (expr: Expression) : string list =
 /// String literals that appear inside patterns (`| "Sat" -> ...`, `| #name("x") -> ...`) need data-segment
 /// offsets just like literals in expressions.
 and private collectStringLiteralsPattern (pattern: Pattern) : string list =
-    match pattern with
+    match pattern.Kind with
     | LiteralPattern(StringLit value) -> [ value ]
     | TagPattern(_, Some payload) -> collectStringLiteralsPattern payload
     | TuplePattern patterns
@@ -1807,7 +1807,7 @@ and private collectTagNamesStatements (statements: Statement list) : string list
         | UseStatement _ -> [])
 
 and private collectTagNamesPattern (pattern: Pattern) : string list =
-    match pattern with
+    match pattern.Kind with
     | TagPattern(tagName, payloadOpt) ->
         match payloadOpt with
         | Some payload -> tagName :: collectTagNamesPattern payload
@@ -2225,8 +2225,8 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
             | [ single ] -> single
             | many -> (many |> String.concat "\n      ") + String.replicate (many.Length - 1) "\n      i32.and"
 
-        let rec patternCondition pattern valueCode =
-            match pattern with
+        let rec patternCondition (pattern: Pattern) valueCode =
+            match pattern.Kind with
             | ListPattern(elements, restOpt) ->
                 env.UsedHelpers.Add Helpers.listLength |> ignore
                 let lengthInstr = if restOpt.IsSome then "i32.ge_s" else "i32.eq"
@@ -2265,7 +2265,7 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                     $"{valueCode}\n      i32.const {tagDiscriminantMask}\n      i32.and\n      i32.const {tagBase}\n      i32.eq"
                 match payloadOpt with
                 | None -> discriminantCheck
-                | Some (LiteralPattern(IntLit payload)) ->
+                | Some (Kind (LiteralPattern(IntLit payload))) ->
                     // An int payload is stored in the masked bits, so compare it masked too.
                     let payloadMasked = payload &&& tagPayloadMask
                     allOf [ discriminantCheck; $"{tagPayloadCode valueCode}\n      i32.const {payloadMasked}\n      i32.eq" ]
@@ -2316,7 +2316,7 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                 let envWithPayloadLocals =
                     List.zip patterns matchTempNames
                     |> List.fold (fun acc (pat, temp) ->
-                        match pat with
+                        match pat.Kind with
                         | IdentifierPattern ident -> { acc with Locals = acc.Locals |> Map.add ident temp }
                         | _ -> acc) envWithPayloadLocals
                 let payloadLocal ident =
@@ -2324,8 +2324,8 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                     | Some localName -> localName
                     | None -> failwith $"Internal error: missing local for payload variable {ident}"
                 // Stores for the identifiers nested inside a pattern, mirroring `patternCondition`.
-                let rec patternBinds pattern valueCode =
-                    match pattern with
+                let rec patternBinds (pattern: Pattern) valueCode =
+                    match pattern.Kind with
                     | IdentifierPattern ident -> [ $"{valueCode}\n        local.set ${payloadLocal ident}" ]
                     | TagPattern(_, Some payload) -> patternBinds payload (tagPayloadCode valueCode)
                     | ListPattern(elements, restOpt) ->
@@ -2346,9 +2346,9 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                 let patternPayloadBinds =
                     List.zip patterns matchTempNames
                     |> List.collect (fun (pat, temp) ->
-                        match pat with
+                        match pat.Kind with
                         | IdentifierPattern _ -> []  // aliases the scrutinee local
-                        | nested -> patternBinds nested $"local.get ${temp}")
+                        | _ -> patternBinds pat $"local.get ${temp}")
                     |> String.concat "\n    "
                 let armCode =
                     if patternPayloadBinds = "" then
@@ -2770,7 +2770,7 @@ module private LambdaLifting =
         | UseContextInstance(_, value) -> referencedNames value
 
     and private referencedNamesPattern (pattern: Pattern) : string list =
-        match pattern with
+        match pattern.Kind with
         | GuardPattern(_, value) -> referencedNames value
         | RangePattern(startValue, endValue) -> referencedNames startValue @ referencedNames endValue
         | TagPattern(_, Some payload) -> referencedNamesPattern payload
@@ -2787,7 +2787,7 @@ module private LambdaLifting =
 
     /// Every name a pattern binds.
     let rec private boundNamesPattern (pattern: Pattern) : string list =
-        match pattern with
+        match pattern.Kind with
         | IdentifierPattern name -> [ name ]
         | TagPattern(_, Some payload) -> boundNamesPattern payload
         | TuplePattern patterns -> patterns |> List.collect boundNamesPattern

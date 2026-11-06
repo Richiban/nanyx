@@ -82,6 +82,41 @@ and TypeRecordField =
     | TypeField of Identifier * bool * bool * TypeExpr option * Expression option
     | TypeMember of Identifier * TypeExpr option
 
+/// A pattern and where it came from. Like `Expression`, equality and comparison look only at `Kind`, and it is
+/// printed (`%A`) as its kind alone. It is declared before `Expression` so that a `.Kind` or `{ Kind = ... }` whose
+/// type is not otherwise known is still taken to be an expression's.
+and [<CustomEquality; CustomComparison; StructuredFormatDisplay("{Kind}")>] Pattern =
+    { Kind: PatternKind
+      Span: SourceSpan
+      Id: NodeId }
+
+    override this.Equals(other) =
+        match other with
+        | :? Pattern as pattern -> this.Kind = pattern.Kind
+        | _ -> false
+
+    override this.GetHashCode() = hash this.Kind
+
+    interface IComparable with
+        member this.CompareTo(other) =
+            match other with
+            | :? Pattern as pattern -> compare this.Kind pattern.Kind
+            | _ -> invalidArg "other" "a Pattern can only be compared with another Pattern"
+
+and PatternKind =
+    | LiteralPattern of Literal
+    | IdentifierPattern of Identifier
+    | WildcardPattern
+    | ElsePattern
+    | TuplePattern of Pattern list
+    | RecordPattern of Identifier * Pattern list  // Type name and patterns by position
+    | RecordMemberPattern of (Identifier * Pattern) list  // Patterns by member name
+    | ListPattern of Pattern list * Pattern option  // patterns, optional splat at end
+    | ListSplatMiddle of Pattern list * Pattern list  // patterns before ..., patterns after
+    | RangePattern of Expression * Expression  // start..end (inclusive)
+    | GuardPattern of string * Expression  // operator (>, <, >=, <=, ==, !=) and value
+    | TagPattern of Identifier * Pattern option  // #tagName or #tagName(pattern)
+
 /// An expression and where it came from. Equality and comparison look only at `Kind`, leaving out the name spans
 /// some kinds carry: two expressions are the same when they are the same code, wherever it was written. It is
 /// printed (`%A`) as its kind alone.
@@ -145,20 +180,6 @@ and RecordField =
     | NamedField of Identifier * Expression
     | PositionalField of Expression
 
-and Pattern =
-    | LiteralPattern of Literal
-    | IdentifierPattern of Identifier
-    | WildcardPattern
-    | ElsePattern
-    | TuplePattern of Pattern list
-    | RecordPattern of Identifier * Pattern list  // Type name and patterns by position
-    | RecordMemberPattern of (Identifier * Pattern) list  // Patterns by member name
-    | ListPattern of Pattern list * Pattern option  // patterns, optional splat at end
-    | ListSplatMiddle of Pattern list * Pattern list  // patterns before ..., patterns after
-    | RangePattern of Expression * Expression  // start..end (inclusive)
-    | GuardPattern of string * Expression  // operator (>, <, >=, <=, ==, !=) and value
-    | TagPattern of Identifier * Pattern option  // #tagName or #tagName(pattern)
-
 and MatchArm = Pattern list * Expression  // Multiple patterns for multi-value match
 
 and Statement =
@@ -175,7 +196,7 @@ and UseBinding =
 // Helper type for parsing list patterns
 type ListPatternElement =
     | RegularPattern of Pattern
-    | Splat of Identifier option
+    | Splat of (Identifier * SourceSpan) option
 
 type Definition =
     | ValueDef of bool * Identifier * TypeExpr option * Expression
@@ -192,8 +213,9 @@ type TopLevelItem =
 
 type Module = TopLevelItem list
 
-/// Matches an expression by its kind inside a larger pattern: `FunctionCall(_, _, [ Kind (IdentifierExpr name) ])`.
-let (|Kind|) (expr: Expression) = expr.Kind
+/// Matches a node (an expression or a pattern) by its kind inside a larger pattern:
+/// `FunctionCall(_, _, [ Kind (IdentifierExpr name) ])`, `TagPattern(_, Some (Kind (IdentifierPattern name)))`.
+let inline (|Kind|) (node: ^Node) = (^Node: (member Kind: ^Kind) node)
 
 module Expression =
     /// An expression written at `span`.
@@ -205,6 +227,11 @@ module Expression =
 
     /// An expression the compiler made up that has no source of its own.
     let synthetic (kind: ExpressionKind) = at SourceSpan.none kind
+
+module Pattern =
+    /// A pattern written at `span`.
+    let at (span: SourceSpan) (kind: PatternKind) : Pattern =
+        { Pattern.Kind = kind; Span = span; Id = NodeId.next () }
 
 /// How a node declares names. One node can declare in more than one way: `def f = { x -> x }` declares `f` by
 /// the lambda as a def's value, and `x` by the lambda's parameters.
@@ -357,6 +384,10 @@ let private declare (declarer: Declarer) (holder: NodeId) (names: (Identifier * 
 /// Runs `p` and makes what it built an expression spanning the text it consumed.
 let spanned (p: Parser<ExpressionKind, ParseState>) : Parser<Expression, ParseState> =
     withSpan p |>> fun (kind, span) -> Expression.at span kind
+
+/// Runs `p` and makes what it built a pattern spanning the text it consumed.
+let private spannedPattern (p: Parser<PatternKind, ParseState>) : Parser<Pattern, ParseState> =
+    withSpan p |>> fun (kind, span) -> Pattern.at span kind
 
 let identifierWithSpan: Parser<Identifier * SourceSpan option, ParseState> =
     withSpan identifierNoWs |>> fun (name, span) -> name, Some span
@@ -525,16 +556,16 @@ let interpolatedStringExprNoWs: Parser<Expression, ParseState> =
             LiteralExpr (StringLit text)
     spanned (between (pstring "\"") (pstring "\"") partsParser |>> toKind)
 
-let wildcardPattern = pstring "_" >>% WildcardPattern
-let elsePattern = pstring "else" >>% ElsePattern
+let wildcardPattern = spannedPattern (pstring "_" >>% WildcardPattern)
+let elsePattern = spannedPattern (pstring "else" >>% ElsePattern)
 let identifierPattern =
-    getPosition .>>. identifierNoWs >>= fun (start, name) -> noteName start name >>% IdentifierPattern name
+    spannedPattern (getPosition .>>. identifierNoWs >>= fun (start, name) -> noteName start name >>% IdentifierPattern name)
 
 // Parse either a range pattern (1..10), an integer literal pattern (1), 
 // or other literal types (float, bool, string)
 // NOTE: For ranges, we only allow INTEGER literals to avoid ambiguity with floats like "1."
 let literalOrRangePattern =
-    choice [
+    spannedPattern <| choice [
         // Try integer with optional range
         attempt (
             withSpan intLiteralNoWs >>= fun (startLit, startSpan) ->
@@ -550,14 +581,15 @@ let literalOrRangePattern =
 
 // Tuple pattern: (pat1, pat2, ...)
 let tuplePattern =
-    between
-        (pstring "(")
-        (pstring ")")
-        (sepBy1 (ws >>. pattern) (pstring "," .>> ws))
-    |>> fun patterns ->
+    withSpan (
+        between
+            (pstring "(")
+            (pstring ")")
+            (sepBy1 (ws >>. pattern) (pstring "," .>> ws)))
+    |>> fun (patterns, span) ->
         match patterns with
         | [single] -> single  // Single pattern in parens is just that pattern, not a tuple
-        | multiple -> TuplePattern multiple
+        | multiple -> Pattern.at span (TuplePattern multiple)
 
 // `def (x, y) = value` binds each element of a tuple. It is desugared in the parser into a binding of the
 // whole value plus one `def` per element (`def x = __tuple.0`), so the rest of the compiler only ever sees
@@ -565,7 +597,7 @@ let tuplePattern =
 let private destructuringBindings (position: Position) (pattern: Pattern) (value: Expression) : (Identifier * Expression) list option =
     let temp = $"__tuple_{position.Line}_{position.Column}"
     let rec bind (pattern: Pattern) (source: Expression) =
-        match pattern with
+        match pattern.Kind with
         | IdentifierPattern name -> Some [ name, source ]
         | WildcardPattern -> Some []
         | TuplePattern elements ->
@@ -587,7 +619,7 @@ let destructuringDefWith (lineStartCol: int64) (exprParser: Parser<Expression, P
         (defEqualsContinuation lineStartCol >>. pstring "=" >>. wsNoNl() >>. exprParser)
         (fun exportOpt (position, pattern) value -> exportOpt.IsSome, position, pattern, value)
     >>= fun (isExport, position, (pattern, names), value) ->
-        match pattern with
+        match pattern.Kind with
         | TuplePattern _ ->
             match destructuringBindings position pattern value with
             | Some bindings ->
@@ -601,7 +633,7 @@ let destructuringDefWith (lineStartCol: int64) (exprParser: Parser<Expression, P
 
 // Record pattern by position: TypeName(pat1, pat2, ...)
 let recordPatternByPosition =
-    pipe2
+    spannedPattern <| pipe2
         identifierNoWs
         (between
             (pstring "(")
@@ -621,11 +653,12 @@ let recordMemberPattern =
                 (fun name pat -> (name, pat)))
             (pstring "," .>> ws))
     |>> RecordMemberPattern
+    |> spannedPattern
 
 // List pattern: [pat1, pat2, ...] or [pat1, ...rest] or [first, ..., last]
-let listPattern =
-    let splatPattern = 
-        pstring "..." >>. ws >>. opt (getPosition .>>. identifierNoWs >>= fun (start, name) -> noteName start name >>% name)
+let private listPatternKind =
+    let splatPattern =
+        pstring "..." >>. ws >>. opt (withSpan (getPosition .>>. identifierNoWs >>= fun (start, name) -> noteName start name >>% name))
         |>> Splat
     
     let regularPatternOrSplat =
@@ -656,7 +689,7 @@ let listPattern =
                 | _ -> failwith "unexpected")
             let splatName = 
                 match elements.[idx] with
-                | Splat (Some id) -> Some (IdentifierPattern id)
+                | Splat (Some (id, span)) -> Some (Pattern.at span (IdentifierPattern id))
                 | Splat None -> None
                 | _ -> failwith "unexpected"
             ListPattern(beforeSplat, splatName)
@@ -671,6 +704,8 @@ let listPattern =
                 | RegularPattern p -> p 
                 | _ -> failwith "unexpected")
             ListSplatMiddle(beforeSplat, afterSplat)
+
+let listPattern = spannedPattern listPatternKind
 
 // Range pattern: 1..10
 // Must use attempt to ensure proper backtracking if ".." is not found
@@ -694,26 +729,28 @@ let guardPattern =
         attempt (
             guardOp .>>. (ws >>. spanned (literalNoWs |>> LiteralExpr))
             |>> fun (op, value) -> GuardPattern(op, value))
-    braced <|> bare
+    spannedPattern (braced <|> bare)
 
 // Tag pattern: #nil or #some(x) or #error data
 // Tag pattern: #tagName or #tagName(pattern) or #tagName(p1, p2, ...)
 let tagPattern =
-    attempt (
+    attempt (spannedPattern (
         (pstring "#" >>. identifierNoWs) >>= fun tagName ->
         let parenPayload =
-            between
-                (pstring "(")
-                (pstring ")")
-                (sepBy1 (ws >>. pattern) (pstring "," .>> ws))
+            withSpan (
+                between
+                    (pstring "(")
+                    (pstring ")")
+                    (sepBy1 (ws >>. pattern) (pstring "," .>> ws)))
         let inlinePayload =
-            skipMany1 (skipAnyOf " \t") >>. pattern |>> fun p -> [p]
+            skipMany1 (skipAnyOf " \t") >>. pattern |>> fun p -> [p], p.Span
         opt (attempt parenPayload <|> attempt inlinePayload) >>= fun patternsOpt ->
         match patternsOpt with
         | None -> preturn (TagPattern(tagName, None))
-        | Some [single] -> preturn (TagPattern(tagName, Some single))
-        | Some multiple -> preturn (TagPattern(tagName, Some (TuplePattern multiple)))
-    )
+        | Some ([single], _) -> preturn (TagPattern(tagName, Some single))
+        // Several payload patterns match the payload as a tuple, written as the parenthesised list.
+        | Some (multiple, span) -> preturn (TagPattern(tagName, Some (Pattern.at span (TuplePattern multiple))))
+    ))
 
 do patternRef := 
     choice [
@@ -1259,12 +1296,14 @@ let ifExpr =
     let headThen (branchParser: Parser<Expression, ParseState>) =
         collectingNames head .>>. branchParser
         >>= fun ((head, names), branch) -> declare ArmBody branch.Id names >>% (head, branch)
-    // A left-out `else` is `()` made up at the `then` branch.
+    // A left-out `else` is `()` made up at the `then` branch. An if-match's `else` becomes an arm whose wildcard
+    // is made up at the `else` branch.
     let desugar span head (thenExpr: Expression) (elseOpt: Expression option) =
         let elseExpr = elseOpt |> Option.defaultWith (fun () -> Expression.from thenExpr UnitExpr)
         match head with
         | Choice1Of2 cond -> Expression.at span (IfExpr(cond, thenExpr, elseExpr))
-        | Choice2Of2 (pat, value) -> Expression.at span (Match([ value ], [ [ pat ], thenExpr; [ WildcardPattern ], elseExpr ]))
+        | Choice2Of2 (pat, value) ->
+            Expression.at span (Match([ value ], [ [ pat ], thenExpr; [ Pattern.at elseExpr.Span WildcardPattern ], elseExpr ]))
     let elseKeyword = pstring "else" >>. keywordEnd
     let conditionArm =
         pstring "|" >>. ws >>. notFollowedBy elseKeyword >>. headThen (ws >>. pstring "->" >>. matchArmBody)

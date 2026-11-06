@@ -220,7 +220,7 @@ module Compiler =
         | UseContextInstance(_, value) -> referencedNames value
 
     and private referencedNamesInPattern (pattern: Pattern) : string list =
-        match pattern with
+        match pattern.Kind with
         | GuardPattern(_, value) -> referencedNames value
         | RangePattern(startValue, endValue) -> referencedNames startValue @ referencedNames endValue
         | TagPattern(_, Some payload) -> referencedNamesInPattern payload

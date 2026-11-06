@@ -1397,7 +1397,7 @@ let ``Typecheck records typed match patterns`` () =
                     |> List.exists (fun (patterns, _) ->
                         patterns
                         |> List.exists (fun pattern ->
-                            match pattern.Pattern with
+                            match pattern.Pattern.Kind with
                             | LiteralPattern (IntLit 1) -> pattern.Type = TyPrimitive "int"
                             | _ -> false))
                 | None -> false
@@ -1422,7 +1422,7 @@ let ``Typecheck types list and guard patterns`` () =
                     |> List.exists (fun (patterns, _) ->
                         patterns
                         |> List.exists (fun pattern ->
-                            match pattern.Pattern with
+                            match pattern.Pattern.Kind with
                             | ListPattern _ -> true
                             | _ -> false))
                 | None -> false

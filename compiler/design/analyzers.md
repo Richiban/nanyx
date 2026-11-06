@@ -34,16 +34,15 @@ only then design the public contract that Nanyx-authored analyzers will be writt
 
 ## Where the compiler is today
 
-- **Spans cover expressions only** ([#109](https://github.com/nanyx-lang/nanyx/issues/109), part of
-  [#96](https://github.com/nanyx-lang/nanyx/issues/96)). Every expression and import has a `SourceSpan`, and
-  declarations' names are kept beside the tree (below). Patterns, statements, type expressions and top-level
-  items have none yet.
+- **Spans cover expressions and patterns** ([#96](https://github.com/nanyx-lang/nanyx/issues/96)). Every
+  expression, pattern and import has a `SourceSpan`, expressions and patterns have a `NodeId`, and declarations'
+  names are kept beside the tree (below). Statements, type expressions and top-level items have none yet.
 - **Diagnostics are structured** ([#97](https://github.com/nanyx-lang/nanyx/issues/97)). `Diagnostic` is the
   record in [section 2](#2-structured-diagnostics), every compiler error has a code from the table in
   `Diagnostics.fs`, and each is created with the span of the node it is about, in that node's file, so a
-  diagnostic in an imported module is reported there. Type constraints carry the span of the expression that
-  made them, which is where unification reports a failure. A diagnostic about a node without a span (a pattern,
-  a field name, an annotation, an attribute) is reported at the nearest node with one until #96 gives it its own.
+  diagnostic in an imported module is reported there. Type constraints carry the span of the expression or
+  pattern that made them, which is where unification reports a failure. A diagnostic about a node without a span (a field
+  name, an annotation, an attribute) is reported at the nearest node with one until #96 gives it its own.
   The compiler emits only `Critical` and `Error`.
 - **The type checker sees desugared code.** `desugar` turns workflow binds and `return` into calls to the
   keyword function and `pure` before inference, and `applyAttributes` replaces `@entry` with a synthesized call.
