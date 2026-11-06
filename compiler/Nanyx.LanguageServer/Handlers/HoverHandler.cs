@@ -7,8 +7,9 @@ namespace Nanyx.LanguageServer.Handlers;
 
 /// <summary>
 /// Shows the inferred type of the expression under the pointer, read from the document's last compile. On a
-/// call's function name it shows the function's type instantiated at that call. Nothing is shown in a document
-/// that did not type-check.
+/// call's function name it shows the function's type instantiated at that call, and on a declaration's own name
+/// (a def, a parameter, a pattern variable) the type of what it declares. Nothing is shown in a document that did
+/// not type-check.
 /// </summary>
 public sealed class HoverHandler : HoverHandlerBase
 {
@@ -33,7 +34,7 @@ public sealed class HoverHandler : HoverHandlerBase
         }
 
         var positions = document.Positions;
-        var info = CompilerHover.typeAt(_settings.TypeVarNames, compiled,positions.ToOffset(request.Position));
+        var info = CompilerHover.typeAt(_settings.TypeVarNames, compiled, positions.ToOffset(request.Position));
         if (info is null)
         {
             return null;

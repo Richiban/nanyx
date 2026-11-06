@@ -28,6 +28,8 @@ type InferState =
             /// name, so that a declaration inferred more than once keeps one symbol.
             DeclarationSymbols: Map<NodeId * Declarer * string, SymbolId>;
             Symbols: Map<SymbolId, Symbol>;
+            /// The type of each declaration the module makes, by its symbol, as inference first saw it.
+            SymbolTypes: Map<SymbolId, Ty>;
             /// The symbol each name resolved to, by the node of the name.
             References: Map<NodeId, SymbolId>;
             /// The import that brought each imported definition into scope, by the definition's symbol.
@@ -49,6 +51,7 @@ let emptyState =
             Declared = Map.empty;
             DeclarationSymbols = Map.empty;
             Symbols = Map.empty;
+            SymbolTypes = Map.empty;
             References = Map.empty;
             ImportedThrough = Map.empty;
             ImportReferences = Map.empty }
@@ -81,6 +84,12 @@ let private declareSymbol (declarer: Declarer) (holder: NodeId) (name: string) (
             { state with
                 DeclarationSymbols = state.DeclarationSymbols |> Map.add key symbol.Id
                 Symbols = state.Symbols |> Map.add symbol.Id symbol }
+
+/// Records `ty` as the type of the declaration `symbol`, if the parser saw one.
+let private recordSymbolType (symbol: SymbolId option) (ty: Ty) (state: InferState) =
+    match symbol with
+    | Some symbol -> { state with SymbolTypes = state.SymbolTypes |> Map.add symbol ty }
+    | None -> state
 
 /// Records that `expr` names what `scheme` is bound for, and the import it came through if it was imported.
 let private recordReference (expr: Expression) (scheme: TypeScheme) (state: InferState) =
@@ -1092,7 +1101,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                 | ElsePattern -> Ok (env', state', mkTypedPattern pattern scrutineeTy)
                 | IdentifierPattern name ->
                     let symbol, declared = declareSymbol ArmBody armBody name PatternVariable false state'
-                    Ok (TypeEnv.declare name symbol (TypeEnv.mono scrutineeTy) env', declared, mkTypedPattern pattern scrutineeTy)
+                    Ok (TypeEnv.declare name symbol (TypeEnv.mono scrutineeTy) env', recordSymbolType symbol scrutineeTy declared, mkTypedPattern pattern scrutineeTy)
                 | LiteralPattern literal ->
                     let constrained = addConstraint scrutineeTy (literalType literal) state'
                     Ok (env', constrained, mkTypedPattern pattern scrutineeTy)
@@ -1169,7 +1178,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                         | Some (IdentifierPattern name) ->
                             let symbol, declared = declareSymbol ArmBody armBody name PatternVariable false innerState
                             innerEnv <- TypeEnv.declare name symbol (TypeEnv.mono (listType elementTy)) innerEnv
-                            declared
+                            recordSymbolType symbol (listType elementTy) declared
                         | _ -> innerState
                     if innerErrors.IsEmpty then
                         Ok (innerEnv, innerStateWithSplat, mkTypedPattern pattern scrutineeTy)
@@ -1558,7 +1567,7 @@ and inferLambdaWithExpected (env: TypeEnv) (state: InferState) (lambda: Expressi
                 ty)
     for ((name, _), ty) in List.zip args argTys do
         let symbol, next = declareSymbol LambdaParameters lambda.Id name Parameter false current
-        current <- next
+        current <- recordSymbolType symbol ty next
         env' <- TypeEnv.declare name symbol (TypeEnv.mono ty) env'
     match inferExpr env' current body with
     | Ok (bodyExpr, next) ->
@@ -1655,7 +1664,7 @@ and inferBlock (env: TypeEnv) (state: InferState) (block: Expression) (statement
                                     let updatedState =
                                         if preboundFresh then addConstraint preboundTy typedExpr.Type next else next
                                     typedExpr.Type, updatedState
-                            current <- finalState
+                            current <- recordSymbolType symbol declaredTy finalState
                             // A local bound to a call's result has a type variable here; generalising that as
                             // it is would make every later use a fresh, unrelated variable (and let a match
                             // on it skip the exhaustiveness check, #61). Resolve it first.
@@ -1853,7 +1862,7 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
                                 | Some preboundTy -> addConstraint preboundTy typedExpr.Type next
                                 | None -> next
                             typedExpr.Type, updatedState
-                    state <- finalState
+                    state <- recordSymbolType symbol declaredTy finalState
                     let rigidResult =
                         match declaredTypeExprOpt with
                         | Some declaredExpr -> checkAnnotationIsRigid finalState name declaredExpr
@@ -1862,9 +1871,9 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
                     | Error err -> errors <- err
                     | Ok () ->
                         // Generalize against an env without this def's own pre-binding, so the fresh
-                        // variable it was pre-bound at does not stop its type being generalized. Resolve the type
-                        // first, as for a local def: generalizing `t2 -> #some(t5) | t4` while `t2` is only
-                        // constrained to `#some(t3) | t4` would cut the link between a call's argument and its result.
+                        // variable it was pre-bound at does not stop its type being generalized. Resolve it
+                        // first, as a local def does: `{ x -> x + 1 }` is `α -> α` until its constraints are
+                        // applied, and generalising that would make every use `α -> α` too.
                         let scheme = TypeEnv.generalize (env |> Map.remove name) (resolveSoFar finalState declaredTy)
                         env <- TypeEnv.declare name symbol scheme env
                         types <- types |> Map.add name declaredTy

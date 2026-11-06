@@ -94,29 +94,40 @@ let private calleeSpan (expr: Expression) =
 
 /// The hover for the expression at `offset` in the compiled root module: the type of the narrowest expression
 /// there that has one, or of the function itself on a call's function name, where it is instantiated at that
-/// call, with made-up type variables named by `names`. `None` when the module did not type-check or no typed
-/// expression is at `offset`.
+/// call, or of what a declaration's own name declares (a def, a parameter, a pattern variable), with made-up
+/// type variables named by `names`. `None` when the module did not type-check or nothing typed is at `offset`.
 ///
 /// The narrowest span wins rather than the deepest node, because a made-up node can sit inside the syntax it
-/// stands for: a `for` loop's element is an identifier spanning all of the loop's arms.
+/// stands for: a `for` loop's element is an identifier spanning all of the loop's arms. Of equal spans the
+/// outermost wins, for the same reason: the parameters a shorthand match lambda makes up span the whole lambda.
 let typeAt (names: TypeVarNames) (result: CompileResult) (offset: int) : HoverInfo option =
     match result.Syntax, result.Typed with
     | Some syntax, Some typed ->
+        // Only the module's own declarations have types recorded, so no imported one is found here.
+        let declarations =
+            typed.SymbolTypes
+            |> Map.toList
+            |> List.choose (fun (id, ty) ->
+                let declaration = typed.Symbols.[id].Declaration
+                if contains offset declaration then Some (ty, declaration) else None)
         let candidates =
-            expressionsAt offset syntax
-            |> List.collect (fun expr ->
+            // A declaration's name is written as it is, so it comes before any expression of the same span.
+            (declarations |> List.map (fun (ty, span) -> ty, span, System.Int32.MaxValue, 0))
+            @ (expressionsAt offset syntax
+            |> List.mapi (fun depth expr ->
                 let callee =
                     match calleeSpan expr with
                     | Some nameSpan when contains offset nameSpan ->
-                        typed.CalleeTypes |> Map.tryFind expr.Id |> Option.map (fun ty -> ty, nameSpan)
+                        typed.CalleeTypes |> Map.tryFind expr.Id |> Option.map (fun ty -> ty, nameSpan, depth, 0)
                     | _ -> None
-                let own = typed.ExprTypes |> Map.tryFind expr.Id |> Option.map (fun ty -> ty, expr.Span)
-                // A callee's name is inside its call, so it comes first among equals.
+                let own = typed.ExprTypes |> Map.tryFind expr.Id |> Option.map (fun ty -> ty, expr.Span, depth, 1)
                 Option.toList callee @ Option.toList own)
+            |> List.concat)
         match candidates with
         | [] -> None
         | _ ->
-            // `minBy` keeps the first of equal spans: the innermost.
-            let ty, span = candidates |> List.minBy (fun (_, span) -> span.End - span.Start)
+            // Depth counts outwards from the innermost; a callee's name is inside its call, so it comes first.
+            let ty, span, _, _ =
+                candidates |> List.minBy (fun (_, span, depth, rank) -> span.End - span.Start, -depth, rank)
             Some { Type = Unifier.tyToDisplayString names ty; Span = span }
     | _ -> None

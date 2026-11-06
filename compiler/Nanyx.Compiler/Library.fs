@@ -45,6 +45,7 @@ type private CheckedModule =
       /// The types inference recorded by node, unresolved: only the root module's are resolved (see `compileWith`).
       RawExprTypes: Map<NodeId, Ty>
       RawCalleeTypes: Map<NodeId, Ty>
+      RawSymbolTypes: Map<SymbolId, Ty>
       /// The symbols of the module's own exported definitions, by name: not those of what it imports.
       Exports: Map<string, Symbol> }
 
@@ -653,6 +654,7 @@ module Compiler =
                                       // Filled in for the root module only, by `compileWith`.
                                       ExprTypes = Map.empty
                                       CalleeTypes = Map.empty
+                                      SymbolTypes = Map.empty
                                       Symbols = state.Symbols
                                       References = state.References
                                       ImportReferences = state.ImportReferences }
@@ -663,6 +665,7 @@ module Compiler =
                                  Subst = subst
                                  RawExprTypes = state.ExprTypes
                                  RawCalleeTypes = state.CalleeTypes
+                                 RawSymbolTypes = state.SymbolTypes
                                  // Only declarations the module made itself are in `DeclarationSymbols`.
                                  Exports =
                                     state.DeclarationSymbols
@@ -691,7 +694,8 @@ module Compiler =
             let typed =
                 { checkedModule.Typed with
                     ExprTypes = resolve checkedModule.RawExprTypes
-                    CalleeTypes = resolve checkedModule.RawCalleeTypes }
+                    CalleeTypes = resolve checkedModule.RawCalleeTypes
+                    SymbolTypes = resolve checkedModule.RawSymbolTypes }
             { Phase = Typed
               Diagnostics = []
               Typed = Some typed
