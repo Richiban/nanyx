@@ -907,6 +907,13 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                         // When the callee's type is already a function (an annotated or already-inferred
                         // def), its return type is the call's type directly, so a member access or match on
                         // the result can see it without waiting for the constraint below to be solved.
+                        match Unifier.unalias funcTy, paramTys with
+                        // Each argument was checked against its parameter above, which is all a known signature
+                        // asks; constraining several arguments together as well, as one record, would make each
+                        // equal to its parameter, and undo an argument union's widening into its parameter's.
+                        | TyFunc(_, declaredRet), Some _ when args.Length > 1 ->
+                            Ok ({ mkTypedExpr expr declaredRet None None None with Arguments = Some typedArgs }, current)
+                        | _ ->
                         let retTy, nextState =
                             match Unifier.unalias funcTy with
                             | TyFunc(_, declaredRet) -> declaredRet, current

@@ -159,7 +159,7 @@ compile error that lists the ones it does.
 | Module          | What it holds                                                                                     |
 | --------------- | ------------------------------------------------------------------------------------------------- |
 | `nanyx/console` | The `Console` context (`print`, `println`) and the instance the runtime supplies to the entry point |
-| `nanyx/result`  | `proc`, the result workflow: in `proc { ... }`, `try x` continues with the payload of `#some` or gives back the `#error`, and `return x` is `#some(x)` |
+| `nanyx/result`  | `proc`, the result workflow: in `proc { ... }`, `try x` continues with the payload of `#some` or gives back any other tag (the block's type collects them), and `return x` is `#some(x)` |
 | `nanyx/text`    | `length`, `substring`, `startsWith`, `endsWith`, `contains`, `toUpper`, `toLower`, `trim`, `repeat`, `split`, `join`, `concat` |
 
 The library is written over a handful of **compiler intrinsics**: operations that cannot be expressed in

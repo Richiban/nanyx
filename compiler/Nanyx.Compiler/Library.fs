@@ -631,8 +631,14 @@ module Compiler =
         | _, _, errors -> Error errors
 
     /// Applies the substitution found by unification to everything inference produced.
+    /// A definition's type is reported with the rest variables that only stand for tags it gives out closed (see
+    /// `Unifier.outputOnlyRestVars`): a union widened by a call, as a `proc` block's is by each `try`, is left
+    /// open for more tags, but no more can come once the definition is done.
     let private resolveTypes (subst: Subst) (types: Map<string, Ty>) (typeDefs: Map<string, TypeDefInfo>) (items: TypedTopLevelItem list) =
-        let resolvedTypes = types |> Map.map (fun _ ty -> Unifier.apply subst ty)
+        let closeOutputRests ty =
+            let closed = Unifier.outputOnlyRestVars ty |> List.map (fun v -> v.Id, TyUnion []) |> Map.ofList
+            if closed.IsEmpty then ty else Unifier.apply closed ty
+        let resolvedTypes = types |> Map.map (fun _ ty -> Unifier.apply subst ty |> closeOutputRests)
         let resolvedTypeDefs =
             typeDefs
             |> Map.map (fun _ info -> { info with Underlying = Unifier.apply subst info.Underlying })

@@ -1023,3 +1023,29 @@ let ``Run - a proc block continues past each #some and stops at the first #error
         "showInt(sum(1))\n" +
         "showInt(sum(5))\n"
     runSource source |> assertRan "dbg: 1\nn = 1\ndbg: 3\nerror\nerror\nsum = 3\nerror\n"
+
+[<Fact>]
+let ``Run - a proc block gives back whichever failure stopped it`` () =
+    let source =
+        "import nanyx/console\n" +
+        "import nanyx/result\n" +
+        "\n" +
+        "def name: int -> #some(string) | #nil = { n -> if n > 5 then #nil else #some(\"n{n}\") }\n" +
+        "def find: string -> #some(int) | #notFound = { s -> if s == \"n3\" then #notFound else #some(7) }\n" +
+        "\n" +
+        "def run = { x -> proc {\n" +
+        "  def s = try name(x)\n" +
+        "  def i = try find(s)\n" +
+        "  return i\n" +
+        "} }\n" +
+        "\n" +
+        "def show: (#some(int) | #nil | #notFound) -> () = {\n" +
+        "  | #some(_) -> println(\"found\")\n" +
+        "  | #nil -> println(\"nil\")\n" +
+        "  | #notFound -> println(\"not found\")\n" +
+        "}\n" +
+        "\n" +
+        "show(run(1))\n" +
+        "show(run(3))\n" +
+        "show(run(7))\n"
+    runSource source |> assertRan "found\nnot found\nnil\n"

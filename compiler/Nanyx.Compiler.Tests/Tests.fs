@@ -955,6 +955,30 @@ let ``A proc block is a result of its return value or of the first error`` () =
     Assert.Equal("int -> #some(string) | #error(#tooBig)", Unifier.tyToString result.Typed.Value.Types.["run"])
 
 [<Fact>]
+let ``A proc block collects the failures of each try`` () =
+    let source =
+        "import nanyx/result\n" +
+        "def name: int -> #some(string) | #nil = { n -> if n > 5 then #nil else #some(\"n\") }\n" +
+        "def find: string -> #some(int) | #notFound = { s -> if s == \"n\" then #some(1) else #notFound }\n" +
+        "def run = { x -> proc {\n" +
+        "  def s = try name(x)\n" +
+        "  def i = try find(s)\n" +
+        "  return i\n" +
+        "} }"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, sprintf "%A" result.Diagnostics)
+    Assert.Equal("int -> #some(int) | #notFound | #nil", Unifier.tyToString result.Typed.Value.Types.["run"])
+    // Both failures are in the block's type, so a match on it must handle both.
+    let partial =
+        source + "\n" +
+        "def shown = match run(1)\n" +
+        "  | #some(_) -> \"some\"\n" +
+        "  | #nil -> \"nil\""
+    let partialResult = Compiler.compile partial
+    Assert.False(partialResult.Diagnostics.IsEmpty)
+    Assert.Contains("notFound", (List.head partialResult.Diagnostics).Message)
+
+[<Fact>]
 let ``A try nested in an expression of a proc block is bound before its statement`` () =
     let source =
         "import nanyx/result\n" +
