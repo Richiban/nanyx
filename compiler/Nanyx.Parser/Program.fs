@@ -1057,15 +1057,64 @@ let forExpr : Parser<Expression, ParseState> =
             (fun iterable body -> FunctionCall("__for", None, [ iterable; body ])))
     <?> "for loop"
 
-// Match expression parser
+/// The column (counted from 1, as FParsec does) of the first character on the current line that is not a space
+/// or tab: how far the line the parser is on is indented.
+let private currentLineIndent: Parser<int64, ParseState> =
+    fun stream ->
+        let isOnLine (offset: int) =
+            let c = stream.Peek(offset)
+            c <> '\n' && c <> CharStream.EndOfStreamChar
+        let isIndent (offset: int) =
+            let c = stream.Peek(offset)
+            c = ' ' || c = '\t'
+        let mutable lineStart = 0
+        while isOnLine (lineStart - 1) do
+            lineStart <- lineStart - 1
+        let mutable indent = 0
+        while isIndent (lineStart + indent) do
+            indent <- indent + 1
+        Reply(int64 indent + 1L)
+
+// Match expression parser. The scrutinees are any expressions written on the `match` line (`match a, b`), or
+// a block on the lines after it. The block must be indented more than both the line `match` is on and the
+// arms, so that it cannot be mistaken for either:
+//
+//   match
+//       def trimmed = s \trim
+//       trimmed \split(",")
+//     | [a, b] -> ...
 do
     matchExprRef :=
-        spanned (
-            pipe2
-                (pstring "match" >>. ws >>. sepBy1 simpleExpression (pstring "," .>> ws))  // Multiple expressions
-                matchArms
-                (fun scrutinees arms -> Match(scrutinees, arms)))
-        .>> skipMany (skipAnyOf " \t\r\n")
+        let keywordEnd = notFollowedBy (satisfy (fun c -> Char.IsLetterOrDigit c || c = '_'))
+        let sameLine = wsNoNl() >>. sepBy1 expression (pstring "," .>> ws) |>> fun scrutinees -> scrutinees, None
+        let indentedBlock matchIndent =
+            lookAhead (wsNoNl() >>. newline >>. wsNoNl() >>. getPosition) >>= fun blockStart ->
+                if blockStart.Column <= matchIndent then
+                    fail "the scrutinee of a match must be on the same line or indented more than the match"
+                else
+                    blockExpr () |>> fun block ->
+                        // A block of one expression is just that expression.
+                        let scrutinee =
+                            match block.Kind with
+                            | Block [ ExprStatement expr ] -> expr
+                            | _ -> block
+                        [ scrutinee ], Some blockStart.Column
+        let armsAfter blockColumn =
+            match blockColumn with
+            | None -> matchArms
+            | Some column ->
+                lookAhead (ws >>. getPosition) >>= fun firstArm ->
+                    if firstArm.Column >= column then
+                        fail "the arms of a match must be indented less than the block before them"
+                    else
+                        matchArms
+        currentLineIndent >>= fun matchIndent ->
+            spanned (
+                pstring "match" >>. keywordEnd
+                >>. (attempt (indentedBlock matchIndent) <|> sameLine)
+                >>= fun (scrutinees, blockColumn) ->
+                    armsAfter blockColumn |>> fun arms -> Match(scrutinees, arms))
+            .>> skipMany (skipAnyOf " \t\r\n")
         <?> "match expression"
 
 /// An operand of an operator, with the span of all the text it was written as. That is wider than the expression's
