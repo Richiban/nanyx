@@ -908,15 +908,22 @@ do
     let recordFieldSeparator =
         attempt (pstring "," >>. ws >>% ()) <|> (skipMany1 (skipAnyOf " \t\r\n") >>. ws)
 
+    // Positional fields come before the named ones, as in a record value: `(int, step: int)`. They are named by
+    // position, `0`, `1`, ..., as a tuple's are. Brackets with no named field are a tuple or a grouping instead.
+    let positionalTypeFields =
+        many (attempt (typeExpr .>> ws .>> pstring "," .>> ws))
+        |>> List.mapi (fun index typeValue -> TypeField(string index, false, false, Some typeValue, None))
+
     let typeRecord =
         spannedType (
             between
                 (pstring "(")
                 (ws >>. pstring ")")
-                (pipe2
-                    (ws >>. (attempt typeMemberField <|> typeField))
+                (pipe3
+                    (ws >>. positionalTypeFields)
+                    (attempt typeMemberField <|> typeField)
                     (many (attempt (recordFieldSeparator >>. (attempt typeMemberField <|> typeField))))
-                    (fun first rest -> TypeRecord(first :: rest))))
+                    (fun positional first rest -> TypeRecord(positional @ first :: rest))))
 
     // Brackets group: `(int, a -> b)` is a function of two parameters, as it is without them, and `()` is unit.
     // A bracketed tuple spans its brackets, as a tuple pattern does; any other type in brackets is just that type.

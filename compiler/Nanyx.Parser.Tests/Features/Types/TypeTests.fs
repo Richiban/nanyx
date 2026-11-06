@@ -73,6 +73,22 @@ let ``comma binds tighter than the arrow inside brackets too`` () =
     |> should equal (ty (TypeRecord [ TypeField ("combine", false, false, Some (func (tuple [ var "a"; var "a" ]) (var "a")), None) ]))
 
 [<Fact>]
+let ``a record type may start with positional fields, named by position`` () =
+    let annotationOf source =
+        match parseModule source with
+        | Result.Ok [ Def (ValueDef (_, _, Some annotation, _)) ] -> annotation
+        | other -> failwith $"Unexpected parse: %A{other}"
+    let field name typeValue = TypeField (name, false, false, Some typeValue, None)
+    let record fields = ty (TypeRecord fields)
+    annotationOf "def g: (int, step: int) -> int = g"
+    |> should equal (func (record [ field "0" (named "int"); field "step" (named "int") ]) (named "int"))
+    annotationOf "def k: (string, a, on: string) -> b = k"
+    |> should equal (func (record [ field "0" (named "string"); field "1" (var "a"); field "on" (named "string") ]) (var "b"))
+    // A positional field is a record field like any other, so a function there needs no brackets of its own.
+    annotationOf "def r: (a -> b, n: int) = r"
+    |> should equal (record [ field "0" (func (var "a") (var "b")); field "n" (named "int") ])
+
+[<Fact>]
 let ``lambda parameters still split at commas`` () =
     match parseModule "def f = { x: int, y -> x + y }" with
     | Result.Ok [ Def (ValueDef (_, "f", None, Kind (Lambda ([ ("x", Some (Kind (TypeName "int"))); ("y", None) ], _)))) ] -> ()
