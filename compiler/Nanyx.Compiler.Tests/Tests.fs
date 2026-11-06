@@ -1496,6 +1496,30 @@ let ``Greek type variable names go through the alphabet, then start again with a
     Assert.Equal("f(α, β, γ, δ, ε, ζ, η, θ, ι, κ, λ, μ, ν, ξ, ο, π, ρ, σ, τ, υ, φ, χ, ψ, ω, α₁, β₁)", shown)
 
 [<Fact>]
+let ``A union's rest variable is named from the end of the alphabet`` () =
+    // The catch-all arm leaves the union open for the tags the arms do not name.
+    let source =
+        "def mapOption = { o, f ->\n" +
+        "  match o\n" +
+        "  | #some(a) -> #some(f(a))\n" +
+        "  | other -> other\n" +
+        "}\n"
+    Assert.Equal(Some "#some(α) | ω, (α -> β) -> #some(β) | ω", hoverType source (offsetOf source "{" 0 0))
+    Assert.Equal(Some "#some(a) | z, (a -> b) -> #some(b) | z", latinHoverType source (offsetOf source "{" 0 0))
+
+[<Fact>]
+let ``Where the two ends of the alphabet meet, each goes round its own part again`` () =
+    let var id = TyVar { Id = id; Name = None }
+    let open' id = TyUnion [ TyTag("x", None); var id ]
+    // 20 variables and 4 rests take the whole alphabet the first time, so the front keeps α to υ and the back
+    // φ to ω; the rests and variables after that go round their own parts again.
+    let ty = TyApply("f", [ for id in 1..20 -> var id ] @ [ for id in 21..26 -> open' id ] @ [ var 27; var 28 ])
+    Assert.Equal(
+        "f(α, β, γ, δ, ε, ζ, η, θ, ι, κ, λ, μ, ν, ξ, ο, π, ρ, σ, τ, υ, "
+        + "#x | ω, #x | ψ, #x | χ, #x | φ, #x | ω₁, #x | ψ₁, α₁, β₁)",
+        Unifier.tyToDisplayString Greek ty)
+
+[<Fact>]
 let ``Hover inside a for loop's arm shows the arm's expression, not the loop element`` () =
     let source = "def f = for [\"a\"] | s -> s ++ \"!\""
     let info = (hoverAt source (offsetOf source "\"!\"" 0 1)).Value
@@ -1554,7 +1578,7 @@ let ``Hover shows tags with their hash`` () =
         "def mapOption: (#some(a) | r), (a -> b) -> (#some(b) | r) = { | #some(a), f -> #some(f(a)) | other, _ -> other }\n" +
         "def result = mapOption(#some(1), { n -> \"Mapped: {n}\" })"
     Assert.Equal(
-        Some "#some(int) | α, (int -> string) -> #some(string) | α",
+        Some "#some(int) | ω, (int -> string) -> #some(string) | ω",
         hoverType union (offsetOf union "mapOption(" 0 0))
 
 [<Fact>]
