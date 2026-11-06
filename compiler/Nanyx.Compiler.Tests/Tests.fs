@@ -1407,13 +1407,18 @@ let private offsetOf (source: string) (text: string) (occurrence: int) (within: 
         else find (index + 1) (remaining - 1)
     find 0 occurrence + within
 
-let private hoverAt (source: string) (offset: int) =
+let private hoverWith (names: TypeVarNames) (source: string) (offset: int) =
     let result = Compiler.compile source
     Assert.True(result.Diagnostics.IsEmpty, sprintf "%A" result.Diagnostics)
-    Hover.typeAt result offset
+    Hover.typeAt names result offset
+
+let private hoverAt source offset = hoverWith Greek source offset
 
 let private hoverType source offset =
     hoverAt source offset |> Option.map (fun info -> info.Type)
+
+let private latinHoverType source offset =
+    hoverWith Latin source offset |> Option.map (fun info -> info.Type)
 
 [<Fact>]
 let ``Expressions at a position are innermost first`` () =
@@ -1468,16 +1473,27 @@ let ``Hover on a polymorphic function shows it instantiated at the call`` () =
         "def id = { x -> x }\n" +
         "def n = id(5)\n" +
         "def s = id(\"a\")\n"
-    Assert.Equal(Some "'a -> 'a", hoverType source (offsetOf source "{ x" 0 0))
-    Assert.Equal(Some "'a", hoverType source (offsetOf source "-> x" 0 3))
+    Assert.Equal(Some "α -> α", hoverType source (offsetOf source "{ x" 0 0))
+    Assert.Equal(Some "α", hoverType source (offsetOf source "-> x" 0 3))
     Assert.Equal(Some "int -> int", hoverType source (offsetOf source "id(" 0 0))
     Assert.Equal(Some "string -> string", hoverType source (offsetOf source "id(" 1 0))
     Assert.Equal(Some "string", hoverType source (offsetOf source "id(" 1 4))
 
 [<Fact>]
-let ``Type variables are shown as 'a, 'b in order of appearance`` () =
+let ``Type variables are shown as α, β in order of appearance`` () =
     let source = "def pair = { a, b -> (b, a) }"
-    Assert.Equal(Some "('a, 'b) -> ('b, 'a)", hoverType source (offsetOf source "{" 0 0))
+    Assert.Equal(Some "(α, β) -> (β, α)", hoverType source (offsetOf source "{" 0 0))
+
+[<Fact>]
+let ``Type variables are shown as 'a, 'b when Latin names are asked for`` () =
+    let source = "def pair = { a, b -> (b, a) }"
+    Assert.Equal(Some "('a, 'b) -> ('b, 'a)", latinHoverType source (offsetOf source "{" 0 0))
+
+[<Fact>]
+let ``Greek type variable names go through the alphabet, then start again with a subscript`` () =
+    let vars = [ for id in 1..26 -> TyVar { Id = id; Name = None } ]
+    let shown = Unifier.tyToDisplayString Greek (TyApply("f", vars))
+    Assert.Equal("f(α, β, γ, δ, ε, ζ, η, θ, ι, κ, λ, μ, ν, ξ, ο, π, ρ, σ, τ, υ, φ, χ, ψ, ω, α₁, β₁)", shown)
 
 [<Fact>]
 let ``Hover inside a for loop's arm shows the arm's expression, not the loop element`` () =
@@ -1520,13 +1536,14 @@ let ``A workflow bind is not given the type of the rest of the workflow`` () =
 let ``Type variables named in an annotation keep their names`` () =
     let source = "def first: (t, a) -> t = { x, y -> x }"
     Assert.Equal(Some "('t, 'a) -> 't", hoverType source (offsetOf source "{" 0 0))
-    // A made-up variable skips the names an annotation took.
     let mixed =
         "def f: a -> int = { x ->\n" +
         "  def g = { y -> (y, x) }\n" +
         "  1\n" +
         "}\n"
-    Assert.Equal(Some "'b -> ('b, 'a)", hoverType mixed (offsetOf mixed "{ y" 0 0))
+    Assert.Equal(Some "α -> (α, 'a)", hoverType mixed (offsetOf mixed "{ y" 0 0))
+    // A made-up Latin name skips the names an annotation took.
+    Assert.Equal(Some "'b -> ('b, 'a)", latinHoverType mixed (offsetOf mixed "{ y" 0 0))
 
 [<Fact>]
 let ``Hover shows tags with their hash`` () =
@@ -1537,7 +1554,7 @@ let ``Hover shows tags with their hash`` () =
         "def mapOption: (#some(a) | r), (a -> b) -> (#some(b) | r) = { | #some(a), f -> #some(f(a)) | other, _ -> other }\n" +
         "def result = mapOption(#some(1), { n -> \"Mapped: {n}\" })"
     Assert.Equal(
-        Some "((#some(int) | 'a), (int -> string)) -> (#some(string) | 'a)",
+        Some "((#some(int) | α), (int -> string)) -> (#some(string) | α)",
         hoverType union (offsetOf union "mapOption(" 0 0))
 
 [<Fact>]

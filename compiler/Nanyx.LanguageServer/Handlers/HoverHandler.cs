@@ -13,10 +13,12 @@ namespace Nanyx.LanguageServer.Handlers;
 public sealed class HoverHandler : HoverHandlerBase
 {
     private readonly DocumentStore _documents;
+    private readonly ServerSettings _settings;
 
-    public HoverHandler(DocumentStore documents)
+    public HoverHandler(DocumentStore documents, ServerSettings settings)
     {
         _documents = documents;
+        _settings = settings;
     }
 
     public override Task<Hover?> Handle(HoverParams request, CancellationToken cancellationToken) =>
@@ -31,7 +33,7 @@ public sealed class HoverHandler : HoverHandlerBase
         }
 
         var positions = document.Positions;
-        var info = CompilerHover.typeAt(compiled, positions.ToOffset(request.Position));
+        var info = CompilerHover.typeAt(_settings.TypeVarNames, compiled,positions.ToOffset(request.Position));
         if (info is null)
         {
             return null;

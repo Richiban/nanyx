@@ -53,7 +53,10 @@ async function activate(context) {
             await restartClient(context, executable);
         }
     }), vscode.commands.registerCommand(COMMAND_RESTART, () => startOrRestart(context)), vscode.workspace.onDidChangeConfiguration((event) => {
-        if (event.affectsConfiguration("nanyx.path") || event.affectsConfiguration("nanyx.compilerVersion") || event.affectsConfiguration("nanyx.downloadUrl")) {
+        if (event.affectsConfiguration("nanyx.path") ||
+            event.affectsConfiguration("nanyx.compilerVersion") ||
+            event.affectsConfiguration("nanyx.downloadUrl") ||
+            event.affectsConfiguration("nanyx.greekTypeVariables")) {
             void startOrRestart(context);
         }
     }));
@@ -103,16 +106,19 @@ async function promptAndDownload(context) {
 }
 async function restartClient(context, executable) {
     await stopClient();
+    // The switch is passed only when it is on, so turning nothing off still works with compilers that predate it.
+    const greek = vscode.workspace.getConfiguration("nanyx").get("greekTypeVariables", true);
+    const args = greek ? ["lsp"] : ["lsp", "--latin-type-vars"];
     // No `transport`: stdio is the default, and naming it makes the client append `--stdio` to the args.
     const serverOptions = {
-        run: { command: executable, args: ["lsp"] },
-        debug: { command: executable, args: ["lsp"] }
+        run: { command: executable, args },
+        debug: { command: executable, args }
     };
     const clientOptions = {
         documentSelector: [{ language: "nanyx" }],
         outputChannel
     };
-    outputChannel.appendLine(`Starting the Nanyx language server: ${executable} lsp`);
+    outputChannel.appendLine(`Starting the Nanyx language server: ${executable} ${args.join(" ")}`);
     client = new node_1.LanguageClient("nanyx", "Nanyx Language Server", serverOptions, clientOptions);
     try {
         await client.start();

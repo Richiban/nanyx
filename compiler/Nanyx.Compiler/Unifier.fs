@@ -5,6 +5,13 @@ open System.Collections.Generic
 /// Substitution map for type variables.
 type Subst = Map<int, Ty>
 
+/// How a type shown to a reader names the type variables the compiler made up.
+type TypeVarNames =
+    /// `α`, `β`, `γ`, ... through the Greek alphabet.
+    | Greek
+    /// `'a`, `'b`, `'c`, ... as an annotation would write them.
+    | Latin
+
 module Unifier =
     let private tryTupleLikeRecord (fields: Map<string, Ty>) : Ty list option * (string * Ty) list =
         let tupleFields, namedFields =
@@ -197,21 +204,37 @@ module Unifier =
             |> TyUnion
         | TyPrimitive _ -> ty
 
-    /// `ty` for a reader: type variables the compiler made up are renamed `'a`, `'b`, ... in the order they appear,
-    /// skipping names already taken; variables named in an annotation keep their names.
-    let tyToDisplayString (ty: Ty) : string =
+    let private greekLetters = "αβγδεζηθικλμνξοπρστυφχψω"
+
+    /// `index` in subscript digits: `12` is `₁₂`.
+    let private subscript (index: int) =
+        string index |> String.map (fun digit -> char (int '₀' + int digit - int '0'))
+
+    /// `ty` for a reader: type variables the compiler made up are renamed in the order they appear, `α`, `β`, ...
+    /// (`α₁` and on after `ω`) or `'a`, `'b`, ..., skipping names already taken; variables named in an annotation
+    /// keep their names.
+    let tyToDisplayString (names: TypeVarNames) (ty: Ty) : string =
         let vars = varsInPrintOrder ty
         let taken = vars |> List.choose (fun v -> v.Name) |> Set.ofList
         let candidates =
-            Seq.initInfinite (fun index -> if index < 26 then string (char (int 'a' + index)) else $"t{index}")
-            |> Seq.filter (fun name -> not (taken.Contains name))
+            match names with
+            | Greek ->
+                Seq.initInfinite (fun index ->
+                    let letter = greekLetters[index % greekLetters.Length]
+                    let round = index / greekLetters.Length
+                    if round = 0 then string letter else $"{letter}{subscript round}")
+                |> Seq.filter (fun name -> not (taken.Contains name))
+            | Latin ->
+                Seq.initInfinite (fun index -> if index < 26 then string (char (int 'a' + index)) else $"t{index}")
+                |> Seq.filter (fun name -> not (taken.Contains name))
+                |> Seq.map (fun name -> $"'{name}")
         let unnamed = vars |> List.filter (fun v -> v.Name.IsNone)
         // Each made-up variable is replaced by a primitive that prints as its new name.
-        let names =
+        let renamed =
             Seq.zip unnamed candidates
-            |> Seq.map (fun (v, name) -> v.Id, TyPrimitive $"'{name}")
+            |> Seq.map (fun (v, name) -> v.Id, TyPrimitive name)
             |> Map.ofSeq
-        tyToString (apply names ty)
+        tyToString (apply renamed ty)
 
     let rec occurs (varId: int) (ty: Ty) : bool =
         match ty with

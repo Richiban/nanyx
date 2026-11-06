@@ -23,27 +23,32 @@ namespace Nanyx.LanguageServer;
 public static class NanyxLanguageServer
 {
     /// <summary>Runs the server over the process's standard input and output until the client asks it to exit.</summary>
-    public static async Task RunStdioAsync(CancellationToken cancellationToken = default)
+    public static async Task RunStdioAsync(ServerSettings? settings = null, CancellationToken cancellationToken = default)
     {
         // The protocol owns stdout: nothing else in the process may write to it while the server runs.
-        await RunAsync(Console.OpenStandardInput(), Console.OpenStandardOutput(), cancellationToken);
+        await RunAsync(Console.OpenStandardInput(), Console.OpenStandardOutput(), settings, cancellationToken);
     }
 
     /// <summary>Runs the server over the given streams until the client asks it to exit.</summary>
-    public static async Task RunAsync(Stream input, Stream output, CancellationToken cancellationToken = default)
+    public static async Task RunAsync(
+        Stream input,
+        Stream output,
+        ServerSettings? settings = null,
+        CancellationToken cancellationToken = default)
     {
         var server = await OmniSharp.Extensions.LanguageServer.Server.LanguageServer.From(
-            options => Configure(options).WithInput(input).WithOutput(output),
+            options => Configure(options, settings ?? ServerSettings.Default).WithInput(input).WithOutput(output),
             cancellationToken);
 
         await server.WaitForExit;
     }
 
     /// <summary>Registers the services and handlers that make up the server.</summary>
-    public static LanguageServerOptions Configure(LanguageServerOptions options) =>
+    public static LanguageServerOptions Configure(LanguageServerOptions options, ServerSettings settings) =>
         options
             .WithServices(services =>
             {
+                services.AddSingleton(settings);
                 services.AddSingleton<DocumentStore>();
                 services.AddSingleton<DiagnosticsPublisher>();
             })
