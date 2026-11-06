@@ -206,15 +206,15 @@
           "comment": "Capitalised tags are custom patterns",
           "match": "(#)([A-Z][A-Za-z0-9_]*)",
           "captures": {
-            "1": { "name": "punctuation.definition.tag.nanyx" },
-            "2": { "name": "entity.name.tag.pattern.nanyx" }
+            "1": { "name": "punctuation.definition.symbol.nanyx" },
+            "2": { "name": "constant.other.symbol.pattern.nanyx" }
           }
         },
         {
           "match": "(#)([a-z_][A-Za-z0-9_]*)",
           "captures": {
-            "1": { "name": "punctuation.definition.tag.nanyx" },
-            "2": { "name": "entity.name.tag.nanyx" }
+            "1": { "name": "punctuation.definition.symbol.nanyx" },
+            "2": { "name": "constant.other.symbol.nanyx" }
           }
         }
       ]
