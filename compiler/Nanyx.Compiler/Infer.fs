@@ -603,13 +603,14 @@ let private instantiate (state: InferState) (scheme: TypeScheme) : Ty * InferSta
 /// When every branch is a tag (or a union of tags), the tags are collected into one union instead of
 /// being forced to agree, so `if c then #some(x) else #none` is `#some(a) | #none` without an
 /// annotation. Same-named tags unify their payloads, so `#some(1)` against `#some("a")` is still an
-/// error. If any branch is not a tag, the branches have to agree as before: every later branch is
-/// constrained equal to the first.
+/// error. When every branch is a record (or tuple) with the same fields, the fields are joined one by
+/// one, so `if c then (s, #some(x)) else (s, #none)` is `(string, #some(a) | #none)`. Otherwise the
+/// branches have to agree as before: every later branch is constrained equal to the first.
 ///
 /// `rowVars` are the rest variables of the tag unions being matched on. A branch of one of those types
 /// (a catch-all arm returning what it caught) joins the union as its rest, so
 /// `| #some(a), f -> #some(f(a)) | other, _ -> other` is `#some(b) | r`.
-let private joinBranchTypes (rowVars: Set<int>) (state: InferState) (branchTypes: Ty list) : Ty * InferState =
+let rec private joinBranchTypes (rowVars: Set<int>) (state: InferState) (branchTypes: Ty list) : Ty * InferState =
     let isUnionItem ty =
         match Unifier.unalias ty with
         | TyTag _ -> true
@@ -646,7 +647,24 @@ let private joinBranchTypes (rowVars: Set<int>) (state: InferState) (branchTypes
             | [ single ] -> single, nextState
             | items -> TyUnion items, nextState
         else
-            head, tail |> List.fold (fun st ty -> addConstraint head ty st) state
+            let recordFields ty =
+                match Unifier.unalias ty with
+                | TyRecord fields -> Some fields
+                | _ -> None
+            let branchFields = branchTypes |> List.map recordFields
+            match branchFields with
+            | Some first :: _ when
+                tail.Length > 0
+                && branchFields |> List.forall (function Some fields -> List.ofSeq fields.Keys = List.ofSeq first.Keys | None -> false) ->
+                let allFields = branchFields |> List.choose id
+                let joined, nextState =
+                    first
+                    |> Map.fold (fun (acc: Map<string, Ty>, st) key _ ->
+                        let fieldTy, next = joinBranchTypes rowVars st (allFields |> List.map (fun fields -> fields.[key]))
+                        acc |> Map.add key fieldTy, next) (Map.empty, state)
+                TyRecord joined, nextState
+            | _ ->
+                head, tail |> List.fold (fun st ty -> addConstraint head ty st) state
 
 let private mkTypedExpr expr ty body statements matchArms : TypedExpr =
     { Expr = expr; Type = ty; Body = body; Statements = statements; MatchArms = matchArms; Arguments = None }
