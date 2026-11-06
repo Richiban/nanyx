@@ -166,28 +166,6 @@ let private numericType =
 let private tupleFieldName index =
     string index
 
-let rec private isAssignableType (expected: Ty) (actual: Ty) =
-    match expected, actual with
-    | TyVar _, _ -> true
-    | TyAlias(_, _, underlying), _ -> isAssignableType underlying actual
-    | _, TyAlias(_, _, underlying) -> isAssignableType expected underlying
-    | TyPrimitive left, TyPrimitive right -> left = right
-    | TyApply(leftName, leftArgs), TyApply(rightName, rightArgs) ->
-        leftName = rightName
-        && leftArgs.Length = rightArgs.Length
-        && List.forall2 isAssignableType leftArgs rightArgs
-    | TyApply _, TyVar _ -> true
-    | TyNominal(_, underlying, _), _ -> isAssignableType underlying actual
-    | _, TyNominal(_, underlying, _) -> isAssignableType expected underlying
-    | TyRecord expectedFields, TyRecord actualFields ->
-        expectedFields
-        |> Map.forall (fun name expectedTy ->
-            match actualFields |> Map.tryFind name with
-            | Some actualTy -> isAssignableType expectedTy actualTy
-            | None -> false)
-    | TyUnion options, _ -> options |> List.exists (fun optionTy -> isAssignableType optionTy actual)
-    | _ -> true
-
 let private lookupPrimitive (name: string) =
     match name with
     | "int" | "Int" -> Some (primitiveType "int")
@@ -220,24 +198,6 @@ let private ensureAttachedTypeExists (state: InferState) (currentModuleOpt: stri
                 | _ -> Error [ Diagnostics.at DiagnosticCodes.UnknownAttachedType span $"Unknown attached type '{candidateTypeName}' for definition '{name}'" ]
             else
                 Ok ()
-
-let private matchesAttachedInput (inputTy: Ty) (lhsType: Ty) : bool =
-    let rec containsNominal name ty =
-        match Unifier.unalias ty with
-        | TyNominal(nominalName, _, _) -> nominalName = name
-        | TyUnion options -> options |> List.exists (containsNominal name)
-        | _ -> false
-    match Unifier.unalias inputTy with
-    | TyNominal(name, _, _) ->
-        match Unifier.unalias lhsType with
-        | TyNominal(lhsName, _, _) -> lhsName = name
-        | TyUnion options -> options |> List.exists (containsNominal name)
-        | TyVar _ -> true
-        | _ -> false
-    | _ ->
-        match Unifier.unalias lhsType with
-        | TyNominal _ -> false
-        | _ -> isAssignableType inputTy lhsType
 
 /// Where the name of a call, pipe or member access is written (`spanOpt`), or the whole expression if not known.
 let private nameSpan (spanOpt: SourceSpan option) (expr: Expression) : SourceSpan =
@@ -274,27 +234,28 @@ let private ambiguousReference (name: string) (expr: Expression) (scheme: TypeSc
 let private referenceErrors (name: string) (expr: Expression) (scheme: TypeScheme) (state: InferState) : Diagnostic list =
     privateReference expr scheme state @ ambiguousReference name expr scheme state
 
-let private tryResolveAttachedFunction (env: TypeEnv) (lhsType: Ty) (funcName: string) (span: SourceSpan): Result<string option, Diagnostic list> =
+/// The names definitions can be attached to a value of type `ty` under, nearest first: each alias it is written
+/// with, then the nominal type or the language's name for a built-in type (`String`, `List`). Empty when the type
+/// has no name, such as a union, a record written out in full, or a type that is not known yet.
+let rec private attachedTypeNames (ty: Ty) : string list =
+    match ty with
+    | TyAlias(name, _, underlying) -> name :: attachedTypeNames underlying
+    | TyNominal(name, _, _) -> [ name ]
+    | TyPrimitive name -> [ string (Char.ToUpperInvariant name.[0]) + name.Substring 1; name ]
+    | TyApply("list", _) -> [ "List" ]
+    | TyApply("seq", _) -> [ "Seq" ]
+    | _ -> []
+
+/// The attached definition `x \funcName` calls: `Name.funcName` for the first name of `x`'s type that has one in
+/// scope. None when `funcName` is already qualified, or no name of the type attaches it, so the pipe calls a plain
+/// `funcName` instead. Only names in `env` count, so a module imported with `as` is reached as `\t.String.trim`.
+let private tryResolveAttachedFunction (env: TypeEnv) (lhsType: Ty) (funcName: string) : string option =
     if funcName.Contains(".") then
-        Ok None
+        None
     else
-        let suffix = $".{funcName}"
-        let candidates =
-            env
-            |> Map.toList
-            |> List.choose (fun (name, scheme) ->
-                if name.EndsWith(suffix) then
-                    match Unifier.unalias scheme.Type with
-                    | TyFunc(inputTy, _) when matchesAttachedInput inputTy lhsType -> Some name
-                    | _ -> None
-                else
-                    None)
-        match candidates with
-        | [] -> Ok None
-        | [single] -> Ok (Some single)
-        | _ ->
-            let names = String.concat ", " candidates
-            Error [ Diagnostics.at DiagnosticCodes.AmbiguousAttachedFunction span $"Ambiguous attached function '{funcName}': {names}" ]
+        attachedTypeNames lhsType
+        |> List.map (fun typeName -> $"{typeName}.{funcName}")
+        |> List.tryFind (fun name -> env.ContainsKey name)
 
 /// The alias `name`, defined by `info`, written without arguments: a generic one is applied to its own parameters.
 let private aliasType (name: string) (info: TypeDefInfo) : Ty =
@@ -1078,15 +1039,14 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
         | Ok (typedValue, nextState) ->
             // A pipe resolves left to right: the value's type as the code before the pipe settles it picks the
             // attached function, even where that type is still a variable waiting on the module's constraints.
-            match tryResolveAttachedFunction env (resolveSoFar nextState typedValue.Type) name (nameSpan spanOpt expr) with
+            let resolvedName =
+                tryResolveAttachedFunction env (resolveSoFar nextState typedValue.Type) name
+                |> Option.defaultValue name
+            let callArgs = value :: args
+            match inferExpr env nextState { expr with Kind = FunctionCall(resolvedName, spanOpt, callArgs) } with
+            | Ok (typedCall, finalState) ->
+                Ok ({ typedCall with Expr = { expr with Kind = Pipe(value, resolvedName, spanOpt, args) } }, finalState)
             | Error err -> Error err
-            | Ok resolvedOpt ->
-                let resolvedName = resolvedOpt |> Option.defaultValue name
-                let callArgs = value :: args
-                match inferExpr env nextState { expr with Kind = FunctionCall(resolvedName, spanOpt, callArgs) } with
-                | Ok (typedCall, finalState) ->
-                    Ok ({ typedCall with Expr = { expr with Kind = Pipe(value, resolvedName, spanOpt, args) } }, finalState)
-                | Error err -> Error err
     | UseIn(binding, body) ->
         match inferUseBinding env state binding with
         | Error err -> Error err
