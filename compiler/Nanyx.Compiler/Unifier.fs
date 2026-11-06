@@ -359,6 +359,27 @@ module Unifier =
         | TyPrimitive _ -> false
 
     let unify (constraints: ConstraintSet) : Result<Subst, string> =
+        // Widening a union (below) makes up rest variables. They are numbered past every variable in the
+        // constraints, and far past where inference numbers its own, so that they are new to both.
+        let mutable nextRestId =
+            let rec maxId ty =
+                match ty with
+                | TyVar v -> v.Id
+                | TyPrimitive _ -> 0
+                | TyNominal(_, underlying, _) -> maxId underlying
+                | TyAlias(_, args, underlying) -> List.fold (fun acc arg -> max acc (maxId arg)) (maxId underlying) args
+                | TyFunc(arg, ret) -> max (maxId arg) (maxId ret)
+                | TyRecord fields -> fields |> Map.fold (fun acc _ fieldTy -> max acc (maxId fieldTy)) 0
+                | TyTag(_, payload) -> payload |> Option.map maxId |> Option.defaultValue 0
+                | TyApply(_, args)
+                | TyUnion args -> List.fold (fun acc arg -> max acc (maxId arg)) 0 args
+            constraints
+            |> List.fold (fun acc (left, right, _) -> max acc (max (maxId left) (maxId right))) 0
+            |> fun highest -> max 1_000_000_000 (highest + 1)
+        let freshRest () =
+            let var = TyVar { Id = nextRestId; Name = None }
+            nextRestId <- nextRestId + 1
+            var
         let rec loop (subst: Subst) (remaining: ConstraintSet) =
             let unifyRecordFields (lFields: Map<string, Ty>) (rFields: Map<string, Ty>) rest left right =
                 let lKeys = keySet lFields
@@ -431,19 +452,26 @@ module Unifier =
                             |> Seq.toList
                             |> List.map (fun (lTy, rTy) -> (lTy, rTy, Equal))
                         let restConstraints =
-                            [ match lRest with
-                              | Some restVar when not extraRight.IsEmpty ->
-                                  let extraTags = extraRight |> Seq.map (fun key -> rMap.[key]) |> Seq.toList
-                                  yield (TyVar restVar, TyUnion extraTags, Equal)
-                              | _ -> ()
-                              match rRest with
-                              | Some restVar when not extraLeft.IsEmpty ->
-                                  let extraTags = extraLeft |> Seq.map (fun key -> lMap.[key]) |> Seq.toList
-                                  yield (TyVar restVar, TyUnion extraTags, Equal)
-                              | _ -> ()
-                              match lRest, rRest with
-                              | Some lVar, Some rVar -> yield (TyVar lVar, TyVar rVar, Equal)
-                              | _ -> () ]
+                            match lRest, rRest with
+                            // Two open unions: each rest is the other's extra tags and a rest they share, so both
+                            // can still grow alike (`#a | r1` and `#b | r2` are `#a | #b | r3`).
+                            | Some lVar, Some rVar ->
+                                let shared = freshRest ()
+                                let restOf (extras: Set<string>) (tags: Map<string, Ty>) =
+                                    if extras.IsEmpty then shared
+                                    else TyUnion((extras |> Seq.map (fun key -> tags.[key]) |> Seq.toList) @ [ shared ])
+                                [ (TyVar lVar, restOf extraRight rMap, Equal); (TyVar rVar, restOf extraLeft lMap, Equal) ]
+                            | _ ->
+                                [ match lRest with
+                                  | Some restVar when not extraRight.IsEmpty ->
+                                      let extraTags = extraRight |> Seq.map (fun key -> rMap.[key]) |> Seq.toList
+                                      yield (TyVar restVar, TyUnion extraTags, Equal)
+                                  | _ -> ()
+                                  match rRest with
+                                  | Some restVar when not extraLeft.IsEmpty ->
+                                      let extraTags = extraLeft |> Seq.map (fun key -> lMap.[key]) |> Seq.toList
+                                      yield (TyVar restVar, TyUnion extraTags, Equal)
+                                  | _ -> () ]
                         if lRest.IsNone && rRest.IsNone then
                             if extraLeft.IsEmpty || extraRight.IsEmpty then
                                 loop subst (pairs @ rest)
@@ -509,6 +537,25 @@ module Unifier =
                             loop subst ((underlying, r, Assignable) :: rest)
                         | _, TyAlias(_, _, underlying) ->
                             loop subst ((l, underlying, Assignable) :: rest)
+                        // A closed union given where an open one is expected widens it: the tags it has that the
+                        // expected union does not name go into the expected union's rest, which stays open for
+                        // more. So `#some(string) | #nil` and then `#some(int) | #notFound`, given in turn to a
+                        // `#some(a) | r` whose `r` they share, leave `r` as `#nil | #notFound | r'`.
+                        | TyUnion lItems, TyUnion rItems when
+                            (match parseTagUnion lItems, parseTagUnion rItems with
+                             | Ok (_, None), Ok (_, Some _) -> true
+                             | _ -> false) ->
+                            match parseTagUnion lItems, parseTagUnion rItems with
+                            | Ok (lMap, _), Ok (rMap, Some restVar) ->
+                                let pairs =
+                                    lMap
+                                    |> Map.toList
+                                    |> List.choose (fun (key, lTy) -> rMap |> Map.tryFind key |> Option.map (fun rTy -> (lTy, rTy, Equal)))
+                                let extraTags = lMap |> Map.toList |> List.filter (fun (key, _) -> not (rMap.ContainsKey key)) |> List.map snd
+                                let restConstraints =
+                                    if extraTags.IsEmpty then [] else [ (TyVar restVar, TyUnion(extraTags @ [ freshRest () ]), Equal) ]
+                                loop subst (pairs @ restConstraints @ rest)
+                            | _ -> unifyEqual l r rest
                         | _ ->
                         match l, r with
                         | TyNominal(lName, _, _), TyNominal(rName, _, _) when lName = rName ->
