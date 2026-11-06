@@ -85,6 +85,66 @@ let private compileImporting (moduleSource: string) (mainSource: string) =
         result <- Compiler.compileFile mainPath)
     result
 
+let private compileImportingAll (modules: (string * string) list) (mainSource: string) =
+    let mutable result = Unchecked.defaultof<CompileResult>
+    withTempDir (fun dir ->
+        for fileName, source in modules do
+            File.WriteAllText(Path.Combine(dir, fileName), source)
+        let mainPath = Path.Combine(dir, "main.nyx")
+        File.WriteAllText(mainPath, mainSource)
+        result <- Compiler.compileFile mainPath)
+    result
+
+let private csvAndJson =
+    [ "csv.nyx", "module csvParser\nexport def parse = { s -> 1 }\nexport def csvOnly = 1"
+      "json.nyx", "module jsonParser\nexport def parse = { s -> 2 }" ]
+
+[<Fact>]
+let ``A name two imports export is ambiguous where it is used`` () =
+    let result = compileImportingAll csvAndJson "module main\nimport \"csv.nyx\"\nimport \"json.nyx\"\ndef data = parse(\"x\")"
+    Assert.False(result.Diagnostics.IsEmpty)
+    Assert.Contains("'parse' is ambiguous between 'csvParser.parse' and 'jsonParser.parse'", (result.Diagnostics |> List.head).Message)
+
+[<Fact>]
+let ``A name two imports export is ambiguous as a value too`` () =
+    let result = compileImportingAll csvAndJson "module main\nimport \"csv.nyx\"\nimport \"json.nyx\"\ndef f = parse"
+    Assert.False(result.Diagnostics.IsEmpty)
+    Assert.Contains("'parse' is ambiguous", (result.Diagnostics |> List.head).Message)
+
+[<Fact>]
+let ``A name two imports export is not an error when unused`` () =
+    let result = compileImportingAll csvAndJson "module main\nimport \"csv.nyx\"\nimport \"json.nyx\"\ndef value = csvOnly"
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+
+[<Fact>]
+let ``Aliasing one import resolves an ambiguous name`` () =
+    let result = compileImportingAll csvAndJson "module main\nimport \"csv.nyx\" as csv\nimport \"json.nyx\"\ndef a = parse(\"x\")\ndef b = csv.parse(\"x\")"
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+
+[<Fact>]
+let ``The module's own definition wins over a name two imports export`` () =
+    let result = compileImportingAll csvAndJson "module main\nimport \"csv.nyx\"\nimport \"json.nyx\"\ndef parse = { s -> 3 }\ndef data = parse(\"x\")"
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+
+[<Fact>]
+let ``A local shadows a name two imports export`` () =
+    let result = compileImportingAll csvAndJson "module main\nimport \"csv.nyx\"\nimport \"json.nyx\"\ndef data = { parse -> parse }"
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+
+[<Fact>]
+let ``Importing the same module twice is not ambiguous`` () =
+    let result = compileImportingAll csvAndJson "module main\nimport \"csv.nyx\"\nimport \"./csv.nyx\"\ndef data = parse(\"x\")"
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+
+[<Fact>]
+let ``An attached name two imports define is ambiguous where it is used`` () =
+    let modules =
+        [ "one.nyx", "module one\nexport def String.shout: string -> string = { s -> s }"
+          "two.nyx", "module two\nexport def String.shout: string -> string = { s -> s ++ \"!\" }" ]
+    let result = compileImportingAll modules "module main\nimport \"one.nyx\"\nimport \"two.nyx\"\ndef a = \"x\" \\ shout"
+    Assert.False(result.Diagnostics.IsEmpty)
+    Assert.Contains("'String.shout' is ambiguous between 'one.String.shout' and 'two.String.shout'", (result.Diagnostics |> List.head).Message)
+
 [<Fact>]
 let ``Import does not bring private definitions into scope`` () =
     let result = compileImporting "module mod\nexport def foo = 1\ndef bar = 2" "module main\nimport \"mod.nyx\"\ndef value = bar"

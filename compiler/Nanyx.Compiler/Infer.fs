@@ -40,7 +40,11 @@ type InferState =
             /// The import that brought each imported definition into scope, by the definition's symbol.
             ImportedThrough: Map<SymbolId, SymbolId>;
             /// The import each name brought in by an import came through, by the node of the name.
-            ImportReferences: Map<NodeId, SymbolId> }
+            ImportReferences: Map<NodeId, SymbolId>;
+            /// The names more than one import brings in unqualified: the symbol the environment holds for the name,
+            /// and each candidate written as `module.name`. A reference that still resolves to that symbol is
+            /// ambiguous; one to a definition of the module's own, or to a local, is not.
+            AmbiguousImports: Map<string, SymbolId * string list> }
 
 let emptyState =
         { NextId = 0;
@@ -61,7 +65,8 @@ let emptyState =
             AnnotatedSymbols = Set.empty;
             References = Map.empty;
             ImportedThrough = Map.empty;
-            ImportReferences = Map.empty }
+            ImportReferences = Map.empty;
+            AmbiguousImports = Map.empty }
 
 let private freshVar (state: InferState) =
     let var = { Id = state.NextId; Name = None }
@@ -236,6 +241,24 @@ let private privateReference (expr: Expression) (scheme: TypeScheme) (state: Inf
             | None -> [ Diagnostics.error message ]
         | None -> []
     | _ -> []
+
+/// The error for `expr`, a reference to `name` bound to `scheme`, if `name` is brought in by more than one import
+/// and nothing nearer binds it. Import order never picks one.
+let private ambiguousReference (name: string) (expr: Expression) (scheme: TypeScheme) (state: InferState) : Diagnostic list =
+    match state.AmbiguousImports |> Map.tryFind name with
+    | Some (symbol, candidates) when scheme.Symbol = Some symbol ->
+        let quoted = candidates |> List.map (fun candidate -> $"'{candidate}'")
+        let listed = String.concat ", " (List.take (quoted.Length - 1) quoted) + " and " + List.last quoted
+        let message = $"'{name}' is ambiguous between {listed}; import all but one of them with 'as'"
+        match spanPosition expr.Span with
+        | Some position -> [ Diagnostics.errorAt message position ]
+        | None -> [ Diagnostics.error message ]
+    | _ -> []
+
+/// The errors for a reference to `name`, bound to `scheme`, that the name alone does not show: a definition a module
+/// block keeps private, or a name more than one import brings in.
+let private referenceErrors (name: string) (expr: Expression) (scheme: TypeScheme) (state: InferState) : Diagnostic list =
+    privateReference expr scheme state @ ambiguousReference name expr scheme state
 
 let private tryResolveAttachedFunction (env: TypeEnv) (lhsType: Ty) (funcName: string) (rangeOpt: (int * int) option): Result<string option, Diagnostic list> =
     if funcName.Contains(".") then
@@ -745,7 +768,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
         Ok (mkTypedExpr expr (TyPrimitive "unit") None None None, state)
     | IdentifierExpr name ->
         match TypeEnv.tryFind name env with
-        | Some scheme when not (privateReference expr scheme state).IsEmpty -> Error (privateReference expr scheme state)
+        | Some scheme when not (referenceErrors name expr scheme state).IsEmpty -> Error (referenceErrors name expr scheme state)
         | Some scheme ->
             let ty, next = instantiate (recordReference expr scheme state) scheme
             Ok (mkTypedExpr expr ty None None None, next)
@@ -845,7 +868,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
         | Error err -> Error err
         | Ok () ->
             match TypeEnv.tryFind name env with
-            | Some scheme when not (privateReference expr scheme state).IsEmpty -> Error (privateReference expr scheme state)
+            | Some scheme when not (referenceErrors name expr scheme state).IsEmpty -> Error (referenceErrors name expr scheme state)
             | Some scheme ->
                 let mutable current = state
                 let funcTy, nextState = instantiate (recordReference expr scheme current) scheme
@@ -1588,7 +1611,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
         | IdentifierExpr baseName ->
             let qualifiedName = $"{baseName}.{memberName}"
             match TypeEnv.tryFind qualifiedName env with
-            | Some scheme when not (privateReference expr scheme state).IsEmpty -> Error (privateReference expr scheme state)
+            | Some scheme when not (referenceErrors qualifiedName expr scheme state).IsEmpty -> Error (referenceErrors qualifiedName expr scheme state)
             | Some scheme ->
                 let ty, next = instantiate (recordReference expr scheme state) scheme
                 Ok (mkTypedExpr expr ty None None None, next)
