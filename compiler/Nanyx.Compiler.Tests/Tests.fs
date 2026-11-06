@@ -163,6 +163,48 @@ let ``An error in a module imported along two paths is reported once`` () =
     let unknown = result.Diagnostics |> List.filter (fun diag -> diag.Message.Contains "undefinedName")
     Assert.Equal(1, unknown.Length)
 
+let private valueDefinitionNames (result: CompileResult) =
+    result.Typed.Value.Module
+    |> List.choose (function
+        | Def (ValueDef(_, name, _, _)) -> Some name
+        | _ -> None)
+    |> Set.ofList
+
+[<Fact>]
+let ``Only the imported definitions a module reaches are inlined`` () =
+    let modules =
+        [ "mod.nyx",
+          "module mod\n" +
+          "def c = { 1 }\n" +
+          "def b = { c() + 1 }\n" +
+          "export def a = { b() + 1 }\n" +
+          "export def unused = { 5 }" ]
+    let result = compileImportingAll modules "module main\nimport \"mod.nyx\"\ndef x = a()"
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    let names = valueDefinitionNames result
+    Assert.Contains("a", names)
+    Assert.Contains("mod.b", names)
+    Assert.Contains("mod.c", names)
+    Assert.DoesNotContain("unused", names)
+
+[<Fact>]
+let ``Only the standard-library definitions a program reaches are inlined`` () =
+    let result = Compiler.compile "import nanyx/text\ndef x = contains(\"abc\", \"b\")"
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    let names = valueDefinitionNames result
+    Assert.Contains("contains", names)
+    Assert.DoesNotContain("padStart", names)
+    Assert.DoesNotContain("words", names)
+
+[<Fact>]
+let ``Definitions reached through an aliased import are inlined`` () =
+    let modules = [ "mod.nyx", "module mod\nexport def a = { 1 }\nexport def unused = { 5 }" ]
+    let result = compileImportingAll modules "module main\nimport \"mod.nyx\" as m\ndef x = m.a()"
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    let names = valueDefinitionNames result
+    Assert.Contains("m.a", names)
+    Assert.DoesNotContain("m.unused", names)
+
 [<Fact>]
 let ``An attached name two imports define is ambiguous where it is used`` () =
     let modules =

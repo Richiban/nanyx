@@ -200,6 +200,113 @@ module Compiler =
             | TypeDefStatement _ -> statement
         mapExpr expr
 
+    /// Every name an expression may refer to: identifiers, callees and pipe targets, and for a member access
+    /// `a.b.c` both the dotted name and the member as `.c`, since the backend may call a definition named either
+    /// way. Shadowing is ignored, so this can only over-count.
+    let rec private referencedNames (expr: Expression) : string list =
+        let rec dottedName (current: Expression) =
+            match current.Kind with
+            | IdentifierExpr name -> Some name
+            | MemberAccess(inner, memberName, _) -> dottedName inner |> Option.map (fun prefix -> $"{prefix}.{memberName}")
+            | _ -> None
+        match expr.Kind with
+        | IdentifierExpr name -> [ name ]
+        | FunctionCall(name, _, args) -> name :: (args |> List.collect referencedNames)
+        | Pipe(value, name, _, args) -> name :: referencedNames value @ (args |> List.collect referencedNames)
+        | Lambda(_, body) -> referencedNames body
+        | BinaryOp(_, left, right) -> referencedNames left @ referencedNames right
+        | IfExpr(cond, thenExpr, elseExpr) -> referencedNames cond @ referencedNames thenExpr @ referencedNames elseExpr
+        | Block statements -> statements |> List.collect referencedNamesInStatement
+        | Match(values, arms) ->
+            (values |> List.collect referencedNames)
+            @ (arms |> List.collect (fun (patterns, body) -> (patterns |> List.collect referencedNamesInPattern) @ referencedNames body))
+        | TupleExpr items
+        | ListExpr items -> items |> List.collect referencedNames
+        | RecordExpr fields ->
+            fields |> List.collect (function NamedField(_, value) | PositionalField value -> referencedNames value)
+        | TagExpr(_, payload) -> payload |> Option.map referencedNames |> Option.defaultValue []
+        | MemberAccess(inner, memberName, _) ->
+            $".{memberName}" :: (dottedName expr |> Option.toList) @ referencedNames inner
+        | UseIn(binding, body) -> referencedNamesInBinding binding @ referencedNames body
+        | WorkflowBindExpr(_, value)
+        | WorkflowReturnExpr value -> referencedNames value
+        | InterpolatedString parts ->
+            parts |> List.collect (function StringExpr value -> referencedNames value | StringText _ -> [])
+        | ContextMemberCall(_, memberName, args) -> memberName :: (args |> List.collect referencedNames)
+        | ContextMemberAccess _
+        | UnitExpr
+        | LiteralExpr _ -> []
+
+    and private referencedNamesInStatement (statement: Statement) : string list =
+        match statement with
+        | DefStatement(_, _, _, value) -> referencedNames value
+        | ExprStatement value -> referencedNames value
+        | UseStatement binding -> referencedNamesInBinding binding
+        | ImportStatement _
+        | TypeDefStatement _ -> []
+
+    and private referencedNamesInBinding (binding: UseBinding) : string list =
+        match binding with
+        | UseValue value
+        | UseContextInstance(_, value) -> referencedNames value
+
+    and private referencedNamesInPattern (pattern: Pattern) : string list =
+        match pattern with
+        | GuardPattern(_, value) -> referencedNames value
+        | RangePattern(startValue, endValue) -> referencedNames startValue @ referencedNames endValue
+        | TagPattern(_, Some payload) -> referencedNamesInPattern payload
+        | TuplePattern patterns
+        | ListPattern(patterns, _) -> patterns |> List.collect referencedNamesInPattern
+        | ListSplatMiddle(before, after) -> (before @ after) |> List.collect referencedNamesInPattern
+        | RecordPattern(_, patterns) -> patterns |> List.collect referencedNamesInPattern
+        | RecordMemberPattern members -> members |> List.collect (snd >> referencedNamesInPattern)
+        | TagPattern(_, None)
+        | LiteralPattern _
+        | IdentifierPattern _
+        | WildcardPattern
+        | ElsePattern -> []
+
+    /// The inlined items `own` uses: the value definitions it reaches, directly or through other inlined
+    /// definitions, and every type definition, in their original order. A definition named like a member of a
+    /// context is always kept, because the backend supplies it as the ambient instance of that context (the
+    /// runtime's `Console`, say) without anything naming it.
+    let private reachedItems (own: Module) (inlined: TopLevelItem list) : TopLevelItem list =
+        let bodies =
+            inlined
+            |> List.choose (function
+                | Def (ValueDef(_, name, _, value)) -> Some (name, value)
+                | _ -> None)
+        let contextMembers =
+            inlined @ own
+            |> List.collect (function
+                | Def (TypeDef(_, modifiers, _, TypeRecord fields)) when modifiers |> List.contains Context ->
+                    fields |> List.map (function TypeField(fieldName, _, _, _, _) | TypeMember(fieldName, _) -> fieldName)
+                | _ -> [])
+            |> Set.ofList
+        let rootNames =
+            own
+            |> List.collect (function
+                | Def (ValueDef(_, _, _, value)) -> referencedNames value
+                | Expr value -> referencedNames value
+                | _ -> [])
+        let isReferenced (referenced: Set<string>) (name: string) =
+            referenced.Contains name
+            || contextMembers.Contains name
+            || (name.Contains "." && referenced.Contains (name.Substring(name.LastIndexOf '.')))
+        let rec reach (referenced: Set<string>) (reached: Set<string>) =
+            let newlyReached =
+                bodies |> List.filter (fun (name, _) -> not (reached.Contains name) && isReferenced referenced name)
+            if newlyReached.IsEmpty then
+                reached
+            else
+                let referenced = newlyReached |> List.collect (snd >> referencedNames) |> List.fold (fun acc name -> Set.add name acc) referenced
+                reach referenced (newlyReached |> List.fold (fun acc (name, _) -> Set.add name acc) reached)
+        let reached = reach (Set.ofList rootNames) Set.empty
+        inlined
+        |> List.filter (function
+            | Def (ValueDef(_, name, _, _)) -> reached.Contains name
+            | _ -> true)
+
     /// The items an importer inlines for the backend from a module it imports: the module's own value
     /// definitions and type definitions (plus whatever that module inlined itself). Exported definitions keep
     /// their names, or take the import's alias as a qualifier; private ones are qualified with the module's own
@@ -840,6 +947,7 @@ module Compiler =
                                     | Def (ValueDef(_, name, _, _)) -> not (ownNames.Contains name)
                                     | _ -> true)
                                 |> distinctDefinitions
+                                |> reachedItems own
                             Ok { Typed =
                                     { Module = inlined @ own
                                       // The types of the imported definitions inlined for the backend, then the module's own.
