@@ -1,0 +1,151 @@
+module Nanyx.Compiler.DiagnosticsTests
+
+open System
+open System.IO
+open Xunit
+open NyxCompiler
+open Parser.Program
+
+let private single (result: CompileResult) =
+    Assert.Single(result.Diagnostics) |> ignore
+    result.Diagnostics.Head
+
+/// The text `span` covers in `source` (whose line endings are already `\n`).
+let private textAt (source: string) (span: SourceSpan) = source.Substring(span.Start, span.End - span.Start)
+
+let private spanOf (diagnostic: Diagnostic) =
+    Assert.True(diagnostic.Span.IsSome, $"Expected a span on %A{diagnostic}")
+    diagnostic.Span.Value
+
+[<Fact>]
+let ``Every compiler code is distinct and has the NYX form`` () =
+    let codes = DiagnosticCodes.all |> List.map (fun code -> code.Code)
+    Assert.Equal(codes.Length, (List.distinct codes).Length)
+    for code in codes do
+        Assert.Matches("^NYX\\d{4}$", code)
+
+[<Fact>]
+let ``The compiler reports only critical and error severities`` () =
+    for code in DiagnosticCodes.all do
+        Assert.True(code.Severity = Severity.Critical || code.Severity = Severity.Error, $"{code.Code} is {code.Severity}")
+
+[<Fact>]
+let ``An unknown identifier is reported at the reference, not an earlier mention of the name`` () =
+    // The old positioning searched the source for the first quoted name, which is in the string.
+    let source = "def note = \"missing\"\ndef value = missing"
+    let diagnostic = single (Compiler.compile source)
+    Assert.Equal(DiagnosticCodes.UnknownIdentifier.Code, diagnostic.Code)
+    Assert.Equal(DiagnosticCodes.UnknownIdentifier.Title, diagnostic.Title)
+    let span = spanOf diagnostic
+    Assert.Equal((1, 12), (span.StartLine, span.StartColumn))
+    Assert.Equal("missing", textAt source span)
+
+[<Fact>]
+let ``A type mismatch in an argument is reported at the argument`` () =
+    let source = "import nanyx/console\n\nprintln(42)"
+    let diagnostic = single (Compiler.compile source)
+    Assert.Equal(DiagnosticCodes.TypeMismatch.Code, diagnostic.Code)
+    Assert.Equal("42", textAt source (spanOf diagnostic))
+
+[<Fact>]
+let ``A type mismatch between operands is reported at the operation`` () =
+    let source = "def a = 1\ndef b = a + \"x\""
+    let diagnostic = single (Compiler.compile source)
+    Assert.Equal(DiagnosticCodes.TypeMismatch.Code, diagnostic.Code)
+    Assert.Equal("a + \"x\"", textAt source (spanOf diagnostic))
+
+[<Fact>]
+let ``An unknown member is reported at the member name`` () =
+    let source = "def point = (x = 1, y = 2)\ndef z = point.z"
+    let diagnostic = single (Compiler.compile source)
+    Assert.Equal(DiagnosticCodes.UnknownMember.Code, diagnostic.Code)
+    Assert.Equal("z", textAt source (spanOf diagnostic))
+    Assert.Equal(1, (spanOf diagnostic).StartLine)
+
+[<Fact>]
+let ``A non-exhaustive match is reported at its scrutinee`` () =
+    let source =
+        "def value: #some(int) | #none = #none\n" +
+        "def result = match value\n" +
+        "| #some(v) -> v\n"
+    let diagnostic = single (Compiler.compile source)
+    Assert.Equal(DiagnosticCodes.NonExhaustiveMatch.Code, diagnostic.Code)
+    let span = spanOf diagnostic
+    Assert.Equal((1, 19), (span.StartLine, span.StartColumn))
+    Assert.Equal("value", textAt source span)
+
+[<Fact>]
+let ``A reference to a private definition links to where it is declared`` () =
+    let source = "module inner =\n  def secret = 1\n  export def open = secret + 1\ndef value = inner.secret"
+    let diagnostic = single (Compiler.compile source)
+    Assert.Equal(DiagnosticCodes.NotExported.Code, diagnostic.Code)
+    Assert.Equal("inner.secret", textAt source (spanOf diagnostic))
+    let relatedSpan, relatedMessage = Assert.Single(diagnostic.Related)
+    Assert.Equal((1, 6), (relatedSpan.StartLine, relatedSpan.StartColumn))
+    Assert.Contains("declared here", relatedMessage)
+
+[<Fact>]
+let ``An annotation more general than its body is reported at the definition's name`` () =
+    let source = "def id: a -> a = { x -> x + 1 }"
+    let diagnostic = single (Compiler.compile source)
+    Assert.Equal(DiagnosticCodes.AnnotationTooGeneral.Code, diagnostic.Code)
+    Assert.Equal("id", textAt source (spanOf diagnostic))
+
+[<Fact>]
+let ``A parse error has a code and the position where parsing failed`` () =
+    let result = Compiler.compile "def x = 1\ndef = 2"
+    let diagnostic = single result
+    Assert.Equal(DiagnosticCodes.SyntaxError.Code, diagnostic.Code)
+    let span = spanOf diagnostic
+    Assert.Equal(1, span.StartLine)
+    // The span already says where; the message does not repeat it.
+    Assert.DoesNotContain("Ln:", diagnostic.Message)
+
+[<Fact>]
+let ``An unknown standard library module is reported at the import`` () =
+    let source = "import nanyx/sockets\n\ndbg(1)"
+    let diagnostic = single (Compiler.compile source)
+    Assert.Equal(DiagnosticCodes.UnknownStandardLibraryModule.Code, diagnostic.Code)
+    Assert.Equal("nanyx/sockets", textAt source (spanOf diagnostic))
+
+[<Fact>]
+let ``A missing file is a critical diagnostic about the whole compilation`` () =
+    let diagnostic = single (Compiler.compileFile (Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".nyx")))
+    Assert.Equal(DiagnosticCodes.FileNotFound.Code, diagnostic.Code)
+    Assert.Equal(Severity.Critical, diagnostic.Severity)
+    Assert.True(diagnostic.Span.IsNone)
+
+let private withTempDir (action: string -> unit) =
+    let dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+    Directory.CreateDirectory dir |> ignore
+    try
+        action dir
+    finally
+        if Directory.Exists dir then
+            Directory.Delete(dir, true)
+
+[<Fact>]
+let ``A diagnostic in an imported module is reported in that module's file`` () =
+    withTempDir (fun dir ->
+        let modulePath = Path.Combine(dir, "mod.nyx")
+        let mainPath = Path.Combine(dir, "main.nyx")
+        File.WriteAllText(modulePath, "module mod\nexport def value = missing")
+        // The root mentions `missing` too, where the old positioning would have put the error.
+        File.WriteAllText(mainPath, "module main\nimport \"mod.nyx\"\ndef missing2 = \"missing\"")
+        let diagnostic = single (Compiler.compileFile mainPath)
+        Assert.Equal(DiagnosticCodes.UnknownIdentifier.Code, diagnostic.Code)
+        let span = spanOf diagnostic
+        Assert.Equal(Path.GetFullPath modulePath, span.File)
+        Assert.Equal((1, 19), (span.StartLine, span.StartColumn)))
+
+[<Fact>]
+let ``An import cycle is reported at the import that closes it`` () =
+    withTempDir (fun dir ->
+        let mainPath = Path.Combine(dir, "main.nyx")
+        File.WriteAllText(Path.Combine(dir, "a.nyx"), "module a\nimport \"main.nyx\"\nexport def x = 1")
+        File.WriteAllText(mainPath, "module main\nimport \"a.nyx\"\ndef y = x")
+        let diagnostic = single (Compiler.compileFile mainPath)
+        Assert.Equal(DiagnosticCodes.ImportCycle.Code, diagnostic.Code)
+        let span = spanOf diagnostic
+        Assert.Equal(Path.Combine(dir, "a.nyx") |> Path.GetFullPath, span.File)
+        Assert.Equal(1, span.StartLine))

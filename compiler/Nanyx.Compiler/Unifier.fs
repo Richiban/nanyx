@@ -1,6 +1,7 @@
 namespace NyxCompiler
 
 open System.Collections.Generic
+open Parser.Program
 
 /// Substitution map for type variables.
 type Subst = Map<int, Ty>
@@ -358,7 +359,7 @@ module Unifier =
         | TyUnion items -> items |> List.exists (occurs varId)
         | TyPrimitive _ -> false
 
-    let unify (constraints: ConstraintSet) : Result<Subst, string> =
+    let unify (constraints: ConstraintSet) : Result<Subst, string * SourceSpan> =
         // Widening a union (below) makes up rest variables. They are numbered past every variable in the
         // constraints, and far past where inference numbers its own, so that they are new to both.
         let mutable nextRestId =
@@ -374,14 +375,14 @@ module Unifier =
                 | TyApply(_, args)
                 | TyUnion args -> List.fold (fun acc arg -> max acc (maxId arg)) 0 args
             constraints
-            |> List.fold (fun acc (left, right, _) -> max acc (max (maxId left) (maxId right))) 0
+            |> List.fold (fun acc (left, right, _, _) -> max acc (max (maxId left) (maxId right))) 0
             |> fun highest -> max 1_000_000_000 (highest + 1)
         let freshRest () =
             let var = TyVar { Id = nextRestId; Name = None }
             nextRestId <- nextRestId + 1
             var
         let rec loop (subst: Subst) (remaining: ConstraintSet) =
-            let unifyRecordFields (lFields: Map<string, Ty>) (rFields: Map<string, Ty>) rest left right =
+            let unifyRecordFields origin (lFields: Map<string, Ty>) (rFields: Map<string, Ty>) rest left right =
                 let lKeys = keySet lFields
                 let rKeys = keySet rFields
                 if Set.isSubset lKeys rKeys || Set.isSubset rKeys lKeys then
@@ -390,54 +391,54 @@ module Unifier =
                         commonKeys
                         |> Seq.map (fun key -> (lFields.[key], rFields.[key]))
                         |> Seq.toList
-                    let pairConstraints = pairs |> List.map (fun (lTy, rTy) -> (lTy, rTy, Equal))
+                    let pairConstraints = pairs |> List.map (fun (lTy, rTy) -> (lTy, rTy, Equal, origin))
                     loop subst (pairConstraints @ rest)
                 else
-                    Error (recordKeyMessage lKeys rKeys left right)
-            let unifyEqual l r rest =
+                    Error (recordKeyMessage lKeys rKeys left right, origin)
+            let unifyEqual origin l r rest =
                 match l, r with
                 | TyVar v, ty
                 | ty, TyVar v ->
                     if occurs v.Id ty then
-                        Error $"Occurs check failed: {tyToString ty} contains {tyToString (TyVar v)}."
+                        Error ($"Occurs check failed: {tyToString ty} contains {tyToString (TyVar v)}.", origin)
                     else
                         let newSubst = subst |> Map.add v.Id ty
                         loop newSubst rest
                 // An alias is the type it stands for.
                 | TyAlias(_, _, underlying), _ ->
-                    loop subst ((underlying, r, Equal) :: rest)
+                    loop subst ((underlying, r, Equal, origin) :: rest)
                 | _, TyAlias(_, _, underlying) ->
-                    loop subst ((l, underlying, Equal) :: rest)
+                    loop subst ((l, underlying, Equal, origin) :: rest)
                 | TyPrimitive lName, TyPrimitive rName when lName = rName ->
                     loop subst rest
                 | TyApply(lName, lArgs), TyApply(rName, rArgs) when lName = rName && lArgs.Length = rArgs.Length ->
                     let pairs = List.zip lArgs rArgs
-                    let pairConstraints = pairs |> List.map (fun (lTy, rTy) -> (lTy, rTy, Equal))
+                    let pairConstraints = pairs |> List.map (fun (lTy, rTy) -> (lTy, rTy, Equal, origin))
                     loop subst (pairConstraints @ rest)
                 | TyNominal(lName, lUnderlying, lPrivate), TyNominal(rName, rUnderlying, rPrivate) ->
                     if lName = rName then
                         if lPrivate || rPrivate then
                             loop subst rest
                         else
-                            loop subst ((lUnderlying, rUnderlying, Equal) :: rest)
+                            loop subst ((lUnderlying, rUnderlying, Equal, origin) :: rest)
                     else
-                        Error (mismatchMessage l r)
+                        Error (mismatchMessage l r, origin)
                 | TyNominal(_, _, true), _
                 | _, TyNominal(_, _, true) ->
-                    Error (mismatchMessage l r)
+                    Error (mismatchMessage l r, origin)
                 | TyNominal(_, underlying, false), _ ->
-                    loop subst ((underlying, r, Equal) :: rest)
+                    loop subst ((underlying, r, Equal, origin) :: rest)
                 | _, TyNominal(_, underlying, false) ->
-                    loop subst ((l, underlying, Equal) :: rest)
+                    loop subst ((l, underlying, Equal, origin) :: rest)
                 | TyFunc(lArg, lRet), TyFunc(rArg, rRet) ->
-                    loop subst ((lArg, rArg, Equal) :: (lRet, rRet, Equal) :: rest)
+                    loop subst ((lArg, rArg, Equal, origin) :: (lRet, rRet, Equal, origin) :: rest)
                 | TyRecord lFields, TyRecord rFields ->
-                    unifyRecordFields lFields rFields rest l r
+                    unifyRecordFields origin lFields rFields rest l r
                 | TyTag(lName, lPayload), TyTag(rName, rPayload) when lName = rName ->
                     match lPayload, rPayload with
                     | None, None -> loop subst rest
-                    | Some lTy, Some rTy -> loop subst ((lTy, rTy, Equal) :: rest)
-                    | _ -> Error $"Tag payload mismatch: #{lName}. {mismatchMessage l r}"
+                    | Some lTy, Some rTy -> loop subst ((lTy, rTy, Equal, origin) :: rest)
+                    | _ -> Error ($"Tag payload mismatch: #{lName}. {mismatchMessage l r}", origin)
                 | TyUnion lItems, TyUnion rItems ->
                     match parseTagUnion lItems, parseTagUnion rItems with
                     | Ok (lMap, lRest), Ok (rMap, rRest) ->
@@ -450,7 +451,7 @@ module Unifier =
                             commonKeys
                             |> Seq.map (fun key -> (lMap.[key], rMap.[key]))
                             |> Seq.toList
-                            |> List.map (fun (lTy, rTy) -> (lTy, rTy, Equal))
+                            |> List.map (fun (lTy, rTy) -> (lTy, rTy, Equal, origin))
                         let restConstraints =
                             match lRest, rRest with
                             // Two open unions: each rest is the other's extra tags and a rest they share, so both
@@ -460,29 +461,29 @@ module Unifier =
                                 let restOf (extras: Set<string>) (tags: Map<string, Ty>) =
                                     if extras.IsEmpty then shared
                                     else TyUnion((extras |> Seq.map (fun key -> tags.[key]) |> Seq.toList) @ [ shared ])
-                                [ (TyVar lVar, restOf extraRight rMap, Equal); (TyVar rVar, restOf extraLeft lMap, Equal) ]
+                                [ (TyVar lVar, restOf extraRight rMap, Equal, origin); (TyVar rVar, restOf extraLeft lMap, Equal, origin) ]
                             | _ ->
                                 [ match lRest with
                                   | Some restVar when not extraRight.IsEmpty ->
                                       let extraTags = extraRight |> Seq.map (fun key -> rMap.[key]) |> Seq.toList
-                                      yield (TyVar restVar, TyUnion extraTags, Equal)
+                                      yield (TyVar restVar, TyUnion extraTags, Equal, origin)
                                   | _ -> ()
                                   match rRest with
                                   | Some restVar when not extraLeft.IsEmpty ->
                                       let extraTags = extraLeft |> Seq.map (fun key -> lMap.[key]) |> Seq.toList
-                                      yield (TyVar restVar, TyUnion extraTags, Equal)
+                                      yield (TyVar restVar, TyUnion extraTags, Equal, origin)
                                   | _ -> () ]
                         if lRest.IsNone && rRest.IsNone then
                             if extraLeft.IsEmpty || extraRight.IsEmpty then
                                 loop subst (pairs @ rest)
                             else
-                                Error (tagUnionLengthMessage lMap.Count rMap.Count l r)
+                                Error (tagUnionLengthMessage lMap.Count rMap.Count l r, origin)
                         else if (lRest.IsSome || extraRight.IsEmpty) && (rRest.IsSome || extraLeft.IsEmpty) then
                             loop subst (pairs @ restConstraints @ rest)
                         else
-                            Error (tagUnionLengthMessage lMap.Count rMap.Count l r)
-                    | Error message, _ -> Error message
-                    | _, Error message -> Error message
+                            Error (tagUnionLengthMessage lMap.Count rMap.Count l r, origin)
+                    | Error message, _ -> Error (message, origin)
+                    | _, Error message -> Error (message, origin)
                 | TyUnion lItems, ty ->
                     match parseTagUnion lItems with
                     | Ok (lMap, lRest) ->
@@ -490,38 +491,38 @@ module Unifier =
                         // A member of the union that unifies with `ty` is tried against the rest of the
                         // constraints too, so when none works the failure may come from later on; report
                         // the innermost failure rather than a bare mismatch here.
-                        let rec tryItems items (lastError: string option) =
+                        let rec tryItems items (lastError: (string * SourceSpan) option) =
                             match items with
                             | [] ->
                                 match lRest with
-                                | Some restVar when isTagLike ty -> loop subst ((TyVar restVar, ty, Equal) :: rest)
-                                | _ -> Error (lastError |> Option.defaultValue (mismatchMessage l r))
+                                | Some restVar when isTagLike ty -> loop subst ((TyVar restVar, ty, Equal, origin) :: rest)
+                                | _ -> Error (lastError |> Option.defaultValue (mismatchMessage l r, origin))
                             | item :: restItems ->
-                                match loop subst ((item, ty, Equal) :: rest) with
+                                match loop subst ((item, ty, Equal, origin) :: rest) with
                                 | Ok result -> Ok result
                                 | Error inner -> tryItems restItems (Some inner)
                         tryItems tags None
-                    | Error message -> Error message
+                    | Error message -> Error (message, origin)
                 | ty, TyUnion rItems ->
                     match parseTagUnion rItems with
                     | Ok (rMap, rRest) ->
                         let tags = rMap |> Map.toList |> List.map snd
-                        let rec tryItems items (lastError: string option) =
+                        let rec tryItems items (lastError: (string * SourceSpan) option) =
                             match items with
                             | [] ->
                                 match rRest with
-                                | Some restVar when isTagLike ty -> loop subst ((ty, TyVar restVar, Equal) :: rest)
-                                | _ -> Error (lastError |> Option.defaultValue (mismatchMessage l r))
+                                | Some restVar when isTagLike ty -> loop subst ((ty, TyVar restVar, Equal, origin) :: rest)
+                                | _ -> Error (lastError |> Option.defaultValue (mismatchMessage l r, origin))
                             | item :: restItems ->
-                                match loop subst ((ty, item, Equal) :: rest) with
+                                match loop subst ((ty, item, Equal, origin) :: rest) with
                                 | Ok result -> Ok result
                                 | Error inner -> tryItems restItems (Some inner)
                         tryItems tags None
-                    | Error message -> Error message
-                | _ -> Error (mismatchMessage l r)
+                    | Error message -> Error (message, origin)
+                | _ -> Error (mismatchMessage l r, origin)
             match remaining with
             | [] -> Ok subst
-            | (left, right, kind) :: rest ->
+            | (left, right, kind, origin) :: rest ->
                 let l = apply subst left
                 let r = apply subst right
                 if l = r then
@@ -532,11 +533,11 @@ module Unifier =
                         match l, r with
                         | TyVar _, _
                         | _, TyVar _ ->
-                            unifyEqual l r rest
+                            unifyEqual origin l r rest
                         | TyAlias(_, _, underlying), _ ->
-                            loop subst ((underlying, r, Assignable) :: rest)
+                            loop subst ((underlying, r, Assignable, origin) :: rest)
                         | _, TyAlias(_, _, underlying) ->
-                            loop subst ((l, underlying, Assignable) :: rest)
+                            loop subst ((l, underlying, Assignable, origin) :: rest)
                         // A closed union given where an open one is expected widens it: the tags it has that the
                         // expected union does not name go into the expected union's rest, which stays open for
                         // more. So `#some(string) | #nil` and then `#some(int) | #notFound`, given in turn to a
@@ -550,27 +551,27 @@ module Unifier =
                                 let pairs =
                                     lMap
                                     |> Map.toList
-                                    |> List.choose (fun (key, lTy) -> rMap |> Map.tryFind key |> Option.map (fun rTy -> (lTy, rTy, Equal)))
+                                    |> List.choose (fun (key, lTy) -> rMap |> Map.tryFind key |> Option.map (fun rTy -> (lTy, rTy, Equal, origin)))
                                 let extraTags = lMap |> Map.toList |> List.filter (fun (key, _) -> not (rMap.ContainsKey key)) |> List.map snd
                                 let restConstraints =
-                                    if extraTags.IsEmpty then [] else [ (TyVar restVar, TyUnion(extraTags @ [ freshRest () ]), Equal) ]
+                                    if extraTags.IsEmpty then [] else [ (TyVar restVar, TyUnion(extraTags @ [ freshRest () ]), Equal, origin) ]
                                 loop subst (pairs @ restConstraints @ rest)
-                            | _ -> unifyEqual l r rest
+                            | _ -> unifyEqual origin l r rest
                         | _ ->
                         match l, r with
                         | TyNominal(lName, _, _), TyNominal(rName, _, _) when lName = rName ->
                             loop subst rest
                         | TyNominal(_, _, true), _
                         | _, TyNominal(_, _, true) ->
-                            Error (mismatchMessage l r)
+                            Error (mismatchMessage l r, origin)
                         | TyNominal(_, underlying, false), other when not (match other with TyNominal _ -> true | _ -> false) ->
-                            loop subst ((underlying, other, Equal) :: rest)
+                            loop subst ((underlying, other, Equal, origin) :: rest)
                         | other, TyNominal(_, _, false) when not (match other with TyNominal _ -> true | _ -> false) ->
-                            Error (mismatchMessage l r)
+                            Error (mismatchMessage l r, origin)
                         | TyNominal _, TyNominal _ ->
-                            Error (mismatchMessage l r)
+                            Error (mismatchMessage l r, origin)
                         | _ ->
-                            unifyEqual l r rest
+                            unifyEqual origin l r rest
                     | Equal ->
-                        unifyEqual l r rest
+                        unifyEqual origin l r rest
         loop empty constraints

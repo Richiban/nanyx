@@ -185,19 +185,39 @@ internal static class CliCommands
             return;
         }
 
+        // As compilers usually write them, so editors and terminals can link to the place:
+        // `path/to/file.nyx:3:9: error NYX0201: message`.
         foreach (var diagnostic in diagnostics)
         {
-            var severity = diagnostic.Severity.ToString().Replace("Severity", string.Empty).ToLowerInvariant();
-            var rangeText = string.Empty;
+            var severity = diagnostic.Severity.ToString().ToLowerInvariant();
+            var location = string.Empty;
 
-            if (diagnostic.Range is not null)
+            if (diagnostic.Span is not null)
             {
-                var range = diagnostic.Range.Value;
-                rangeText = $"({range.Item1 + 1}:{range.Item2 + 1}) ";
+                var span = diagnostic.Span.Value;
+                location = $"{DisplayPath(span.File)}:{span.StartLine + 1}:{span.StartColumn + 1}: ";
             }
 
-            writer.WriteLine($"[{severity}] {rangeText}{diagnostic.Message}");
+            writer.WriteLine($"{location}{severity} {diagnostic.Code}: {diagnostic.Message}");
+
+            foreach (var related in diagnostic.Related)
+            {
+                var span = related.Item1;
+                writer.WriteLine($"  {DisplayPath(span.File)}:{span.StartLine + 1}:{span.StartColumn + 1}: {related.Item2}");
+            }
         }
+    }
+
+    /// <summary>A diagnostic's file, relative to the current directory when it is under it.</summary>
+    private static string DisplayPath(string file)
+    {
+        if (string.IsNullOrEmpty(file) || !Path.IsPathRooted(file))
+        {
+            return file;
+        }
+
+        var relative = Path.GetRelativePath(Directory.GetCurrentDirectory(), file);
+        return relative.StartsWith("..", StringComparison.Ordinal) ? file : relative;
     }
 
     private static void PrintTypes(FSharpMap<string, Ty> types)
@@ -290,15 +310,7 @@ internal static class CliCommands
 
     private static bool HasErrors(FSharpList<Diagnostic> diagnostics)
     {
-        foreach (var diagnostic in diagnostics)
-        {
-            if (string.Equals(diagnostic.Severity.ToString(), nameof(Severity.ErrorSeverity), StringComparison.Ordinal))
-            {
-                return true;
-            }
-        }
-
-        return false;
+        return diagnostics.Any(Diagnostics.isError);
     }
 
     private static string DefaultWasmOutputPath(string inputFile)

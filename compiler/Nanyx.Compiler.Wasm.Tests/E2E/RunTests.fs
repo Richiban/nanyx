@@ -582,8 +582,8 @@ let ``Run - a compile error exits 1 with the diagnostic on stderr`` () =
     let outcome = runSource "import nanyx/console\n\nprintln(42)\n"
     Assert.Equal(1, outcome.ExitCode)
     Assert.Equal("", outcome.StandardOutput)
-    Assert.Contains("[error]", outcome.StandardError)
-    Assert.Contains("Type mismatch", outcome.StandardError)
+    // `file:line:col: error CODE: message`, at the argument.
+    Assert.Contains(":3:9: error NYX0201: Type mismatch", outcome.StandardError)
 
 [<Fact>]
 let ``Run - matching on string literals`` () =

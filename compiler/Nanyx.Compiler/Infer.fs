@@ -44,7 +44,9 @@ type InferState =
             /// The names more than one import brings in unqualified: the symbol the environment holds for the name,
             /// and each candidate written as `module.name`. A reference that still resolves to that symbol is
             /// ambiguous; one to a definition of the module's own, or to a local, is not.
-            AmbiguousImports: Map<string, SymbolId * string list> }
+            AmbiguousImports: Map<string, SymbolId * string list>;
+            /// Where a constraint added now is reported if it cannot be satisfied: the expression being inferred.
+            Origin: SourceSpan }
 
 let emptyState =
         { NextId = 0;
@@ -66,7 +68,8 @@ let emptyState =
             References = Map.empty;
             ImportedThrough = Map.empty;
             ImportReferences = Map.empty;
-            AmbiguousImports = Map.empty }
+            AmbiguousImports = Map.empty;
+            Origin = SourceSpan.none }
 
 let private freshVar (state: InferState) =
     let var = { Id = state.NextId; Name = None }
@@ -121,10 +124,28 @@ let private recordReference (expr: Expression) (scheme: TypeScheme) (state: Infe
         { state with References = state.References |> Map.add expr.Id symbol; ImportReferences = importReferences }
 
 let private addConstraint left right (state: InferState) =
-    { state with Constraints = (left, right, Equal) :: state.Constraints }
+    { state with Constraints = (left, right, Equal, state.Origin) :: state.Constraints }
 
 let private addAssignableConstraint left right (state: InferState) =
-    { state with Constraints = (left, right, Assignable) :: state.Constraints }
+    { state with Constraints = (left, right, Assignable, state.Origin) :: state.Constraints }
+
+/// `addConstraint`, reported at `span` rather than at the expression being inferred.
+let private addConstraintAt (span: SourceSpan) left right (state: InferState) =
+    let origin = if SourceSpan.isNone span then state.Origin else span
+    { state with Constraints = (left, right, Equal, origin) :: state.Constraints }
+
+/// `addAssignableConstraint`, reported at `span` rather than at the expression being inferred.
+let private addAssignableConstraintAt (span: SourceSpan) left right (state: InferState) =
+    let origin = if SourceSpan.isNone span then state.Origin else span
+    { state with Constraints = (left, right, Assignable, origin) :: state.Constraints }
+
+/// Where the declaration `holder` makes as `declarer` writes its name, or `holder`'s own span if the parser saw none.
+let private declarationSpan (state: InferState) (declarer: Declarer) (holder: Expression) : SourceSpan =
+    state.Declared
+    |> Map.tryFind (holder.Id, declarer)
+    |> Option.bind List.tryHead
+    |> Option.map snd
+    |> Option.defaultValue holder.Span
 
 let private primitiveType name =
     TyPrimitive name
@@ -182,7 +203,8 @@ let private isBuiltInTypeName (name: string) =
     || name.Equals("list", StringComparison.OrdinalIgnoreCase)
     || name.Equals("seq", StringComparison.OrdinalIgnoreCase)
 
-let private ensureAttachedTypeExists (state: InferState) (currentModuleOpt: string option) (name: Identifier) : Result<unit, Diagnostic list> =
+/// Whether the type `name` is attached to exists; `span` is where the definition's name is written.
+let private ensureAttachedTypeExists (state: InferState) (currentModuleOpt: string option) (name: Identifier) (span: SourceSpan) : Result<unit, Diagnostic list> =
     let firstDot = name.IndexOf(".")
     if firstDot <= 0 then
         Ok ()
@@ -195,7 +217,7 @@ let private ensureAttachedTypeExists (state: InferState) (currentModuleOpt: stri
             if firstDot = lastDot then
                 match currentModuleOpt with
                 | Some currentModule when currentModule = candidateTypeName -> Ok ()
-                | _ -> Error [ Diagnostics.error ($"Unknown attached type '{candidateTypeName}' for definition '{name}'") ]
+                | _ -> Error [ Diagnostics.at DiagnosticCodes.UnknownAttachedType span $"Unknown attached type '{candidateTypeName}' for definition '{name}'" ]
             else
                 Ok ()
 
@@ -217,12 +239,9 @@ let private matchesAttachedInput (inputTy: Ty) (lhsType: Ty) : bool =
         | TyNominal _ -> false
         | _ -> isAssignableType inputTy lhsType
 
-/// The `(line, column)` a diagnostic about a node at `span` is reported at; none for a node the compiler made up.
-let private spanPosition (span: SourceSpan) : (int * int) option =
-    if SourceSpan.isNone span then None else Some (span.StartLine, span.StartColumn)
-
-let private spanOptPosition (spanOpt: SourceSpan option) : (int * int) option =
-    spanOpt |> Option.bind spanPosition
+/// Where the name of a call, pipe or member access is written (`spanOpt`), or the whole expression if not known.
+let private nameSpan (spanOpt: SourceSpan option) (expr: Expression) : SourceSpan =
+    spanOpt |> Option.defaultValue expr.Span
 
 /// The error for `expr` naming what `scheme` is bound for, if that is a definition a `module name =` block does
 /// not export and `expr` is outside the block.
@@ -235,10 +254,8 @@ let private privateReference (expr: Expression) (scheme: TypeScheme) (state: Inf
                 SourceSpan.contains block symbol.Declaration && not (SourceSpan.isNone expr.Span) && not (SourceSpan.contains block expr.Span))
         match outside with
         | Some (blockName, _) ->
-            let message = $"'{symbol.Name}' is not exported from module '{blockName}'"
-            match spanPosition expr.Span with
-            | Some position -> [ Diagnostics.errorAt message position ]
-            | None -> [ Diagnostics.error message ]
+            [ Diagnostics.at DiagnosticCodes.NotExported expr.Span $"'{symbol.Name}' is not exported from module '{blockName}'"
+              |> Diagnostics.withRelated symbol.Declaration $"'{symbol.Name}' is declared here" ]
         | None -> []
     | _ -> []
 
@@ -249,10 +266,7 @@ let private ambiguousReference (name: string) (expr: Expression) (scheme: TypeSc
     | Some (symbol, candidates) when scheme.Symbol = Some symbol ->
         let quoted = candidates |> List.map (fun candidate -> $"'{candidate}'")
         let listed = String.concat ", " (List.take (quoted.Length - 1) quoted) + " and " + List.last quoted
-        let message = $"'{name}' is ambiguous between {listed}; import all but one of them with 'as'"
-        match spanPosition expr.Span with
-        | Some position -> [ Diagnostics.errorAt message position ]
-        | None -> [ Diagnostics.error message ]
+        [ Diagnostics.at DiagnosticCodes.AmbiguousName expr.Span $"'{name}' is ambiguous between {listed}; import all but one of them with 'as'" ]
     | _ -> []
 
 /// The errors for a reference to `name`, bound to `scheme`, that the name alone does not show: a definition a module
@@ -260,7 +274,7 @@ let private ambiguousReference (name: string) (expr: Expression) (scheme: TypeSc
 let private referenceErrors (name: string) (expr: Expression) (scheme: TypeScheme) (state: InferState) : Diagnostic list =
     privateReference expr scheme state @ ambiguousReference name expr scheme state
 
-let private tryResolveAttachedFunction (env: TypeEnv) (lhsType: Ty) (funcName: string) (rangeOpt: (int * int) option): Result<string option, Diagnostic list> =
+let private tryResolveAttachedFunction (env: TypeEnv) (lhsType: Ty) (funcName: string) (span: SourceSpan): Result<string option, Diagnostic list> =
     if funcName.Contains(".") then
         Ok None
     else
@@ -280,9 +294,7 @@ let private tryResolveAttachedFunction (env: TypeEnv) (lhsType: Ty) (funcName: s
         | [single] -> Ok (Some single)
         | _ ->
             let names = String.concat ", " candidates
-            match rangeOpt with
-            | Some (line, col) -> Error [ Diagnostics.errorAt ($"Ambiguous attached function '{funcName}': {names}") (line, col) ]
-            | None -> Error [ Diagnostics.error ($"Ambiguous attached function '{funcName}': {names}") ]
+            Error [ Diagnostics.at DiagnosticCodes.AmbiguousAttachedFunction span $"Ambiguous attached function '{funcName}': {names}" ]
 
 /// The alias `name`, defined by `info`, written without arguments: a generic one is applied to its own parameters.
 let private aliasType (name: string) (info: TypeDefInfo) : Ty =
@@ -514,18 +526,19 @@ let rec private unknownContextNames (state: InferState) (ctxExpr: TypeExpr) : Id
         if state.ContextDefs.ContainsKey name || state.TypeDefs.ContainsKey name then [] else [ name ]
     | _ -> []
 
-let private ensureContextsExist (state: InferState) (name: Identifier) (contexts: TypeExpr list) : Result<unit, Diagnostic list> =
+/// Whether every context in the signature of `name` exists; `span` is where the definition's name is written.
+let private ensureContextsExist (state: InferState) (name: Identifier) (span: SourceSpan) (contexts: TypeExpr list) : Result<unit, Diagnostic list> =
     match contexts |> List.collect (unknownContextNames state) |> List.distinct with
     | [] -> Ok ()
     | unknown ->
         unknown
-        |> List.map (fun ctxName -> Diagnostics.error ($"Unknown context '{ctxName}' in the signature of '{name}'"))
+        |> List.map (fun ctxName -> Diagnostics.at DiagnosticCodes.UnknownContext span $"Unknown context '{ctxName}' in the signature of '{name}'")
         |> Error
 
 let private registerContextRequirement (state: InferState) (name: Identifier) (contexts: TypeExpr list) =
     { state with ContextRequirements = state.ContextRequirements |> Map.add name contexts }
 
-let private ensureContextAvailable (env: TypeEnv) (state: InferState) (name: Identifier) (contexts: TypeExpr list) (rangeOpt: (int * int) option) =
+let private ensureContextAvailable (env: TypeEnv) (state: InferState) (name: Identifier) (contexts: TypeExpr list) (span: SourceSpan) =
     let requiredMembers =
         contexts
         |> List.collect (fun ctx ->
@@ -539,9 +552,7 @@ let private ensureContextAvailable (env: TypeEnv) (state: InferState) (name: Ide
         Ok ()
     else
         let missingText = String.concat ", " missing
-        match rangeOpt with
-        | Some (line, col) -> Error [ Diagnostics.errorAt ($"Missing context members for '{name}': {missingText}") (line, col) ]
-        | None -> Error [ Diagnostics.error ($"Missing context members for '{name}': {missingText}") ]
+        Error [ Diagnostics.at DiagnosticCodes.MissingContextMembers span $"Missing context members for '{name}': {missingText}" ]
 
 let private registerTypeDef (state: InferState) (name: Identifier) (modifiers: TypeDefModifier list) (parameters: (Identifier * TypeExpr option) list) (body: TypeExpr) =
     let originalTypeVars = state.TypeVars
@@ -743,8 +754,14 @@ let private recordExprType (result: Result<TypedExpr * InferState, Diagnostic li
     |> Result.map (fun (typedExpr, state) ->
         typedExpr, { state with ExprTypes = state.ExprTypes |> Map.add typedExpr.Expr.Id typedExpr.Type })
 
+/// The constraints inferring `expr` adds are reported at `expr` (or, for a node the compiler made up, wherever the
+/// enclosing ones are); those its parent adds afterwards are reported at the parent again.
 let rec private inferExpr (env: TypeEnv) (state: InferState) (expr: Expression) : Result<TypedExpr * InferState, Diagnostic list> =
-    inferExprKind env state expr |> recordExprType
+    let outer = state.Origin
+    let origin = if SourceSpan.isNone expr.Span then outer else expr.Span
+    inferExprKind env { state with Origin = origin } expr
+    |> recordExprType
+    |> Result.map (fun (typedExpr, next) -> typedExpr, { next with Origin = outer })
 
 and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) : Result<TypedExpr * InferState, Diagnostic list> =
     match expr.Kind with
@@ -772,22 +789,16 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
         | Some scheme ->
             let ty, next = instantiate (recordReference expr scheme state) scheme
             Ok (mkTypedExpr expr ty None None None, next)
-        | None ->
-            match spanPosition expr.Span with
-            | Some (line, col) -> Error [ Diagnostics.errorAt ($"Unknown identifier '{name}'") (line, col) ]
-            | None -> Error [ Diagnostics.error ($"Unknown identifier '{name}'") ]
+        | None -> Error [ Diagnostics.at DiagnosticCodes.UnknownIdentifier expr.Span $"Unknown identifier '{name}'" ]
     | FunctionCall(name, spanOpt, args) ->
-        let rangeOpt = spanOptPosition spanOpt
+        let calleeSpan = nameSpan spanOpt expr
         if name = "dbg" then
             match args with
             | [single] ->
                 match inferExpr env state single with
                 | Ok (typedArg, next) -> Ok (mkTypedExpr expr typedArg.Type None None None, next)
                 | Error err -> Error err
-            | _ ->
-                match rangeOpt with
-                | Some (line, col) -> Error [ Diagnostics.errorAt "dbg expects a single argument" (line, col) ]
-                | None -> Error [ Diagnostics.error "dbg expects a single argument" ]
+            | _ -> Error [ Diagnostics.at DiagnosticCodes.InvalidBuiltInCall calleeSpan "dbg expects a single argument" ]
         elif name = "not" then
             // The `not` keyword: the parser represents `not x` as a call to "not" with one argument.
             match args with
@@ -797,7 +808,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                     let constrained = addConstraint typedArg.Type (TyPrimitive "bool") next
                     Ok (mkTypedExpr expr (TyPrimitive "bool") None None None, constrained)
                 | Error err -> Error err
-            | _ -> Error [ Diagnostics.error "not expects a single operand" ]
+            | _ -> Error [ Diagnostics.at DiagnosticCodes.InvalidBuiltInCall expr.Span "not expects a single operand" ]
         elif name = "__with" then
             // `record with f = v, ...`: the parser represents a record update as a call to "__with" with the
             // record and a record of the updated fields. The result has the record's type; every updated
@@ -808,23 +819,24 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                 | Error err -> Error err
                 | Ok (typedBase, afterBase) ->
                     match recordFieldsOf typedBase.Type with
-                    | None -> Error [ Diagnostics.error "`with` needs a record whose fields are known here" ]
+                    | None -> Error [ Diagnostics.at DiagnosticCodes.InvalidRecordUpdate baseExpr.Span "`with` needs a record whose fields are known here" ]
                     | Some fields ->
                         let mutable current = afterBase
                         let mutable errors: Diagnostic list = []
+                        // Field names have no span of their own (#96): a field is reported at its new value.
                         for update in updates do
                             match update with
                             | NamedField(fieldName, valueExpr) ->
                                 match fields |> Map.tryFind fieldName with
-                                | None -> errors <- errors @ [ Diagnostics.error $"Record has no member '{fieldName}' to update" ]
+                                | None -> errors <- errors @ [ Diagnostics.at DiagnosticCodes.UnknownMember valueExpr.Span $"Record has no member '{fieldName}' to update" ]
                                 | Some fieldTy ->
                                     match inferExpr env current valueExpr with
-                                    | Ok (typedValue, next) -> current <- addConstraint typedValue.Type fieldTy next
+                                    | Ok (typedValue, next) -> current <- addConstraintAt valueExpr.Span typedValue.Type fieldTy next
                                     | Error err -> errors <- errors @ err
-                            | PositionalField _ -> errors <- errors @ [ Diagnostics.error "`with` updates fields by name" ]
+                            | PositionalField valueExpr -> errors <- errors @ [ Diagnostics.at DiagnosticCodes.InvalidRecordUpdate valueExpr.Span "`with` updates fields by name" ]
                         if errors.IsEmpty then Ok (mkTypedExpr expr typedBase.Type None None None, current)
                         else Error errors
-            | _ -> Error [ Diagnostics.error "`with` expects a record and the fields to update" ]
+            | _ -> Error [ Diagnostics.at DiagnosticCodes.InvalidBuiltInCall expr.Span "`with` expects a record and the fields to update" ]
 
         elif name = "__range" then
             // `a..b`: a bounded range of ints, a `seq(int)` (see the ranges page).
@@ -840,7 +852,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
             // `rec name = value`: the value of a self-referencing local def; the block already binds the name.
             match args with
             | [ inner ] -> inferExpr env state inner
-            | _ -> Error [ Diagnostics.error "rec expects a single definition" ]
+            | _ -> Error [ Diagnostics.at DiagnosticCodes.InvalidBuiltInCall expr.Span "rec expects a single definition" ]
         elif name = "__for" then
             // `for iterable | arms`: the parser passes the iterable and a one-parameter lambda. The lambda's
             // parameter is an element of the iterable (a `list(a)` or a `seq(a)`), and the loop is unit.
@@ -858,11 +870,11 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                     match inferLambdaWithExpected env constrained lambdaExpr lambdaArgs lambdaBody (Some elementTy) None with
                     | Ok (_, next) -> Ok (mkTypedExpr expr (TyPrimitive "unit") None None None, next)
                     | Error err -> Error err
-            | _ -> Error [ Diagnostics.error "for expects an iterable and a loop body" ]
+            | _ -> Error [ Diagnostics.at DiagnosticCodes.InvalidBuiltInCall expr.Span "for expects an iterable and a loop body" ]
         else
         let contextCheck =
             match state.ContextRequirements |> Map.tryFind name with
-            | Some contexts -> ensureContextAvailable env state name contexts rangeOpt
+            | Some contexts -> ensureContextAvailable env state name contexts calleeSpan
             | None -> Ok ()
         match contextCheck with
         | Error err -> Error err
@@ -888,9 +900,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                         |> List.filter (fun memberName -> not (fields |> Map.containsKey memberName))
                     if not missingMembers.IsEmpty then
                         let missingText = String.concat ", " missingMembers
-                        match rangeOpt with
-                        | Some (line, col) -> Error [ Diagnostics.errorAt ($"Workflow '{name}' is missing context members: {missingText}") (line, col) ]
-                        | None -> Error [ Diagnostics.error ($"Workflow '{name}' is missing context members: {missingText}") ]
+                        Error [ Diagnostics.at DiagnosticCodes.InvalidWorkflow calleeSpan $"Workflow '{name}' is missing context members: {missingText}" ]
                     else
                         let envWithCtx = extendEnvWithRecordFields env funcTy
                         match args with
@@ -903,10 +913,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                                     | other -> other
                                 Ok (mkTypedExpr expr returnTy None None None, next)
                             | Error err -> Error err
-                        | _ ->
-                            match rangeOpt with
-                            | Some (line, col) -> Error [ Diagnostics.errorAt ($"Workflow '{name}' must be called with a trailing lambda") (line, col) ]
-                            | None -> Error [ Diagnostics.error ($"Workflow '{name}' must be called with a trailing lambda") ]
+                        | _ -> Error [ Diagnostics.at DiagnosticCodes.InvalidWorkflow calleeSpan $"Workflow '{name}' must be called with a trailing lambda" ]
                 | None ->
                     // With a known signature, each argument is checked against its parameter as it is inferred,
                     // so a lambda argument's parameters can take their types from the signature and from the
@@ -949,7 +956,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                             | Ok (ty, next) ->
                                 current <-
                                     match paramTys |> Option.bind (List.tryItem index) with
-                                    | Some paramTy -> addAssignableConstraint ty.Type paramTy next
+                                    | Some paramTy -> addAssignableConstraintAt arg.Span ty.Type paramTy next
                                     | None -> next
                                 Ok ty
                             | Error err -> Error err)
@@ -973,8 +980,12 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                             | _ -> freshVar current
                         let expectedInput, nextState2 = freshVar nextState
                         let inputTy = inputTypeFromArgs argTys
-                        let withFuncConstraint = addConstraint funcTy (TyFunc(expectedInput, retTy)) nextState2
-                        let withAssignable = addAssignableConstraint inputTy expectedInput withFuncConstraint
+                        // A single argument is the call's input: a mismatch is that argument's. So is one with the
+                        // callee's type when that is known to be a function, whose result is the call's already.
+                        let inputSpan = match args with [ single ] -> single.Span | _ -> SourceSpan.none
+                        let funcSpan = if paramTys.IsSome then inputSpan else SourceSpan.none
+                        let withFuncConstraint = addConstraintAt funcSpan funcTy (TyFunc(expectedInput, retTy)) nextState2
+                        let withAssignable = addAssignableConstraintAt inputSpan inputTy expectedInput withFuncConstraint
                         Ok ({ mkTypedExpr expr retTy None None None with Arguments = Some typedArgs }, withAssignable)
                     else
                         Error errors
@@ -1002,10 +1013,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                         Ok (mkTypedExpr expr resultTy None None None, constrained)
                     else
                         Error errors
-                | None ->
-                    match rangeOpt with
-                    | Some (line, col) -> Error [ Diagnostics.errorAt ($"Unknown function '{name}'") (line, col) ]
-                    | None -> Error [ Diagnostics.error ($"Unknown function '{name}'") ]
+                | None -> Error [ Diagnostics.at DiagnosticCodes.UnknownFunction calleeSpan $"Unknown function '{name}'" ]
     | Lambda(args, body) ->
         inferLambdaWithExpected env state expr args body None None
     | BinaryOp(_, left, right) ->
@@ -1052,7 +1060,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
         | Ok (typedValue, nextState) ->
             // A pipe resolves left to right: the value's type as the code before the pipe settles it picks the
             // attached function, even where that type is still a variable waiting on the module's constraints.
-            match tryResolveAttachedFunction env (resolveSoFar nextState typedValue.Type) name (spanOptPosition spanOpt) with
+            match tryResolveAttachedFunction env (resolveSoFar nextState typedValue.Type) name (nameSpan spanOpt expr) with
             | Error err -> Error err
             | Ok resolvedOpt ->
                 let resolvedName = resolvedOpt |> Option.defaultValue name
@@ -1070,9 +1078,9 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
             | Ok (typedBody, finalState) -> Ok (mkTypedExpr expr typedBody.Type (Some typedBody) None None, finalState)
             | Error err -> Error err
     | WorkflowBindExpr _ ->
-        Error [ Diagnostics.error "Workflow bind used outside of a workflow block" ]
+        Error [ Diagnostics.at DiagnosticCodes.WorkflowKeywordOutsideWorkflow expr.Span "Workflow bind used outside of a workflow block" ]
     | WorkflowReturnExpr _ ->
-        Error [ Diagnostics.error "Workflow return used outside of a workflow block" ]
+        Error [ Diagnostics.at DiagnosticCodes.WorkflowKeywordOutsideWorkflow expr.Span "Workflow return used outside of a workflow block" ]
     | Block statements ->
         inferBlock env state expr statements
     | TupleExpr items ->
@@ -1469,6 +1477,11 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                         let unionTy = TyUnion unionItems
                         scrutineeOverrides <- scrutineeOverrides |> Map.add index unionTy
                         current <- addConstraint scrutineeTy unionTy stateForUnion
+            // A match on a value the compiler made up is reported at the whole match.
+            let scrutineeSpan index =
+                match List.tryItem index scrutinees with
+                | Some scrutinee when not (SourceSpan.isNone scrutinee.Span) -> scrutinee.Span
+                | _ -> expr.Span
             let exhaustivenessDiagnostics () =
                 resolvedScrutineeTypes
                 |> List.mapi (fun index scrutineeTy ->
@@ -1489,17 +1502,17 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                             else
                                 let missingText = missing |> String.concat ", "
                                 let suffix = if scrutineeTypes.Length > 1 then $" (scrutinee {index + 1})" else ""
-                                Some (Diagnostics.error ($"Non-exhaustive match{suffix}, missing tags: {missingText}"))
+                                Some (Diagnostics.at DiagnosticCodes.NonExhaustiveMatch (scrutineeSpan index) $"Non-exhaustive match{suffix}, missing tags: {missingText}")
                         | None ->
                             if isListType scrutineeTy then
                                 if listPatternsCoverAll patternsAtPos then
                                     None
                                 else
                                     let suffix = if scrutineeTypes.Length > 1 then $" (scrutinee {index + 1})" else ""
-                                    Some (Diagnostics.error ($"Non-exhaustive match{suffix}, missing list cases"))
+                                    Some (Diagnostics.at DiagnosticCodes.NonExhaustiveMatch (scrutineeSpan index) $"Non-exhaustive match{suffix}, missing list cases")
                             elif isRecordType scrutineeTy then
                                 let suffix = if scrutineeTypes.Length > 1 then $" (scrutinee {index + 1})" else ""
-                                Some (Diagnostics.error ($"Non-exhaustive match{suffix}, missing record cases"))
+                                Some (Diagnostics.at DiagnosticCodes.NonExhaustiveMatch (scrutineeSpan index) $"Non-exhaustive match{suffix}, missing record cases")
                             else
                                 None)
                 |> List.choose id
@@ -1586,7 +1599,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                         if hasCatchAll then
                             None
                         else
-                            Some (Diagnostics.error "Tag union rest parameters require a catch-all match arm")
+                            Some (Diagnostics.at DiagnosticCodes.MissingCatchAllArm expr.Span "Tag union rest parameters require a catch-all match arm")
                     else
                         None
                 let exhaustivenessErrors =
@@ -1606,7 +1619,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
             else
                 Error errors
     | MemberAccess(baseExpr, memberName, spanOpt) ->
-        let rangeOpt = spanOptPosition spanOpt
+        let memberSpan = nameSpan spanOpt expr
         match baseExpr.Kind with
         | IdentifierExpr baseName ->
             let qualifiedName = $"{baseName}.{memberName}"
@@ -1622,10 +1635,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                     let fieldTypeOpt = recordFieldsSoFar next typedBase.Type |> Option.bind (Map.tryFind memberName)
                     match fieldTypeOpt with
                     | Some fieldTy -> Ok (mkTypedExpr expr fieldTy None None None, next)
-                    | None ->
-                        match rangeOpt with
-                        | Some (line, col) -> Error [ Diagnostics.errorAt ($"Record '{baseName}' has no member '{memberName}'") (line, col) ]
-                        | None -> Error [ Diagnostics.error ($"Record '{baseName}' has no member '{memberName}'") ]
+                    | None -> Error [ Diagnostics.at DiagnosticCodes.UnknownMember memberSpan $"Record '{baseName}' has no member '{memberName}'" ]
         | _ ->
             match inferExpr env state baseExpr with
             | Error err -> Error err
@@ -1633,10 +1643,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                 let fieldTypeOpt = recordFieldsSoFar next typedBase.Type |> Option.bind (Map.tryFind memberName)
                 match fieldTypeOpt with
                 | Some fieldTy -> Ok (mkTypedExpr expr fieldTy None None None, next)
-                | None ->
-                    match rangeOpt with
-                    | Some (line, col) -> Error [ Diagnostics.errorAt ($"Unknown member '{memberName}'") (line, col) ]
-                    | None -> Error [ Diagnostics.error ($"Unknown member '{memberName}'") ]
+                | None -> Error [ Diagnostics.at DiagnosticCodes.UnknownMember memberSpan $"Unknown member '{memberName}'" ]
     | ContextMemberAccess(ctxType, memberName) ->
         // TODO: Look up the context type and find the member's type
         // For now, return a fresh type variable
@@ -1694,9 +1701,9 @@ and inferLambdaWithExpected (env: TypeEnv) (state: InferState) (lambda: Expressi
                 match Unifier.unalias expectedReturn with
                 | TyNominal(name, underlying, _) when state.LocalNominals.Contains name ->
                     match Unifier.unalias bodyExpr.Type with
-                    | TyNominal _ -> addAssignableConstraint bodyExpr.Type expectedReturn next
-                    | _ -> addAssignableConstraint bodyExpr.Type underlying next
-                | _ -> addAssignableConstraint bodyExpr.Type expectedReturn next
+                    | TyNominal _ -> addAssignableConstraintAt body.Span bodyExpr.Type expectedReturn next
+                    | _ -> addAssignableConstraintAt body.Span bodyExpr.Type underlying next
+                | _ -> addAssignableConstraintAt body.Span bodyExpr.Type expectedReturn next
             | None -> next
         let inputTy =
             match expectedInputOpt with
@@ -1722,9 +1729,9 @@ and inferBlock (env: TypeEnv) (state: InferState) (block: Expression) (statement
                 if errors.IsEmpty then
                     let contextsExist =
                         match fst (extractContextFromTypeExpr typeOpt) with
-                        | Some contexts -> ensureContextsExist current name contexts
+                        | Some contexts -> ensureContextsExist current name (declarationSpan current DefValue expr) contexts
                         | None -> Ok ()
-                    match ensureAttachedTypeExists current None name |> Result.bind (fun () -> contextsExist) with
+                    match ensureAttachedTypeExists current None name (declarationSpan current DefValue expr) |> Result.bind (fun () -> contextsExist) with
                     | Error err -> errors <- err
                     | Ok () ->
                         let contextOpt, declaredTypeExprOpt = extractContextFromTypeExpr typeOpt
@@ -1773,13 +1780,13 @@ and inferBlock (env: TypeEnv) (state: InferState) (block: Expression) (statement
                                             match Unifier.unalias declaredTy with
                                             | TyNominal(name, underlying, _) when current.LocalNominals.Contains name ->
                                                 match Unifier.unalias typedExpr.Type with
-                                                | TyNominal _ -> addAssignableConstraint typedExpr.Type declaredTy next
-                                                | _ -> addAssignableConstraint typedExpr.Type underlying next
-                                            | _ -> addAssignableConstraint typedExpr.Type declaredTy next
+                                                | TyNominal _ -> addAssignableConstraintAt expr.Span typedExpr.Type declaredTy next
+                                                | _ -> addAssignableConstraintAt expr.Span typedExpr.Type underlying next
+                                            | _ -> addAssignableConstraintAt expr.Span typedExpr.Type declaredTy next
                                         declaredTy, updatedState
                                 | None ->
                                     let updatedState =
-                                        if preboundFresh then addConstraint preboundTy typedExpr.Type next else next
+                                        if preboundFresh then addConstraintAt expr.Span preboundTy typedExpr.Type next else next
                                     typedExpr.Type, updatedState
                             current <-
                                 finalState
@@ -1842,7 +1849,7 @@ let rec private annotationVarNames (typeExpr: TypeExpr) : string list =
 /// Once the constraints gathered so far are solved, each must still be a variable of its own. One bound to
 /// a concrete type, or to the same type as another of the annotation's variables, means the annotation is
 /// more general than the body, which would otherwise quietly narrow it.
-let private checkAnnotationIsRigid (state: InferState) (name: Identifier) (typeExpr: TypeExpr) : Result<unit, Diagnostic list> =
+let private checkAnnotationIsRigid (state: InferState) (name: Identifier) (span: SourceSpan) (typeExpr: TypeExpr) : Result<unit, Diagnostic list> =
     let vars =
         annotationVarNames typeExpr
         |> List.choose (fun varName -> state.TypeVars |> Map.tryFind varName |> Option.map (fun var -> varName, var))
@@ -1876,7 +1883,7 @@ let private checkAnnotationIsRigid (state: InferState) (name: Identifier) (typeE
                 Ok ()
             else
                 let details = String.concat "; " problems
-                Error [ Diagnostics.error $"Annotation of '{name}' is more general than the inferred type: {details}" ]
+                Error [ Diagnostics.at DiagnosticCodes.AnnotationTooGeneral span $"Annotation of '{name}' is more general than the inferred type: {details}" ]
 
 let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module': Module) : Result<Map<string, Ty> * TypedTopLevelItem list * InferState, Diagnostic list> =
     let mutable env = initialEnv
@@ -1917,9 +1924,9 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
         | Def (ValueDef(isExport, name, typeOpt, expr)) when errors.IsEmpty ->
             let contextsExist =
                 match fst (extractContextFromTypeExpr typeOpt) with
-                | Some contexts -> ensureContextsExist state name contexts
+                | Some contexts -> ensureContextsExist state name (declarationSpan state DefValue expr) contexts
                 | None -> Ok ()
-            match ensureAttachedTypeExists state currentModule name |> Result.bind (fun () -> contextsExist) with
+            match ensureAttachedTypeExists state currentModule name (declarationSpan state DefValue expr) |> Result.bind (fun () -> contextsExist) with
             | Error err -> errors <- err
             | Ok () ->
                 let contextOpt, declaredTypeExprOpt = extractContextFromTypeExpr typeOpt
@@ -1970,14 +1977,14 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
                                     match Unifier.unalias declaredTy with
                                     | TyNominal(name, underlying, _) when state.LocalNominals.Contains name ->
                                         match Unifier.unalias typedExpr.Type with
-                                        | TyNominal _ -> addAssignableConstraint typedExpr.Type declaredTy next
-                                        | _ -> addAssignableConstraint typedExpr.Type underlying next
-                                    | _ -> addAssignableConstraint typedExpr.Type declaredTy next
+                                        | TyNominal _ -> addAssignableConstraintAt expr.Span typedExpr.Type declaredTy next
+                                        | _ -> addAssignableConstraintAt expr.Span typedExpr.Type underlying next
+                                    | _ -> addAssignableConstraintAt expr.Span typedExpr.Type declaredTy next
                                 declaredTy, updatedState
                         | None ->
                             let updatedState =
                                 match preboundFreshVars |> Map.tryFind name with
-                                | Some preboundTy -> addConstraint preboundTy typedExpr.Type next
+                                | Some preboundTy -> addConstraintAt expr.Span preboundTy typedExpr.Type next
                                 | None -> next
                             typedExpr.Type, updatedState
                     state <-
@@ -1986,7 +1993,7 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
                         |> recordAnnotated symbol expectedDeclaredOpt.IsSome
                     let rigidResult =
                         match declaredTypeExprOpt with
-                        | Some declaredExpr -> checkAnnotationIsRigid finalState name declaredExpr
+                        | Some declaredExpr -> checkAnnotationIsRigid finalState name (declarationSpan finalState DefValue expr) declaredExpr
                         | None -> Ok ()
                     match rigidResult with
                     | Error err -> errors <- err

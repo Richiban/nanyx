@@ -53,37 +53,6 @@ module Compiler =
     let private normalizeSource (source: string) =
         source.Replace("\r\n", "\n").Replace("\r", "\n")
 
-    let private tryFindIdentifierRange (source: string) (identifier: string) : (int * int) option =
-        let normalized = normalizeSource source
-        let lines = normalized.Split('\n')
-        let mutable found: (int * int) option = None
-        let mutable index = 0
-        while found.IsNone && index < lines.Length do
-            let pos = lines.[index].IndexOf(identifier, StringComparison.Ordinal)
-            if pos >= 0 then
-                found <- Some (index, pos)
-            index <- index + 1
-        found
-
-    let private extractQuotedIdentifiers (message: string) : string list =
-        let matches = Regex.Matches(message, "'([^']+)'", RegexOptions.None)
-        [ for m in matches do
-            if m.Groups.Count > 1 then
-                m.Groups.[1].Value ]
-
-    let private annotateDiagnosticsWithSource (source: string) (diagnostics: Diagnostic list) =
-        diagnostics
-        |> List.map (fun diag ->
-            match diag.Range with
-            | Some _ -> diag
-            | None ->
-                let candidates = extractQuotedIdentifiers diag.Message
-                let found =
-                    candidates
-                    |> List.tryPick (fun identifier -> tryFindIdentifierRange source identifier)
-                match found with
-                | Some (line, col) -> { diag with Range = Some (line, col) }
-                | None -> diag)
     let private sanitizeIdentifier (name: string) =
         let sanitized =
             name
@@ -115,7 +84,7 @@ module Compiler =
         if File.Exists fullPath then
             Ok (Path.GetFullPath fullPath)
         else
-            Error (Diagnostics.error ($"Import not found: {rawPath}"))
+            Error (Diagnostics.at DiagnosticCodes.ImportNotFound item.Span $"Import not found: {rawPath}")
 
     let private collectImports (module': Module) =
         module'
@@ -393,30 +362,19 @@ module Compiler =
                 | None -> name
             acc |> TypeEnv.declare importedName (symbols |> Map.tryFind name) (quantify ty)) env
 
-    let private tryParseLineColumn (message: string) : (int * int) option =
-        let patterns =
-            [
-                @"Ln:\s*(\d+)\s+Col:\s*(\d+)"
-                @"line\s+(\d+)\s+column\s+(\d+)"
-                @"line\s+(\d+),\s*column\s+(\d+)"
-            ]
-        patterns
-        |> List.tryPick (fun pattern ->
-            let m = Regex.Match(message, pattern, RegexOptions.IgnoreCase)
-            if m.Success then
-                let line = int m.Groups.[1].Value - 1
-                let col = int m.Groups.[2].Value - 1
-                Some (max 0 line, max 0 col)
+    /// The diagnostic for a failed parse. FParsec's report starts with a line giving the file and position, which
+    /// the diagnostic's span already gives.
+    let private syntaxError (error: ParseError) =
+        let message =
+            if error.Message.StartsWith "Error in " && error.Message.Contains "\n" then
+                error.Message.Substring(error.Message.IndexOf '\n' + 1)
             else
-                None)
-
+                error.Message
+        Diagnostics.at DiagnosticCodes.SyntaxError error.Span message
     let private parseWithDiagnostics (filePath: string) (source: string) : Result<Module * DeclaredNames * (ModuleName * SourceSpan) list, Diagnostic list> =
         match parseModuleFileWithNames filePath source with
         | Result.Ok parsed -> Ok parsed
-        | Result.Error err ->
-            match tryParseLineColumn err with
-            | Some (line, col) -> Error [ Diagnostics.errorAt err (line, col) ]
-            | None -> Error [ Diagnostics.error err ]
+        | Result.Error err -> Error [ syntaxError err ]
 
     let desugar (module': Module) =
         let isReturnKeyword keyword = keyword = "return"
@@ -717,15 +675,21 @@ module Compiler =
     /// (the context the runtime supplies to the entry point); any other attribute, or an attribute that does
     /// not precede a value definition, is an error.
     let applyAttributes (module': Module) : Result<Module, Diagnostic list> =
+        // An attribute has no span of its own yet (#96): it is reported at what follows it, if that has one.
+        let attributedSpan (following: TopLevelItem list) =
+            match following with
+            | Def (ValueDef(_, _, _, value)) :: _
+            | Expr value :: _ -> value.Span
+            | _ -> SourceSpan.none
         let rec loop (remaining: TopLevelItem list) (acc: TopLevelItem list) (entryCalls: TopLevelItem list) (errors: Diagnostic list) =
             match remaining with
             | [] -> List.rev acc, List.rev entryCalls, List.rev errors
             | Attribute name :: rest when name <> entryAttribute ->
-                loop rest acc entryCalls (Diagnostics.error $"Unknown attribute '@{name}'" :: errors)
+                loop rest acc entryCalls (Diagnostics.at DiagnosticCodes.UnknownAttribute (attributedSpan rest) $"Unknown attribute '@{name}'" :: errors)
             | Attribute _ :: (Def (ValueDef(_, name, _, value)) as def) :: rest ->
                 loop rest (def :: acc) (Expr (Expression.from value (FunctionCall(name, None, []))) :: entryCalls) errors
             | Attribute name :: rest ->
-                loop rest acc entryCalls (Diagnostics.error $"Attribute '@{name}' must be followed by a definition" :: errors)
+                loop rest acc entryCalls (Diagnostics.at DiagnosticCodes.MisplacedAttribute (attributedSpan rest) $"Attribute '@{name}' must be followed by a definition" :: errors)
             | item :: rest -> loop rest (item :: acc) entryCalls errors
         match loop module' [] [] [] with
         | items, entryCalls, [] ->
@@ -815,169 +779,173 @@ module Compiler =
     /// error says which phase it came from.
     let rec private typecheckModule (checkedModules: CheckedModules) (origin: ModuleOrigin) (source: string) (visited: Set<string>) : Result<CheckedModule, CompilationPhase * Diagnostic list> =
         let key = originKey origin
-        if visited.Contains key then
-            Error (Typed, [ Diagnostics.error ($"Import cycle detected for {key}") ])
-        else
-            let resolved =
-                parseWithDiagnostics (sourceFileName origin) source
-                |> Result.mapError (fun diagnostics -> Parsed, diagnostics)
-                |> Result.bind (fun (ast, declared, moduleBlocks) ->
-                    applyAttributes (desugar ast)
-                    |> Result.map (fun desugared -> ast, declared, moduleBlocks, desugared)
-                    |> Result.mapError (fun diagnostics -> Desugared, diagnostics))
-            match resolved with
-            | Result.Error failure -> Error failure
-            | Result.Ok (ast, declared, moduleBlocks, desugared) ->
-                let imports = collectImports desugared
-                let mutable env =
-                    match origin with
-                    | StandardLibraryModule _ -> Intrinsics.typeEnv
-                    | SourceFile _
-                    | InMemory -> TypeEnv.empty
-                let mutable state = { NyxCompiler.Infer.emptyState with Declared = declared; ModuleBlocks = moduleBlocks }
-                let mutable errors: Diagnostic list = []
-                let mutable inlined: TopLevelItem list = []
-                let mutable inlinedTypes: Map<string, Ty> = Map.empty
-                // The modules that bring each name in unqualified, by the module's key, with the name of the module.
-                let mutable unqualifiedSources: Map<string, (string * string) list> = Map.empty
-                let mergeImport (importedKey: string) (item: ImportItem) (imported: CheckedModule) =
-                    let qualifier = importQualifier item
-                    let exportedValues = exportedValueNames imported.Own
-                    if qualifier.IsNone then
-                        let moduleName =
-                            match imported.Name, item.Source with
-                            | Some name, _ -> name
-                            | None, ModuleImport name -> name
-                            | None, PathImport path -> path
-                        for name in exportedValues do
-                            let sources = unqualifiedSources |> Map.tryFind name |> Option.defaultValue []
-                            if not (sources |> List.exists (fun (key, _) -> key = importedKey)) then
-                                unqualifiedSources <- unqualifiedSources |> Map.add name (sources @ [ importedKey, moduleName ])
-                    let exportedTypes = exportedTypeNames imported.Own
-                    let exportedValueTypes =
-                        imported.Typed.Types |> Map.filter (fun name _ -> exportedValues.Contains name)
-                    let exportedTypeDefs =
-                        imported.Typed.TypeDefs |> Map.filter (fun name _ -> exportedTypes.Contains name)
-                    // The exported definitions, declared in the imported module's file.
-                    let exportedSymbols =
-                        imported.Exports
-                        |> Map.filter (fun name _ -> exportedValues.Contains name)
-                        |> Map.values
-                        |> Seq.map (fun symbol -> symbol.Id, symbol)
-                        |> Map.ofSeq
-                    env <- extendEnvWithImport env qualifier exportedValueTypes (imported.Exports |> Map.map (fun _ symbol -> symbol.Id))
-                    // The import is a symbol of its own, unless the compiler made it up (for `@entry`).
-                    let importSymbols, importedThrough =
-                        if SourceSpan.isNone item.Span then
-                            Map.empty, state.ImportedThrough
-                        else
-                            let name =
-                                match item.Alias, item.Source with
-                                | Some alias, _ -> alias
-                                | None, ModuleImport moduleName -> moduleName
-                                | None, PathImport path -> path
-                            let import = { Id = SymbolId.next (); Name = name; Kind = ImportedModule; Declaration = item.Span; IsExported = false }
-                            Map.ofList [ import.Id, import ],
-                            exportedSymbols |> Map.fold (fun acc id _ -> acc |> Map.add id import.Id) state.ImportedThrough
-                    state <-
-                        { state with
-                            TypeDefs = mergeTypeDefs state.TypeDefs exportedTypeDefs
-                            Symbols = Seq.fold (fun acc (KeyValue(id, symbol)) -> acc |> Map.add id symbol) state.Symbols (Seq.append exportedSymbols importSymbols)
-                            ImportedThrough = importedThrough }
-                    inlined <- inlined @ inlinedItemsForImport item imported
-                    inlinedTypes <- inlinedTypesForImport item imported |> Map.fold (fun acc name ty -> acc |> Map.add name ty) inlinedTypes
-                for item in imports do
-                    match StandardLibrary.tryModuleName item with
-                    | Some moduleName ->
-                        match StandardLibrary.tryLoadSource moduleName with
-                        | None ->
-                            let available = String.concat ", " (StandardLibrary.moduleNames |> List.map (fun name -> StandardLibrary.importPrefix + name))
-                            errors <- errors @ [ Diagnostics.error ($"Unknown standard library module '{StandardLibrary.importPrefix}{moduleName}' (available: {available})") ]
-                        | Some moduleSource ->
-                            match typecheckImport checkedModules (StandardLibraryModule moduleName) (fun () -> moduleSource) (visited.Add key) with
-                            | Error (_, diags) -> errors <- errors @ diags
-                            | Ok imported when imported.Name <> Some moduleName ->
-                                let declared = imported.Name |> Option.defaultValue "(none)"
-                                errors <- errors @ [ Diagnostics.error ($"Standard library module '{StandardLibrary.importPrefix}{moduleName}' declares the module name '{declared}'") ]
-                            | Ok imported -> mergeImport (originKey (StandardLibraryModule moduleName)) item imported
-                    | None ->
-                        match origin with
-                        | SourceFile fullPath ->
-                            match resolveImportPath (Path.GetDirectoryName fullPath) item with
-                            | Error diag -> errors <- errors @ [ diag ]
-                            | Ok importPath ->
-                                match typecheckImport checkedModules (SourceFile importPath) (fun () -> File.ReadAllText importPath) (visited.Add key) with
-                                | Error (_, diags) -> errors <- errors @ diags
-                                | Ok imported -> mergeImport (originKey (SourceFile importPath)) item imported
-                        | StandardLibraryModule name ->
-                            errors <- errors @ [ Diagnostics.error ($"Standard library module '{name}' may only import other standard library modules") ]
-                        | InMemory ->
-                            let shown =
-                                match item.Source with
-                                | PathImport path -> path
-                                | ModuleImport name -> name
-                            errors <- errors @ [ Diagnostics.error ($"Import not found: {shown} (only standard library modules can be imported here)") ]
-                // A name two imports bring in is an error only where it is used, and only if nothing nearer binds it.
-                let ambiguousImports =
-                    unqualifiedSources
-                    |> Map.toSeq
-                    |> Seq.choose (fun (name, sources) ->
-                        match sources, TypeEnv.tryFind name env |> Option.bind (fun scheme -> scheme.Symbol) with
-                        | _ :: _ :: _, Some symbol -> Some (name, (symbol, sources |> List.map (fun (_, moduleName) -> $"{moduleName}.{name}")))
-                        | _ -> None)
+        let resolved =
+            parseWithDiagnostics (sourceFileName origin) source
+            |> Result.mapError (fun diagnostics -> Parsed, diagnostics)
+            |> Result.bind (fun (ast, declared, moduleBlocks) ->
+                applyAttributes (desugar ast)
+                |> Result.map (fun desugared -> ast, declared, moduleBlocks, desugared)
+                |> Result.mapError (fun diagnostics -> Desugared, diagnostics))
+        match resolved with
+        | Result.Error failure -> Error failure
+        | Result.Ok (ast, declared, moduleBlocks, desugared) ->
+            let imports = collectImports desugared
+            let mutable env =
+                match origin with
+                | StandardLibraryModule _ -> Intrinsics.typeEnv
+                | SourceFile _
+                | InMemory -> TypeEnv.empty
+            let mutable state = { NyxCompiler.Infer.emptyState with Declared = declared; ModuleBlocks = moduleBlocks }
+            let mutable errors: Diagnostic list = []
+            let mutable inlined: TopLevelItem list = []
+            let mutable inlinedTypes: Map<string, Ty> = Map.empty
+            // The modules that bring each name in unqualified, by the module's key, with the name of the module.
+            let mutable unqualifiedSources: Map<string, (string * string) list> = Map.empty
+            let mergeImport (importedKey: string) (item: ImportItem) (imported: CheckedModule) =
+                let qualifier = importQualifier item
+                let exportedValues = exportedValueNames imported.Own
+                if qualifier.IsNone then
+                    let moduleName =
+                        match imported.Name, item.Source with
+                        | Some name, _ -> name
+                        | None, ModuleImport name -> name
+                        | None, PathImport path -> path
+                    for name in exportedValues do
+                        let sources = unqualifiedSources |> Map.tryFind name |> Option.defaultValue []
+                        if not (sources |> List.exists (fun (key, _) -> key = importedKey)) then
+                            unqualifiedSources <- unqualifiedSources |> Map.add name (sources @ [ importedKey, moduleName ])
+                let exportedTypes = exportedTypeNames imported.Own
+                let exportedValueTypes =
+                    imported.Typed.Types |> Map.filter (fun name _ -> exportedValues.Contains name)
+                let exportedTypeDefs =
+                    imported.Typed.TypeDefs |> Map.filter (fun name _ -> exportedTypes.Contains name)
+                // The exported definitions, declared in the imported module's file.
+                let exportedSymbols =
+                    imported.Exports
+                    |> Map.filter (fun name _ -> exportedValues.Contains name)
+                    |> Map.values
+                    |> Seq.map (fun symbol -> symbol.Id, symbol)
                     |> Map.ofSeq
-                state <- { state with AmbiguousImports = ambiguousImports }
-                if not errors.IsEmpty then
-                    // A module imported along several paths fails each importer with the same diagnostics.
-                    Error (Typed, List.distinct errors)
-                else
-                    match NyxCompiler.Infer.inferModuleWithEnv env state desugared with
-                    | Error diagnostics -> Error (Typed, diagnostics)
-                    | Ok (types, items, (state: NyxCompiler.Infer.InferState)) ->
-                        match Unifier.unify state.Constraints with
-                        | Error message -> Error (Typed, [ Diagnostics.error message ])
-                        | Ok subst ->
-                            let resolvedTypes, resolvedTypeDefs, resolvedItems = resolveTypes subst types state.TypeDefs items
-                            let own = moduleFromTypedItems resolvedItems
-                            // The module's own definitions win over imported ones of the same name.
-                            let ownNames = exportedValueNames own |> Set.union (own |> List.choose (function Def (ValueDef(false, name, _, _)) -> Some name | _ -> None) |> Set.ofList)
-                            let inlined =
-                                inlined
-                                |> List.filter (function
-                                    | Def (ValueDef(_, name, _, _)) -> not (ownNames.Contains name)
-                                    | _ -> true)
-                                |> distinctDefinitions
-                                |> reachedItems own
-                            Ok { Typed =
-                                    { Module = inlined @ own
-                                      // The types of the imported definitions inlined for the backend, then the module's own.
-                                      Types = resolvedTypes |> Map.fold (fun acc name ty -> acc |> Map.add name ty) inlinedTypes
-                                      TypeDefs = resolvedTypeDefs
-                                      Items = resolvedItems
-                                      // Filled in for the root module only, by `compileWith`.
-                                      ExprTypes = Map.empty
-                                      CalleeTypes = Map.empty
-                                      SymbolTypes = Map.empty
-                                      Symbols = state.Symbols
-                                      AnnotatedSymbols = state.AnnotatedSymbols
-                                      References = state.References
-                                      ImportReferences = state.ImportReferences }
-                                 Own = own
-                                 Inlined = inlined
-                                 Name = declaredModuleName desugared
-                                 Syntax = ast
-                                 Subst = subst
-                                 RawExprTypes = state.ExprTypes
-                                 RawCalleeTypes = state.CalleeTypes
-                                 RawSymbolTypes = state.SymbolTypes
-                                 // Only declarations the module made itself are in `DeclarationSymbols`.
-                                 Exports =
-                                    state.DeclarationSymbols
-                                    |> Map.values
-                                    |> Seq.map (fun id -> state.Symbols.[id])
-                                    |> Seq.filter (fun symbol -> symbol.Kind = TopLevelValue && symbol.IsExported)
-                                    |> Seq.map (fun symbol -> symbol.Name, symbol)
-                                    |> Map.ofSeq }
+                env <- extendEnvWithImport env qualifier exportedValueTypes (imported.Exports |> Map.map (fun _ symbol -> symbol.Id))
+                // The import is a symbol of its own, unless the compiler made it up (for `@entry`).
+                let importSymbols, importedThrough =
+                    if SourceSpan.isNone item.Span then
+                        Map.empty, state.ImportedThrough
+                    else
+                        let name =
+                            match item.Alias, item.Source with
+                            | Some alias, _ -> alias
+                            | None, ModuleImport moduleName -> moduleName
+                            | None, PathImport path -> path
+                        let import = { Id = SymbolId.next (); Name = name; Kind = ImportedModule; Declaration = item.Span; IsExported = false }
+                        Map.ofList [ import.Id, import ],
+                        exportedSymbols |> Map.fold (fun acc id _ -> acc |> Map.add id import.Id) state.ImportedThrough
+                state <-
+                    { state with
+                        TypeDefs = mergeTypeDefs state.TypeDefs exportedTypeDefs
+                        Symbols = Seq.fold (fun acc (KeyValue(id, symbol)) -> acc |> Map.add id symbol) state.Symbols (Seq.append exportedSymbols importSymbols)
+                        ImportedThrough = importedThrough }
+                inlined <- inlined @ inlinedItemsForImport item imported
+                inlinedTypes <- inlinedTypesForImport item imported |> Map.fold (fun acc name ty -> acc |> Map.add name ty) inlinedTypes
+            for item in imports do
+                // An import of a module that is still being checked, because it imports this one, is a cycle.
+                let checkImport (importOrigin: ModuleOrigin) (readSource: unit -> string) =
+                    let importKey = originKey importOrigin
+                    if importKey = key || visited.Contains importKey then
+                        Error (Typed, [ Diagnostics.at DiagnosticCodes.ImportCycle item.Span $"Import cycle detected for {importKey}" ])
+                    else
+                        typecheckImport checkedModules importOrigin readSource (visited.Add key)
+                match StandardLibrary.tryModuleName item with
+                | Some moduleName ->
+                    match StandardLibrary.tryLoadSource moduleName with
+                    | None ->
+                        let available = String.concat ", " (StandardLibrary.moduleNames |> List.map (fun name -> StandardLibrary.importPrefix + name))
+                        errors <- errors @ [ Diagnostics.at DiagnosticCodes.UnknownStandardLibraryModule item.Span $"Unknown standard library module '{StandardLibrary.importPrefix}{moduleName}' (available: {available})" ]
+                    | Some moduleSource ->
+                        match checkImport (StandardLibraryModule moduleName) (fun () -> moduleSource) with
+                        | Error (_, diags) -> errors <- errors @ diags
+                        | Ok imported when imported.Name <> Some moduleName ->
+                            let declared = imported.Name |> Option.defaultValue "(none)"
+                            errors <- errors @ [ Diagnostics.at DiagnosticCodes.InvalidStandardLibraryModule item.Span $"Standard library module '{StandardLibrary.importPrefix}{moduleName}' declares the module name '{declared}'" ]
+                        | Ok imported -> mergeImport (originKey (StandardLibraryModule moduleName)) item imported
+                | None ->
+                    match origin with
+                    | SourceFile fullPath ->
+                        match resolveImportPath (Path.GetDirectoryName fullPath) item with
+                        | Error diag -> errors <- errors @ [ diag ]
+                        | Ok importPath ->
+                            match checkImport (SourceFile importPath) (fun () -> File.ReadAllText importPath) with
+                            | Error (_, diags) -> errors <- errors @ diags
+                            | Ok imported -> mergeImport (originKey (SourceFile importPath)) item imported
+                    | StandardLibraryModule name ->
+                        errors <- errors @ [ Diagnostics.at DiagnosticCodes.InvalidStandardLibraryModule item.Span $"Standard library module '{name}' may only import other standard library modules" ]
+                    | InMemory ->
+                        let shown =
+                            match item.Source with
+                            | PathImport path -> path
+                            | ModuleImport name -> name
+                        errors <- errors @ [ Diagnostics.at DiagnosticCodes.ImportNotFound item.Span $"Import not found: {shown} (only standard library modules can be imported here)" ]
+            // A name two imports bring in is an error only where it is used, and only if nothing nearer binds it.
+            let ambiguousImports =
+                unqualifiedSources
+                |> Map.toSeq
+                |> Seq.choose (fun (name, sources) ->
+                    match sources, TypeEnv.tryFind name env |> Option.bind (fun scheme -> scheme.Symbol) with
+                    | _ :: _ :: _, Some symbol -> Some (name, (symbol, sources |> List.map (fun (_, moduleName) -> $"{moduleName}.{name}")))
+                    | _ -> None)
+                |> Map.ofSeq
+            state <- { state with AmbiguousImports = ambiguousImports }
+            if not errors.IsEmpty then
+                // A module imported along several paths fails each importer with the same diagnostics.
+                Error (Typed, List.distinct errors)
+            else
+                match NyxCompiler.Infer.inferModuleWithEnv env state desugared with
+                | Error diagnostics -> Error (Typed, diagnostics)
+                | Ok (types, items, (state: NyxCompiler.Infer.InferState)) ->
+                    match Unifier.unify state.Constraints with
+                    | Error (message, span) -> Error (Typed, [ Diagnostics.at DiagnosticCodes.TypeMismatch span message ])
+                    | Ok subst ->
+                        let resolvedTypes, resolvedTypeDefs, resolvedItems = resolveTypes subst types state.TypeDefs items
+                        let own = moduleFromTypedItems resolvedItems
+                        // The module's own definitions win over imported ones of the same name.
+                        let ownNames = exportedValueNames own |> Set.union (own |> List.choose (function Def (ValueDef(false, name, _, _)) -> Some name | _ -> None) |> Set.ofList)
+                        let inlined =
+                            inlined
+                            |> List.filter (function
+                                | Def (ValueDef(_, name, _, _)) -> not (ownNames.Contains name)
+                                | _ -> true)
+                            |> distinctDefinitions
+                            |> reachedItems own
+                        Ok { Typed =
+                                { Module = inlined @ own
+                                  // The types of the imported definitions inlined for the backend, then the module's own.
+                                  Types = resolvedTypes |> Map.fold (fun acc name ty -> acc |> Map.add name ty) inlinedTypes
+                                  TypeDefs = resolvedTypeDefs
+                                  Items = resolvedItems
+                                  // Filled in for the root module only, by `compileWith`.
+                                  ExprTypes = Map.empty
+                                  CalleeTypes = Map.empty
+                                  SymbolTypes = Map.empty
+                                  Symbols = state.Symbols
+                                  AnnotatedSymbols = state.AnnotatedSymbols
+                                  References = state.References
+                                  ImportReferences = state.ImportReferences }
+                             Own = own
+                             Inlined = inlined
+                             Name = declaredModuleName desugared
+                             Syntax = ast
+                             Subst = subst
+                             RawExprTypes = state.ExprTypes
+                             RawCalleeTypes = state.CalleeTypes
+                             RawSymbolTypes = state.SymbolTypes
+                             // Only declarations the module made itself are in `DeclarationSymbols`.
+                             Exports =
+                                state.DeclarationSymbols
+                                |> Map.values
+                                |> Seq.map (fun id -> state.Symbols.[id])
+                                |> Seq.filter (fun symbol -> symbol.Kind = TopLevelValue && symbol.IsExported)
+                                |> Seq.map (fun symbol -> symbol.Name, symbol)
+                                |> Map.ofSeq }
 
     /// An imported module, checked the first time this compilation imports it; its source is only read then.
     and private typecheckImport (checkedModules: CheckedModules) (origin: ModuleOrigin) (readSource: unit -> string) (visited: Set<string>) : Result<CheckedModule, CompilationPhase * Diagnostic list> =
@@ -990,15 +958,15 @@ module Compiler =
             checkedModule
 
     let parse (source: string) : Result<Module, Diagnostic list> =
-        match parseModule source with
-        | Result.Ok ast -> Ok ast
-        | Result.Error err -> Error [ Diagnostics.error err ]
+        match parseModuleFileWithNames "" source with
+        | Result.Ok (ast, _, _) -> Ok ast
+        | Result.Error err -> Error [ syntaxError err ]
 
     let private compileWith (origin: ModuleOrigin) (source: string) : CompileResult =
         match typecheckModule (CheckedModules()) origin source Set.empty with
         | Result.Error (phase, diagnostics) ->
             { Phase = phase
-              Diagnostics = annotateDiagnosticsWithSource source diagnostics
+              Diagnostics = diagnostics
               Typed = None
               Syntax = None }
         | Result.Ok checkedModule ->
@@ -1020,7 +988,7 @@ module Compiler =
     let compileFile (filePath: string) : CompileResult =
         if not (File.Exists filePath) then
             { Phase = Parsed
-              Diagnostics = [ Diagnostics.error ($"File not found: {filePath}") ]
+              Diagnostics = [ Diagnostics.general DiagnosticCodes.FileNotFound $"File not found: {filePath}" ]
               Typed = None
               Syntax = None }
         else
