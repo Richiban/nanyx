@@ -144,3 +144,88 @@ export def Option.mapOr: ((#some(a) | r), b, (a -> b)) -> b = {
   | #some(value), _, f -> f(value)
   | _, default, _ -> default
 }
+
+-- Lists -----------------------------------------------------------------------------------------
+--
+-- Attached to `List`, so they are called as `List.map(xs, f)`, or as `xs \map(f)` when `xs` is
+-- known to be a list. Lists are immutable: every function gives back a new list.
+
+-- `step` applied to `initial` and the first element, then to that result and the second, and so on.
+export def List.fold: (list(a), b, ((b, a) -> b)) -> b = {
+  | [], acc, _ -> acc
+  | [x, ...rest], acc, step -> List.fold(rest, step(acc, x), step)
+}
+
+-- The elements in reverse order.
+export def List.reverse: list(a) -> list(a) = { xs -> List.fold(xs, [], { acc, x -> [x, ...acc] }) }
+
+-- The number of elements.
+export def List.length: list(a) -> int = { xs -> List.fold(xs, 0, { count, _ -> count + 1 }) }
+
+-- The first element, or `#emptyList`.
+export def List.head: list(a) -> #some(a) | #emptyList = {
+  | [] -> #emptyList
+  | [x, ..._] -> #some(x)
+}
+
+-- `f` applied to each element, in order.
+export def List.map: (list(a), (a -> b)) -> list(b) = {
+  | [], _ -> []
+  | [x, ...rest], f -> [f(x), ...List.map(rest, f)]
+}
+
+-- The elements `keep` holds for, in order.
+export def List.filter: (list(a), (a -> bool)) -> list(a) = {
+  | [], _ -> []
+  | [x, ...rest], keep -> if keep(x) then [x, ...List.filter(rest, keep)] else List.filter(rest, keep)
+}
+
+-- The first element `matches` holds for, or `#notFound`.
+export def List.find: (list(a), (a -> bool)) -> #some(a) | #notFound = {
+  | [], _ -> #notFound
+  | [x, ...rest], matches -> if matches(x) then #some(x) else List.find(rest, matches)
+}
+
+-- Whether `test` holds for every element (so `true` for an empty list).
+export def List.all: (list(a), (a -> bool)) -> bool = {
+  | [], _ -> true
+  | [x, ...rest], test -> if test(x) then List.all(rest, test) else false
+}
+
+-- Whether `test` holds for any element (so `false` for an empty list).
+export def List.any: (list(a), (a -> bool)) -> bool = {
+  | [], _ -> false
+  | [x, ...rest], test -> if test(x) then true else List.any(rest, test)
+}
+
+-- `List.fold` from the last element to the first.
+export def List.foldBack: (list(a), b, ((b, a) -> b)) -> b = { xs, initial, step ->
+  List.fold(List.reverse(xs), initial, step)
+}
+
+-- `xs` with `x` added at the end.
+export def List.append: (list(a), a) -> list(a) = { xs, x -> xs ++ [x] }
+
+-- The lists of `xss` joined end to end.
+export def List.flatten: list(list(a)) -> list(a) = {
+  | [] -> []
+  | [xs, ...rest] -> xs ++ List.flatten(rest)
+}
+
+-- The first `count` elements (all of them when there are fewer).
+export def List.take: (list(a), int) -> list(a) = {
+  | [], _ -> []
+  | [x, ...rest], count -> if count <= 0 then [] else [x, ...List.take(rest, count - 1)]
+}
+
+-- The elements after the first `count`.
+export def List.skip: (list(a), int) -> list(a) = {
+  | [], _ -> []
+  | [x, ...rest], count -> if count <= 0 then [x, ...rest] else List.skip(rest, count - 1)
+}
+
+-- Pairs of the elements at the same position, as long as the shorter list.
+export def List.zip: (list(a), list(b)) -> list((a, b)) = {
+  | [x, ...xs], [y, ...ys] -> [(x, y), ...List.zip(xs, ys)]
+  | _, _ -> []
+}

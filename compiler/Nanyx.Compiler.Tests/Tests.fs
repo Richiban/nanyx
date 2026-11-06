@@ -1329,6 +1329,26 @@ let ``Int.parse is in the prelude`` () =
     Assert.Equal("#some(int) | #invalidInt", Unifier.tyToString result.Typed.Value.Types.["piped"])
 
 [<Fact>]
+let ``The prelude's List functions are found by a pipe on a list`` () =
+    let source =
+        "def xs = [3, 1, 2]\n" +
+        "def doubled = xs \\ map({ x -> x * 2 })\n" +
+        "def names = xs \\ map({ x -> \"n\" })\n" +
+        "def big = xs \\ filter({ x -> x > 1 })\n" +
+        "def first = xs \\ head\n" +
+        "def total = List.fold(xs, 0, { acc, x -> acc + x })\n" +
+        "def pairs = List.zip(xs, names)"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, sprintf "%A" result.Diagnostics)
+    let typeOf name = Unifier.tyToString result.Typed.Value.Types.[name]
+    Assert.Equal("list(int)", typeOf "doubled")
+    Assert.Equal("list(string)", typeOf "names")
+    Assert.Equal("list(int)", typeOf "big")
+    Assert.Equal("#some(int) | #emptyList", typeOf "first")
+    Assert.Equal("int", typeOf "total")
+    Assert.Equal("list((int, string))", typeOf "pairs")
+
+[<Fact>]
 let ``nanyx/math exports int functions with their types`` () =
     let result =
         Compiler.compile (
