@@ -204,20 +204,22 @@ module Compiler =
     /// definitions and type definitions (plus whatever that module inlined itself). Exported definitions keep
     /// their names, or take the import's alias as a qualifier; private ones are qualified with the module's own
     /// name so they cannot collide with anything in the importer.
-    let private inlinedItemsForImport (item: ImportItem) (checkedModule: CheckedModule) : TopLevelItem list =
+    let private inlinedRenames (item: ImportItem) (checkedModule: CheckedModule) : Map<string, string> =
         let qualifier = importQualifier item
         let moduleName =
             checkedModule.Name
             |> Option.map sanitizeIdentifier
             |> Option.defaultValue "import"
-        let renames =
-            checkedModule.Own
-            |> List.choose (function
-                | Def (ValueDef(true, name, _, _)) ->
-                    qualifier |> Option.map (fun q -> name, $"{q}.{name}")
-                | Def (ValueDef(false, name, _, _)) -> Some (name, $"{moduleName}.{name}")
-                | _ -> None)
-            |> Map.ofList
+        checkedModule.Own
+        |> List.choose (function
+            | Def (ValueDef(true, name, _, _)) ->
+                qualifier |> Option.map (fun q -> name, $"{q}.{name}")
+            | Def (ValueDef(false, name, _, _)) -> Some (name, $"{moduleName}.{name}")
+            | _ -> None)
+        |> Map.ofList
+
+    let private inlinedItemsForImport (item: ImportItem) (checkedModule: CheckedModule) : TopLevelItem list =
+        let renames = inlinedRenames item checkedModule
         let rename (name: string) = renames |> Map.tryFind name |> Option.defaultValue name
         let ownItems =
             checkedModule.Own
@@ -227,6 +229,14 @@ module Compiler =
                 | Def (TypeDef _) as typeDef -> Some typeDef
                 | _ -> None)
         checkedModule.Inlined @ ownItems
+
+    /// The types of the definitions `inlinedItemsForImport` inlines, by the names they are inlined under, so that
+    /// the backend knows them as it knows the importer's own (the layout of an imported record, say).
+    let private inlinedTypesForImport (item: ImportItem) (checkedModule: CheckedModule) : Map<string, Ty> =
+        let renames = inlinedRenames item checkedModule
+        checkedModule.Typed.Types
+        |> Seq.map (fun (KeyValue(name, ty)) -> (renames |> Map.tryFind name |> Option.defaultValue name), ty)
+        |> Map.ofSeq
 
     /// Keeps the first definition of each name, so a module inlined along two import paths appears once.
     let private distinctDefinitions (items: TopLevelItem list) : TopLevelItem list =
@@ -257,14 +267,24 @@ module Compiler =
             if Map.containsKey key acc then acc else acc |> Map.add key value) target
 
     /// Brings an imported module's exported values into scope, as references to their symbols (`symbols`, by name).
+    /// Every type variable left in an exported type is quantified, so each use takes fresh ones. The imported
+    /// module numbered its variables separately from the importer, so they are first renumbered below zero, where
+    /// the importer never numbers one: a quantified variable that shared an id with one of its fresh replacements
+    /// would be replaced twice.
     let private extendEnvWithImport (env: TypeEnv) (qualifierOpt: string option) (types: Map<string, Ty>) (symbols: Map<string, SymbolId>) =
+        let quantify ty =
+            let renumbered =
+                TypeEnv.freeTyVars ty
+                |> Seq.mapi (fun index id -> id, TyVar { Id = -(index + 1); Name = None })
+                |> Map.ofSeq
+            TypeEnv.generalize TypeEnv.empty (Unifier.apply renumbered ty)
         types
         |> Map.fold (fun acc name ty ->
             let importedName =
                 match qualifierOpt with
                 | Some qualifier -> $"{qualifier}.{name}"
                 | None -> name
-            acc |> TypeEnv.declare importedName (symbols |> Map.tryFind name) (TypeEnv.mono ty)) env
+            acc |> TypeEnv.declare importedName (symbols |> Map.tryFind name) (quantify ty)) env
 
     let private tryParseLineColumn (message: string) : (int * int) option =
         let patterns =
@@ -294,6 +314,136 @@ module Compiler =
     let desugar (module': Module) =
         let isReturnKeyword keyword = keyword = "return"
 
+        // The builder whose block is being desugared (`proc` in `proc { ... }`), and whether that block used a
+        // workflow keyword. A keyword `k` in the block calls the builder's member `k`, `return` its member `return`.
+        let mutable builder: string option = None
+        let mutable builderUsed = false
+        let mutable freshNames = 0
+        let freshName prefix =
+            freshNames <- freshNames + 1
+            $"__{prefix}_{freshNames}"
+
+        // `k(args)` for the workflow keyword `k`: a call to the member `k` of the builder the block was written
+        // after, through a local of its own (`def m = proc.try` then `m(args)`), so that each use instantiates the
+        // builder's type afresh. Outside a builder's block it is a call to a function named `k`.
+        let workflowCall (source: Expression) (keyword: string) (args: Expression list) : Expression =
+            match builder with
+            | Some builderName ->
+                builderUsed <- true
+                let memberLocal = freshName $"{sanitizeIdentifier builderName}_{keyword}"
+                let memberAccess = Expression.from source (MemberAccess(Expression.from source (IdentifierExpr builderName), keyword, None))
+                Expression.from source (
+                    Block [
+                        DefStatement(false, memberLocal, None, memberAccess)
+                        ExprStatement (Expression.from source (FunctionCall(memberLocal, None, args)))
+                    ])
+            | None -> Expression.from source (FunctionCall(keyword, None, args))
+
+        // A workflow bind nested in an expression, as in `return R(a = try f())`, becomes a bind of a fresh name
+        // just before its statement, and the expression refers to that name. Binds are lifted from the places an
+        // expression always evaluates, inner ones before outer ones and left to right; not from lambdas, nested
+        // blocks, the branches of an `if` or a `match`, or the right of `and`/`or`.
+        let rec liftBinds (expr: Expression) : Statement list * Expression =
+            let liftAll exprs =
+                let lifted = exprs |> List.map liftBinds
+                List.collect fst lifted, List.map snd lifted
+            let rebuild kind = { expr with Kind = kind }
+            match expr.Kind with
+            | WorkflowBindExpr(keyword, value) when not (isReturnKeyword keyword) ->
+                let prefix, value' = liftBinds value
+                let name = freshName keyword
+                prefix @ [ DefStatement(false, name, None, { expr with Kind = WorkflowBindExpr(keyword, value') }) ],
+                Expression.from expr (IdentifierExpr name)
+            | WorkflowBindExpr(keyword, value) ->
+                let prefix, value' = liftBinds value
+                prefix, rebuild (WorkflowBindExpr(keyword, value'))
+            | WorkflowReturnExpr value ->
+                let prefix, value' = liftBinds value
+                prefix, rebuild (WorkflowReturnExpr value')
+            | FunctionCall(name, rangeOpt, args) ->
+                let prefix, args' = liftAll args
+                prefix, rebuild (FunctionCall(name, rangeOpt, args'))
+            | ContextMemberCall(ctxType, field, args) ->
+                let prefix, args' = liftAll args
+                prefix, rebuild (ContextMemberCall(ctxType, field, args'))
+            | BinaryOp(("and" | "or") as op, left, right) ->
+                let prefix, left' = liftBinds left
+                prefix, rebuild (BinaryOp(op, left', right))
+            | BinaryOp(op, left, right) ->
+                match liftAll [ left; right ] with
+                | prefix, [ left'; right' ] -> prefix, rebuild (BinaryOp(op, left', right'))
+                | _ -> [], expr
+            | Pipe(value, name, rangeOpt, args) ->
+                match liftAll (value :: args) with
+                | prefix, value' :: args' -> prefix, rebuild (Pipe(value', name, rangeOpt, args'))
+                | _ -> [], expr
+            | TupleExpr items ->
+                let prefix, items' = liftAll items
+                prefix, rebuild (TupleExpr items')
+            | ListExpr items ->
+                let prefix, items' = liftAll items
+                prefix, rebuild (ListExpr items')
+            | RecordExpr fields ->
+                let lifted =
+                    fields
+                    |> List.map (function
+                        | NamedField(name, value) ->
+                            let prefix, value' = liftBinds value
+                            prefix, NamedField(name, value')
+                        | PositionalField value ->
+                            let prefix, value' = liftBinds value
+                            prefix, PositionalField value')
+                List.collect fst lifted, rebuild (RecordExpr(List.map snd lifted))
+            | TagExpr(name, Some payload) ->
+                let prefix, payload' = liftBinds payload
+                prefix, rebuild (TagExpr(name, Some payload'))
+            | MemberAccess(baseExpr, field, rangeOpt) ->
+                let prefix, baseExpr' = liftBinds baseExpr
+                prefix, rebuild (MemberAccess(baseExpr', field, rangeOpt))
+            | IfExpr(cond, thenExpr, elseExpr) ->
+                let prefix, cond' = liftBinds cond
+                prefix, rebuild (IfExpr(cond', thenExpr, elseExpr))
+            | Match(values, arms) ->
+                let prefix, values' = liftAll values
+                prefix, rebuild (Match(values', arms))
+            | InterpolatedString parts ->
+                let lifted =
+                    parts
+                    |> List.map (function
+                        | StringText text -> [], StringText text
+                        | StringExpr value ->
+                            let prefix, value' = liftBinds value
+                            prefix, StringExpr value')
+                List.collect fst lifted, rebuild (InterpolatedString(List.map snd lifted))
+            | TagExpr(_, None)
+            | Lambda _
+            | Block _
+            | UseIn _
+            | ContextMemberAccess _
+            | UnitExpr
+            | LiteralExpr _
+            | IdentifierExpr _ -> [], expr
+
+        // The statement with the binds nested in it lifted out before it. A bind that is a whole statement
+        // (`def a = try f()`, or `try f()` on its own) stays where it is; only binds inside its value are lifted.
+        let liftStatementBinds (statement: Statement) : Statement list =
+            let liftValue (value: Expression) =
+                match value.Kind with
+                | WorkflowBindExpr(keyword, bound) when not (isReturnKeyword keyword) ->
+                    let prefix, bound' = liftBinds bound
+                    prefix, { value with Kind = WorkflowBindExpr(keyword, bound') }
+                | _ -> liftBinds value
+            match statement with
+            | DefStatement(isExport, name, typeOpt, value) ->
+                let prefix, value' = liftValue value
+                prefix @ [ DefStatement(isExport, name, typeOpt, value') ]
+            | ExprStatement value ->
+                let prefix, value' = liftValue value
+                prefix @ [ ExprStatement value' ]
+            | UseStatement _
+            | ImportStatement _
+            | TypeDefStatement _ -> [ statement ]
+
         // A workflow bind or return becomes a call to the workflow's members, whose type is not that of the bind as
         // written (a bind's call is the whole rest of the workflow), so that call is a node of its own, with a new id.
         // Everything else keeps its node's id.
@@ -304,6 +454,19 @@ module Compiler =
             | _ -> { expr with Kind = desugarKind expr }
         and desugarKind expr =
             match expr.Kind with
+            // A block written after a builder's name, `proc { ... }`: when the block uses a workflow keyword, it
+            // is the block itself, with its keywords calling the builder's members (see `workflowCall`). The
+            // documented `proc.apply({ ... })` around it is not made yet: the block runs where it is written.
+            | FunctionCall(name, rangeOpt, [ Kind (Lambda([], body)) as lambda ]) when not (name.StartsWith "__") ->
+                let outerBuilder, outerUsed = builder, builderUsed
+                builder <- Some name
+                builderUsed <- false
+                let body' = desugarExpr body
+                let used = builderUsed
+                builder <- outerBuilder
+                builderUsed <- outerUsed
+                if used then body'.Kind
+                else FunctionCall(name, rangeOpt, [ { lambda with Kind = Lambda([], body') } ])
             | FunctionCall(name, rangeOpt, args) ->
                 FunctionCall(name, rangeOpt, args |> List.map desugarExpr)
             | Lambda(args, body) ->
@@ -336,12 +499,8 @@ module Compiler =
             | UseIn(binding, body) ->
                 let binding' = desugarUseBinding binding
                 UseIn(binding', desugarExpr body)
-            | WorkflowBindExpr(keyword, value) ->
-                if isReturnKeyword keyword then
-                    FunctionCall("pure", None, [desugarExpr value])
-                else
-                    FunctionCall(keyword, None, [desugarExpr value])
-            | WorkflowReturnExpr value -> FunctionCall("pure", None, [desugarExpr value])
+            | WorkflowBindExpr(keyword, value) -> (workflowCall expr keyword [desugarExpr value]).Kind
+            | WorkflowReturnExpr value -> (workflowCall expr "return" [desugarExpr value]).Kind
             | InterpolatedString parts ->
                 let mappedParts =
                     parts
@@ -362,7 +521,7 @@ module Compiler =
                 let expr' =
                     match expr.Kind with
                     | WorkflowBindExpr(keyword, value) when isReturnKeyword keyword ->
-                        Expression.from expr (FunctionCall("pure", None, [desugarExpr value]))
+                        workflowCall expr "return" [desugarExpr value]
                     | _ -> desugarExpr expr
                 DefStatement(isExport, name, typeOpt, expr')
             | ExprStatement expr -> ExprStatement (desugarExpr expr)
@@ -375,22 +534,22 @@ module Compiler =
             | DefStatement(isExport, name, typeOpt, expr) :: rest ->
                 match expr.Kind with
                 | WorkflowBindExpr(keyword, bindExpr) when isReturnKeyword keyword ->
-                    Expression.from expr (FunctionCall("pure", None, [desugarExpr bindExpr]))
+                    workflowCall expr "return" [desugarExpr bindExpr]
                 | WorkflowBindExpr(keyword, bindExpr) ->
                     let nextExpr = desugarWorkflowChain rest
-                    Expression.from expr (FunctionCall(keyword, None, [desugarExpr bindExpr; Expression.from expr (Lambda([name, None], nextExpr))]))
+                    workflowCall expr keyword [desugarExpr bindExpr; Expression.from expr (Lambda([name, None], nextExpr))]
                 | _ ->
                     let expr' = desugarExpr expr
                     let nextExpr = desugarWorkflowChain rest
                     chainBlock expr.Span nextExpr [DefStatement(isExport, name, typeOpt, expr'); ExprStatement nextExpr]
             | ExprStatement expr :: rest ->
                 match expr.Kind with
-                | WorkflowReturnExpr value -> Expression.from expr (FunctionCall("pure", None, [desugarExpr value]))
+                | WorkflowReturnExpr value -> workflowCall expr "return" [desugarExpr value]
                 | WorkflowBindExpr(keyword, bindExpr) when isReturnKeyword keyword ->
-                    Expression.from expr (FunctionCall("pure", None, [desugarExpr bindExpr]))
+                    workflowCall expr "return" [desugarExpr bindExpr]
                 | WorkflowBindExpr(keyword, bindExpr) ->
                     let nextExpr = desugarWorkflowChain rest
-                    Expression.from expr (FunctionCall(keyword, None, [desugarExpr bindExpr; Expression.from expr (Lambda([("_", None)], nextExpr))]))
+                    workflowCall expr keyword [desugarExpr bindExpr; Expression.from expr (Lambda([("_", None)], nextExpr))]
                 | _ ->
                     let expr' = desugarExpr expr
                     let nextExpr = desugarWorkflowChain rest
@@ -423,7 +582,7 @@ module Compiler =
                     List.rev prefix @ [ExprStatement chainExpr]
                 | stmt :: rest ->
                     split (desugarStatement stmt :: prefix) rest
-            split [] statements
+            split [] (statements |> List.collect liftStatementBinds)
 
         module'
         |> List.map (function
@@ -561,6 +720,7 @@ module Compiler =
                 let mutable state = { NyxCompiler.Infer.emptyState with Declared = declared }
                 let mutable errors: Diagnostic list = []
                 let mutable inlined: TopLevelItem list = []
+                let mutable inlinedTypes: Map<string, Ty> = Map.empty
                 let mergeImport (item: ImportItem) (imported: CheckedModule) =
                     let qualifier = importQualifier item
                     let exportedValues = exportedValueNames imported.Own
@@ -596,6 +756,7 @@ module Compiler =
                             Symbols = Seq.fold (fun acc (KeyValue(id, symbol)) -> acc |> Map.add id symbol) state.Symbols (Seq.append exportedSymbols importSymbols)
                             ImportedThrough = importedThrough }
                     inlined <- inlined @ inlinedItemsForImport item imported
+                    inlinedTypes <- inlinedTypesForImport item imported |> Map.fold (fun acc name ty -> acc |> Map.add name ty) inlinedTypes
                 for item in imports do
                     match StandardLibrary.tryModuleName item with
                     | Some moduleName ->
@@ -648,7 +809,8 @@ module Compiler =
                                 |> distinctDefinitions
                             Ok { Typed =
                                     { Module = inlined @ own
-                                      Types = resolvedTypes
+                                      // The types of the imported definitions inlined for the backend, then the module's own.
+                                      Types = resolvedTypes |> Map.fold (fun acc name ty -> acc |> Map.add name ty) inlinedTypes
                                       TypeDefs = resolvedTypeDefs
                                       Items = resolvedItems
                                       // Filled in for the root module only, by `compileWith`.

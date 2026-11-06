@@ -1,0 +1,28 @@
+module result
+
+-- nanyx/result: working with results, values of type `#some(a) | #error(e)`.
+--
+-- `proc` is the result workflow: inside `proc { ... }`, `try x` continues with the payload of
+-- `#some`, and gives back any `#error` as is without running the rest of the block, and
+-- `return x` wraps the value in `#some`.
+--
+--   def total = proc {
+--     def customer = try getCustomer(5)
+--     def order = try getLastOrder(customer)
+--     return order.total
+--   }
+--
+-- A workflow builder is a record of keyword members. A block written after the builder's name
+-- has each `try x` (and each `try x` nested inside an expression) turned into a call to the
+-- builder's `try` member, with the rest of the block as its continuation, and each `return x`
+-- into a call to its `return` member. Every step must have the same error type `e`.
+export def proc: (
+  try: ((#some(a) | #error(e)), (a -> (#some(b) | #error(e)))) -> (#some(b) | #error(e))
+  return: a -> (#some(a) | #error(e))
+) = (
+  try = {
+    | #some(value), continue -> continue(value)
+    | #error(e), _ -> #error(e)
+  }
+  return = { value -> #some(value) }
+)

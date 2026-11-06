@@ -1,5 +1,8 @@
 module semanticVersion
 
+import nanyx/result
+import nanyx/text
+
 type SemanticVersion = (
   major: int
   minor: int
