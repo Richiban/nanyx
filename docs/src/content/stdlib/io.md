@@ -4,7 +4,7 @@ description: "Input and output operations"
 order: 2
 ---
 
-The `io` module provides functions for reading from and writing to standard I/O.
+The `io` module provides functions for reading from and writing to standard I/O. Import it as `nanyx/console`; the module with the `@entry` function gets it without importing it.
 
 All functions in this module require a `Console` context. The program's `@entry` function runs in `Console`, so they are available in `main` without any setup; any other function that calls them must declare `[Console]` in its type.
 
@@ -87,7 +87,7 @@ Prints a debug representation of any value and returns it. Useful for inspecting
 readLine: [Console] () -> #some(string) | #error(IoError)
 ```
 
-Reads a line of input from stdin.
+Reads a line of input from stdin, without its line break. At the end of the input it gives `#error(#endOfInput)`: `IoError` is `#endOfInput`.
 
 ```nanyx
 match readLine()
@@ -119,7 +119,7 @@ match readToEnd()
 flush: [Console] () -> ()
 ```
 
-Flushes buffered output streams.
+Flushes buffered output streams. The runtime doesn't buffer its writes, so this does nothing there; it is a member of `Console` for instances that do.
 
 ```nanyx
 print("processing...")
