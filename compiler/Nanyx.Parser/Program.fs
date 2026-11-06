@@ -1306,6 +1306,16 @@ let workflowReturnExpr =
             |>> WorkflowReturnExpr))
     <?> "workflow return"
 
+// `try x` applies the workflow keyword `try` to `x`, the same as the older `try! x`; what it does is up to the
+// workflow (see the workflows page of the docs). `try` is the only keyword written this way so far. Its value is
+// on the same line, and `try` is reserved: `try` alone is not a name.
+let workflowKeywordExpr =
+    let keywordEnd = notFollowedBy (satisfy (fun c -> Char.IsLetterOrDigit c || c = '_'))
+    spanned (
+        attempt (pstring "try" .>> keywordEnd) >>. wsInline >>. expression
+        |>> fun value -> WorkflowBindExpr("try", value))
+    <?> "workflow keyword"
+
 // Use binding parser: `use expr` or `use C(T) = expr`
 let useBinding =
     // First try context instance: C(T) = expr or C = expr
@@ -1361,8 +1371,8 @@ let contextMemberAccess =
                 | Some None -> ContextMemberCall(ctxType, field, [])  // empty parens like f()
                 | None -> ContextMemberAccess(ctxType, field)))
 
-// A name applied to a value without parentheses, as in `try parseNumber(s)`, is how a workflow keyword is used
-// (see the workflows page of the docs). Workflows are not implemented yet, and without this the name parses as
+// A name applied to a value without parentheses, as in `yield 1`, is how a workflow keyword is used (see the
+// workflows page of the docs). Only `try` is parsed that way so far, and without this any other name parses as
 // an identifier and the failure surfaces far from here. So it fails at the name, and notes the failure in the
 // state, which `parseModuleFileWithNames` reports in place of FParsec's error when the parse fails. Workflow
 // blocks are lambdas, so only a name inside a lambda is taken for a keyword: outside one, a line such as
@@ -1370,7 +1380,7 @@ let contextMemberAccess =
 let private workflowKeywordApplication =
     let reservedWords =
         set [ "and"; "as"; "context"; "def"; "else"; "export"; "for"; "if"; "import"; "in"; "is"; "match"; "module"
-              "mut"; "not"; "or"; "private"; "rec"; "return"; "then"; "type"; "use"; "where"; "with" ]
+              "mut"; "not"; "or"; "private"; "rec"; "return"; "then"; "try"; "type"; "use"; "where"; "with" ]
     let operandStart c = isLetter c || isDigit c || c = '_' || c = '"' || c = '#' || c = '(' || c = '['
     let keyword =
         identifierNoWs >>= fun name ->
@@ -1383,9 +1393,8 @@ let private workflowKeywordApplication =
     .>>. getUserState
     >>= fun ((position, name), state) ->
         let message =
-            $"`{name}` is applied to a value without parentheses, which is how a workflow keyword such as `try` "
-            + $"is used. Workflows (such as `proc {{ ... }}`) are not supported yet. To call a function, write "
-            + $"`{name}(...)`."
+            $"`{name}` is applied to a value without parentheses, which is how a workflow keyword is used. The "
+            + $"only workflow keywords so far are `try` and `return`. To call a function, write `{name}(...)`."
         match state.WorkflowKeyword.Value with
         | Some (furthest, _) when furthest.Index >= position.Index -> ()
         | _ -> state.WorkflowKeyword.Value <- Some (position, message)
@@ -1396,6 +1405,7 @@ let primaryExprNoWs =
         attempt interpolatedStringExprNoWs
         attempt workflowReturnExpr
         attempt workflowBindExpr
+        workflowKeywordExpr
         attempt useInExpr
         attempt unitExpr
         attempt ifExpr  // if-then-else must be early to avoid partial matches
