@@ -211,6 +211,18 @@ let ``Run - text upper-cases and prints`` () =
     runSource source |> assertRan "HELLO, NANYX!\nSHOUT\n"
 
 [<Fact>]
+let ``Run - a pipe passes its value in front of several arguments`` () =
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def digits: int, int, int -> int = { a, b, c -> a * 100 + b * 10 + c }\n" +
+        "def digitsThen: int, int, int, (int -> int) -> int = { a, b, c, h -> h(digits(a, b, c)) }\n" +
+        "\n" +
+        "println(\"{1 \\digits(2, 3)}\")\n" +
+        "println(\"{1 \\digitsThen(2, 3) { + 1000 }}\")\n"
+    runSource source |> assertRan "123\n1123\n"
+
+[<Fact>]
 let ``Run - text length, lowercase, trim, repeat and substring`` () =
     let source =
         "import nanyx/console\n" +

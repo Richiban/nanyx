@@ -1051,7 +1051,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
             let nextState =
                 if resolvedName = name then nextState
                 else { nextState with PipeTargets = nextState.PipeTargets |> Map.add expr.Id resolvedName }
-            let callArgs = value :: args
+            let callArgs = pipeCallArguments value args
             match inferExpr env nextState { expr with Kind = FunctionCall(resolvedName, spanOpt, callArgs) } with
             | Ok (typedCall, finalState) ->
                 Ok ({ typedCall with Expr = { expr with Kind = Pipe(value, resolvedName, spanOpt, args) } }, finalState)
