@@ -7,8 +7,6 @@ on:
       - "extension/**"
       - "!extension/**/*.md"
       - ".github/workflows/extension.yml"
-    tags:
-      - "extension/*"
   # No path filter: "Build and package" is a required check on main, so every PR must run it.
   pull_request:
   workflow_dispatch:
@@ -45,15 +43,6 @@ jobs:
         id: version
         run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
-      - name: Check that a release tag matches the extension version
-        if: startsWith(github.ref, 'refs/tags/extension/')
-        run: |
-          tag="${GITHUB_REF_NAME#extension/}"
-          if [ "$tag" != "${{ steps.version.outputs.version }}" ]; then
-            echo "Tag version $tag does not match package.json version ${{ steps.version.outputs.version }}" >&2
-            exit 1
-          fi
-
       - name: Package
         run: npx --yes @vscode/vsce@4 package --out "nanyx-${{ steps.version.outputs.version }}.vsix"
 
@@ -63,20 +52,43 @@ jobs:
           path: extension/nanyx-*.vsix
           if-no-files-found: error
 
+  # Merging a version bump is the release: main publishes the package it just built as
+  # extension/<version>, unless that tag already exists. Nothing is rebuilt for a release.
   publish:
     name: Publish
     needs: build
-    if: startsWith(github.ref, 'refs/tags/extension/')
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    # Queue rather than race, so a second push of the same version sees the first one's tag.
+    concurrency:
+      group: extension-release
+      cancel-in-progress: false
     permissions:
       contents: write
       id-token: write   # lets the job request the GitHub OIDC token that Marketplace trusted publishing exchanges
+    env:
+      TAG: extension/${{ needs.build.outputs.version }}
     steps:
+      - name: Check whether this version is already released
+        id: check
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api "repos/${{ github.repository }}/git/ref/tags/$TAG" --silent 2>/dev/null; then
+            echo "$TAG already exists; nothing to release."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/setup-node@v4
+        if: steps.check.outputs.release == 'true'
         with:
           node-version: 22
 
       - uses: actions/download-artifact@v4
+        if: steps.check.outputs.release == 'true'
         with:
           name: nanyx-vsix
           path: extension
@@ -86,17 +98,21 @@ jobs:
       # environment, so none is set here), and vsce exchanges the job's OIDC
       # token for a short-lived Marketplace credential.
       - name: Publish to the Visual Studio Marketplace
+        if: steps.check.outputs.release == 'true'
         run: npx --yes @vscode/vsce@4 publish --oidc --packagePath nanyx-${{ needs.build.outputs.version }}.vsix
 
       - name: Publish to Open VSX
-        if: env.OVSX_PAT != ''
+        if: steps.check.outputs.release == 'true' && env.OVSX_PAT != ''
         run: npx --yes ovsx@0.10.1 publish nanyx-${{ needs.build.outputs.version }}.vsix
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
 
-      - name: Attach the package to a GitHub release
+      - name: Tag the commit and attach the package to a GitHub release
+        if: steps.check.outputs.release == 'true'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.TAG }}
+          target_commitish: ${{ github.sha }}
           name: VS Code extension ${{ needs.build.outputs.version }}
           files: extension/nanyx-${{ needs.build.outputs.version }}.vsix
           generate_release_notes: true
