@@ -1204,6 +1204,23 @@ let recordFields =
             (many ((comma >>. recordField) <|> attempt (nextLine >>. recordField)))
             (fun head tail -> head :: tail)
 
+// A lone positional field is just its expression, all-positional fields are a tuple, and any named field
+// makes the whole thing a record.
+let private fieldsToExpr (fields, span) =
+    match fields with
+    | [PositionalField single] -> single
+    | _ ->
+        let allPositional = fields |> List.forall (function PositionalField _ -> true | _ -> false)
+        if allPositional then
+            let exprs = fields |> List.map (function PositionalField e -> e | _ -> failwith "unexpected")
+            Expression.at span (TupleExpr exprs)
+        else
+            Expression.at span (RecordExpr fields)
+
+// Arguments in parentheses after a name, as in a call, a tag payload or a pipe target: `(a, b)`, `(x = 1)`.
+let private parenArguments =
+    between (pstring "(") (pstring ")") (ws >>. withSpan recordFields |>> fieldsToExpr .>> ws)
+
 // Unit literal: ()
 let unitExpr =
     spanned (between (pstring "(") (ws >>. pstring ")") (preturn ()) |>> fun _ -> UnitExpr)
@@ -1216,19 +1233,7 @@ let tupleOrParenExpr =
             (pstring "(")
             (ws >>. pstring ")")
             recordFields)
-    |>> fun (fields, span) ->
-        match fields with
-        | [PositionalField single] -> single  // Single expression in parens: (x) is just x
-        | _ ->
-            // Check if all fields are positional (for backward compat)
-            let allPositional = fields |> List.forall (function PositionalField _ -> true | _ -> false)
-            if allPositional then
-                // Pure tuple: extract expressions
-                let exprs = fields |> List.map (function PositionalField e -> e | _ -> failwith "unexpected")
-                Expression.at span (TupleExpr exprs)
-            else
-                // Has named fields: use RecordExpr
-                Expression.at span (RecordExpr fields))
+    |>> fieldsToExpr)
     <?> "tuple or record"
 
 // List expression parser. `...expr` splices a list in place: `[a, ...xs, b]` is desugared to
@@ -1260,16 +1265,11 @@ let listExpr =
         | _ -> segments |> List.reduceBack (fun left right -> Expression.at span (BinaryOp("++", left, right)))
 
 // Tag expression parser: #tagName or #tagName(expr)
-// The payload can be a tuple-like expression with comma-separated values
+// The payload is written like a call's arguments: several values make a tuple, named ones a record.
 let tagExpr =
-    let payload =
-        between
-            (pstring "(")
-            (pstring ")")
-            (ws >>. singleOrTuple (sepBy1 expression (pstring "," .>> ws)))  // Multiple values as a tuple
     spanned (
         pstring "#" >>. identifierNoWs >>= fun tagName ->
-        opt payload |>> fun payloadOpt -> TagExpr(tagName, payloadOpt))
+        opt parenArguments |>> fun payloadOpt -> TagExpr(tagName, payloadOpt))
 
 // If-expression parser: if condition then trueExpr else falseExpr
 // `if cond then a else b`, or if-matching: `if value is pattern then body [else other]` (see the
@@ -1562,7 +1562,7 @@ opp.AddOperator(InfixOperator("||", ws, 1, Associativity.Left, binary "or"))
 let pipeTarget =
     pipe3
         qualifiedIdentifierWithSpan
-        (opt (between (pstring "(") (pstring ")") (ws >>. singleOrTuple (sepBy1 expression (pstring "," .>> ws)))))
+        (opt parenArguments)
         (opt (attempt (wsInline >>. lambda)))
         (fun (funcName, funcRange) argOpt trailingLambdaOpt ->
             let baseArgs = match argOpt with Some arg -> [arg] | None -> []
@@ -1738,17 +1738,6 @@ do
     // Trailing lambda: function can be called with a lambda after parentheses
     // Examples: f(a, b) { x -> x + 1 } or f { x -> x + 1 } (no parens needed if only lambda arg)
     // Note: f(a, b) creates single tuple argument: FunctionCall("f", None, [TupleExpr[a; b]])
-
-    let fieldsToExpr (fields, span) =
-        match fields with
-        | [PositionalField single] -> single
-        | _ ->
-            let allPositional = fields |> List.forall (function PositionalField _ -> true | _ -> false)
-            if allPositional then
-                let exprs = fields |> List.map (function PositionalField e -> e | _ -> failwith "unexpected")
-                Expression.at span (TupleExpr exprs)
-            else
-                Expression.at span (RecordExpr fields)
 
     let callWithParensAndTrailing =
         spanned (
