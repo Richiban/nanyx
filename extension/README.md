@@ -36,6 +36,9 @@ touched. If you are offline, or the release does not exist, the extension says s
   (`zip` on Windows, `tar.gz` elsewhere) substituted. Empty means the GitHub releases of
   `nanyx-lang/nanyx`. Point it somewhere else to install from a mirror, or at a release that has not
   been published on GitHub yet.
+- `nanyx.greekTypeVariables`: hovers name inferred type variables `α`, `β`, `γ`, ... (the default).
+  Turn it off for `a`, `b`, `c`, ...; this starts the server with `nanyx lsp --latin-type-vars`,
+  which compilers before this setting do not understand.
 
 Changing any of these restarts the language server.
 

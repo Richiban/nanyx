@@ -32,7 +32,7 @@ public sealed class LanguageServerTests : IAsyncLifetime
         _serverTask = NanyxLanguageServer.RunAsync(
             _clientToServer.Reader.AsStream(),
             _serverToClient.Writer.AsStream(),
-            _cancellation.Token);
+            cancellationToken: _cancellation.Token);
 
         _client = LanguageClient.PreInit(options => options
             .WithInput(_serverToClient.Reader)
@@ -169,7 +169,7 @@ public sealed class LanguageServerTests : IAsyncLifetime
 
         // The lambda in its own definition, with its type variable named for reading.
         var lambda = await HoverAt(uri, 0, 9);
-        Assert.Equal("```nanyx\n'a -> 'a\n```", lambda?.Contents.MarkupContent?.Value);
+        Assert.Equal("```nanyx\nα -> α\n```", lambda?.Contents.MarkupContent?.Value);
     }
 
     [Fact]

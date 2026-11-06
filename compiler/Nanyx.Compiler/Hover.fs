@@ -94,11 +94,12 @@ let private calleeSpan (expr: Expression) =
 
 /// The hover for the expression at `offset` in the compiled root module: the type of the narrowest expression
 /// there that has one, or of the function itself on a call's function name, where it is instantiated at that
-/// call. `None` when the module did not type-check or no typed expression is at `offset`.
+/// call, with made-up type variables named by `names`. `None` when the module did not type-check or no typed
+/// expression is at `offset`.
 ///
 /// The narrowest span wins rather than the deepest node, because a made-up node can sit inside the syntax it
 /// stands for: a `for` loop's element is an identifier spanning all of the loop's arms.
-let typeAt (result: CompileResult) (offset: int) : HoverInfo option =
+let typeAt (names: TypeVarNames) (result: CompileResult) (offset: int) : HoverInfo option =
     match result.Syntax, result.Typed with
     | Some syntax, Some typed ->
         let candidates =
@@ -117,5 +118,5 @@ let typeAt (result: CompileResult) (offset: int) : HoverInfo option =
         | _ ->
             // `minBy` keeps the first of equal spans: the innermost.
             let ty, span = candidates |> List.minBy (fun (_, span) -> span.End - span.Start)
-            Some { Type = Unifier.tyToDisplayString ty; Span = span }
+            Some { Type = Unifier.tyToDisplayString names ty; Span = span }
     | _ -> None

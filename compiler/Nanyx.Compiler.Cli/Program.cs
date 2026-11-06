@@ -87,10 +87,14 @@ internal static class CliCommands
     /// Run the Nanyx language server over standard input and output (for editors; see compiler/README.md).
     /// </summary>
     /// <param name="stdio">Accepted and ignored: stdio is the only transport, but LSP clients conventionally pass it.</param>
+    /// <param name="latinTypeVars">Name inferred type variables a, b, ... in hovers, rather than α, β, ...</param>
     [Consolo("lsp")]
-    public static void Lsp([Consolo("stdio")] bool stdio = false)
+    public static void Lsp(
+        [Consolo("stdio")] bool stdio = false,
+        [Consolo("latin-type-vars")] bool latinTypeVars = false)
     {
-        Nanyx.LanguageServer.NanyxLanguageServer.RunStdioAsync().GetAwaiter().GetResult();
+        var settings = new Nanyx.LanguageServer.ServerSettings(latinTypeVars ? TypeVarNames.Latin : TypeVarNames.Greek);
+        Nanyx.LanguageServer.NanyxLanguageServer.RunStdioAsync(settings).GetAwaiter().GetResult();
     }
 
     private static int Execute(string inputFile, Target target, string? outputPath)

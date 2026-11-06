@@ -8,7 +8,7 @@
     "url": "https://github.com/nanyx-lang/nanyx"
   },
   "license": "MIT",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "icon": "img/nanyx.png",
   "galleryBanner": {
     "color": "#5b5bf2",
@@ -72,6 +72,11 @@
           "type": "string",
           "default": "",
           "markdownDescription": "Where to download the compiler from. `${version}`, `${rid}` (e.g. `win-x64`) and `${ext}` (`zip` or `tar.gz`) are substituted. Leave empty for the GitHub releases of nanyx-lang/nanyx."
+        },
+        "nanyx.greekTypeVariables": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Name inferred type variables `α`, `β`, `γ`, ... in hovers. Turn off for `a`, `b`, `c`, ... (passes `--latin-type-vars` to `nanyx lsp`, which needs a compiler that has it)."
         }
       }
     }
