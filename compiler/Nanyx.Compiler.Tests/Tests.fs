@@ -189,12 +189,12 @@ let ``Only the imported definitions a module reaches are inlined`` () =
 
 [<Fact>]
 let ``Only the standard-library definitions a program reaches are inlined`` () =
-    let result = Compiler.compile "import nanyx/text\ndef x = contains(\"abc\", \"b\")"
+    let result = Compiler.compile "import nanyx/text\ndef x = String.contains(\"abc\", \"b\")"
     Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
     let names = valueDefinitionNames result
-    Assert.Contains("contains", names)
-    Assert.DoesNotContain("padStart", names)
-    Assert.DoesNotContain("words", names)
+    Assert.Contains("String.contains", names)
+    Assert.DoesNotContain("String.padStart", names)
+    Assert.DoesNotContain("String.words", names)
 
 [<Fact>]
 let ``Definitions reached through an aliased import are inlined`` () =
@@ -740,19 +740,19 @@ let ``nanyx/console declares the Console context`` () =
 let ``nanyx/text exports string functions with their types`` () =
     let source =
         "import nanyx/text\n" +
-        "def shout = toUpper(\"hi\")\n" +
-        "def n = length(\"hi\")\n" +
-        "def parts = split(\"a,b\", \",\")\n" +
-        "def joined = join(parts, \"-\")\n" +
-        "def yes = startsWith(\"nanyx\", \"nan\")\n" +
-        "def found = indexOf(\"nanyx\", \"yx\")\n" +
-        "def lastFound = lastIndexOf(\"nanyx\", \"n\")\n" +
-        "def times = count(\"nanyx\", \"n\")\n" +
-        "def replaced = replace(\"nanyx\", \"n\", \"N\")\n" +
-        "def padded = padStart(\"7\", 3, \"0\")\n" +
-        "def blank = isBlank(\" \")\n" +
-        "def allLines = lines(\"a\")\n" +
-        "def allWords = words(\"a b\")"
+        "def shout = String.uppercase(\"hi\")\n" +
+        "def n = String.length(\"hi\")\n" +
+        "def parts = String.split(\"a,b\", \",\")\n" +
+        "def joined = String.join(parts, \"-\")\n" +
+        "def yes = String.startsWith(\"nanyx\", \"nan\")\n" +
+        "def found = String.indexOf(\"nanyx\", \"yx\")\n" +
+        "def lastFound = String.lastIndexOf(\"nanyx\", \"n\")\n" +
+        "def times = String.count(\"nanyx\", \"n\")\n" +
+        "def replaced = String.replace(\"nanyx\", \"n\", \"N\")\n" +
+        "def padded = String.padStart(\"7\", 3, \"0\")\n" +
+        "def blank = String.isBlank(\" \")\n" +
+        "def allLines = String.lines(\"a\")\n" +
+        "def allWords = String.words(\"a b\")"
     let result = Compiler.compile source
     Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
     let types = result.Typed.Value.Types
@@ -773,7 +773,7 @@ let ``nanyx/text exports string functions with their types`` () =
 
 [<Fact>]
 let ``nanyx/text rejects a wrongly typed argument`` () =
-    let result = Compiler.compile "import nanyx/text\n\ndef bad = repeat(\"ab\", \"twice\")"
+    let result = Compiler.compile "import nanyx/text\n\ndef bad = String.repeat(\"ab\", \"twice\")"
     Assert.False(result.Diagnostics.IsEmpty)
 
 [<Fact>]
@@ -792,12 +792,28 @@ let ``Compiler intrinsics are not in scope in user code`` () =
 let ``Standard library import with alias is qualified`` () =
     let source =
         "import nanyx/text as t\n" +
-        "def shout = t.toUpper(\"hi\")"
+        "def shout = t.String.uppercase(\"hi\")"
     let result = Compiler.compile source
     Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
     Assert.Equal(TyPrimitive "string", result.Typed.Value.Types.["shout"])
-    let unqualified = Compiler.compile "import nanyx/text as t\n\ndef shout = toUpper(\"hi\")"
+    let unqualified = Compiler.compile "import nanyx/text as t\n\ndef shout = String.uppercase(\"hi\")"
     Assert.False(unqualified.Diagnostics.IsEmpty)
+
+[<Fact>]
+let ``nanyx/text functions are attached to String`` () =
+    let result = Compiler.compile "import nanyx/text\ndef s = \" a \"\ndef piped = s \\ trim\ndef called = String.trim(s)"
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    Assert.Equal(TyPrimitive "string", result.Typed.Value.Types.["piped"])
+    Assert.Equal(TyPrimitive "string", result.Typed.Value.Types.["called"])
+    let bare = Compiler.compile "import nanyx/text\ndef x = trim(\" a \")"
+    Assert.Contains("Unknown function 'trim'", (List.head bare.Diagnostics).Message)
+
+[<Fact>]
+let ``nanyx/text imported with as is only reached qualified from a pipe`` () =
+    let qualified = Compiler.compile "import nanyx/text as t\ndef x = \" a \" \\ t.String.trim"
+    Assert.True(qualified.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{qualified.Diagnostics}")
+    let short = Compiler.compile "import nanyx/text as t\ndef x = \" a \" \\ trim"
+    Assert.False(short.Diagnostics.IsEmpty)
 
 [<Fact>]
 let ``Unknown standard library module is an error`` () =
@@ -2236,8 +2252,8 @@ let ``Imported names refer to the imported definition and the import`` () =
         check "module main\nimport \"mod.nyx\" as m1\ndef value = m1.foo" "m1.foo" "m1"
         check "module main\nimport \"mod.nyx\"\ndef value = foo" "foo" "mod.nyx"
         // A standard-library definition is declared in the library's own module.
-        let source = "import nanyx/text as t\ndef shout = t.toUpper(\"hi\")"
-        let toUpper = (symbolAt (fun typed -> typed.References) (Compiler.compile source) (offsetOf source "t.toUpper" 0 2)).Value
+        let source = "import nanyx/text as t\ndef shout = t.String.uppercase(\"hi\")"
+        let toUpper = (symbolAt (fun typed -> typed.References) (Compiler.compile source) (offsetOf source "t.String.uppercase" 0 2)).Value
         Assert.Equal("nanyx/text.nyx", toUpper.Declaration.File))
 
 // Type hints: the inferred types shown for declarations that do not write theirs.

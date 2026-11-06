@@ -198,25 +198,25 @@ let ``Run - text upper-cases and prints`` () =
         "import nanyx/console\n" +
         "import nanyx/text\n" +
         "\n" +
-        "println(toUpper(\"hello, nanyx!\"))\n" +
-        "\"shout\" \\toUpper \\println\n"
+        "println(String.uppercase(\"hello, nanyx!\"))\n" +
+        "\"shout\" \\uppercase \\println\n"
     runSource source |> assertRan "HELLO, NANYX!\nSHOUT\n"
 
 [<Fact>]
-let ``Run - text length, toLower, trim, repeat and substring`` () =
+let ``Run - text length, lowercase, trim, repeat and substring`` () =
     let source =
         "import nanyx/console\n" +
         "import nanyx/text\n" +
         "\n" +
-        "dbg(length(\"\"))\n" +
-        "dbg(length(\"hello\"))\n" +
-        "println(toLower(\"Hello, NANYX!\"))\n" +
-        "println(\"[\" ++ trim(\"  padded \") ++ \"]\")\n" +
-        "println(\"[\" ++ trim(\"   \") ++ \"]\")\n" +
-        "println(repeat(\"ab\", 3))\n" +
-        "println(\"[\" ++ repeat(\"ab\", 0) ++ \"]\")\n" +
-        "println(substring(\"nanyx\", 1, 3))\n" +
-        "println(substring(\"nanyx\", 3, 10))\n"
+        "dbg(String.length(\"\"))\n" +
+        "dbg(String.length(\"hello\"))\n" +
+        "println(String.lowercase(\"Hello, NANYX!\"))\n" +
+        "println(\"[\" ++ String.trim(\"  padded \") ++ \"]\")\n" +
+        "println(\"[\" ++ String.trim(\"   \") ++ \"]\")\n" +
+        "println(String.repeat(\"ab\", 3))\n" +
+        "println(\"[\" ++ String.repeat(\"ab\", 0) ++ \"]\")\n" +
+        "println(String.substring(\"nanyx\", 1, 3))\n" +
+        "println(String.substring(\"nanyx\", 3, 10))\n"
     runSource source |> assertRan "dbg: 0\ndbg: 5\nhello, nanyx!\n[padded]\n[]\nababab\n[]\nany\nyx\n"
 
 [<Fact>]
@@ -226,14 +226,14 @@ let ``Run - text startsWith, endsWith and contains`` () =
         "import nanyx/text\n" +
         "\n" +
         "def show: bool -> () = { b -> println(if b then \"yes\" else \"no\") }\n" +
-        "show(startsWith(\"nanyx\", \"nan\"))\n" +
-        "show(startsWith(\"nanyx\", \"nyx\"))\n" +
-        "show(startsWith(\"nan\", \"nanyx\"))\n" +
-        "show(endsWith(\"nanyx\", \"nyx\"))\n" +
-        "show(endsWith(\"nanyx\", \"nan\"))\n" +
-        "show(contains(\"hello world\", \"o w\"))\n" +
-        "show(contains(\"hello world\", \"xyz\"))\n" +
-        "show(contains(\"hello\", \"\"))\n"
+        "show(String.startsWith(\"nanyx\", \"nan\"))\n" +
+        "show(String.startsWith(\"nanyx\", \"nyx\"))\n" +
+        "show(String.startsWith(\"nan\", \"nanyx\"))\n" +
+        "show(String.endsWith(\"nanyx\", \"nyx\"))\n" +
+        "show(String.endsWith(\"nanyx\", \"nan\"))\n" +
+        "show(String.contains(\"hello world\", \"o w\"))\n" +
+        "show(String.contains(\"hello world\", \"xyz\"))\n" +
+        "show(String.contains(\"hello\", \"\"))\n"
     runSource source |> assertRan "yes\nno\nno\nyes\nno\nyes\nno\nyes\n"
 
 [<Fact>]
@@ -250,17 +250,17 @@ let ``Run - text indexOf, lastIndexOf and count`` () =
         "\n" +
         "@entry\n" +
         "def main = {\n" +
-        "  show(indexOf(\"hello\", \"ll\"))\n" +
-        "  show(indexOf(\"abcabc\", \"c\"))\n" +
-        "  show(indexOf(\"hello\", \"xyz\"))\n" +
-        "  show(indexOf(\"lo\", \"hello\"))\n" +
-        "  show(indexOf(\"hello\", \"\"))\n" +
-        "  show(lastIndexOf(\"abcabc\", \"bc\"))\n" +
-        "  show(lastIndexOf(\"abc\", \"\"))\n" +
-        "  show(lastIndexOf(\"ab\", \"abc\"))\n" +
-        "  dbg(count(\"banana\", \"an\"))\n" +
-        "  dbg(count(\"aaaa\", \"aa\"))\n" +
-        "  dbg(count(\"abc\", \"\"))\n" +
+        "  show(String.indexOf(\"hello\", \"ll\"))\n" +
+        "  show(String.indexOf(\"abcabc\", \"c\"))\n" +
+        "  show(String.indexOf(\"hello\", \"xyz\"))\n" +
+        "  show(String.indexOf(\"lo\", \"hello\"))\n" +
+        "  show(String.indexOf(\"hello\", \"\"))\n" +
+        "  show(String.lastIndexOf(\"abcabc\", \"bc\"))\n" +
+        "  show(String.lastIndexOf(\"abc\", \"\"))\n" +
+        "  show(String.lastIndexOf(\"ab\", \"abc\"))\n" +
+        "  dbg(String.count(\"banana\", \"an\"))\n" +
+        "  dbg(String.count(\"aaaa\", \"aa\"))\n" +
+        "  dbg(String.count(\"abc\", \"\"))\n" +
         "}\n"
     runSource source
     |> assertRan (
@@ -274,15 +274,15 @@ let ``Run - text replace, removePrefix, removeSuffix, padStart and padEnd`` () =
         "import nanyx/console\n" +
         "import nanyx/text\n" +
         "\n" +
-        "println(replace(\"hello world\", \"o\", \"0\"))\n" +
-        "println(replace(\"a-b-c\", \"-\", \" - \"))\n" +
-        "println(replace(\"abc\", \"\", \"x\"))\n" +
-        "println(removePrefix(\"nanyx\", \"nan\"))\n" +
-        "println(removePrefix(\"nanyx\", \"nyx\"))\n" +
-        "println(removeSuffix(\"nanyx\", \"nyx\"))\n" +
-        "println(padStart(\"7\", 3, \"0\"))\n" +
-        "println(padEnd(\"ab\", 5, \"xy\"))\n" +
-        "println(padStart(\"long\", 2, \"0\"))\n"
+        "println(String.replace(\"hello world\", \"o\", \"0\"))\n" +
+        "println(String.replace(\"a-b-c\", \"-\", \" - \"))\n" +
+        "println(String.replace(\"abc\", \"\", \"x\"))\n" +
+        "println(String.removePrefix(\"nanyx\", \"nan\"))\n" +
+        "println(String.removePrefix(\"nanyx\", \"nyx\"))\n" +
+        "println(String.removeSuffix(\"nanyx\", \"nyx\"))\n" +
+        "println(String.padStart(\"7\", 3, \"0\"))\n" +
+        "println(String.padEnd(\"ab\", 5, \"xy\"))\n" +
+        "println(String.padStart(\"long\", 2, \"0\"))\n"
     runSource source |> assertRan "hell0 w0rld\na - b - c\nabc\nyx\nnanyx\nna\n007\nabxyx\nlong\n"
 
 [<Fact>]
@@ -292,12 +292,12 @@ let ``Run - text trimStart, trimEnd, isEmpty and isBlank`` () =
         "import nanyx/text\n" +
         "\n" +
         "def show: bool -> () = { b -> println(if b then \"yes\" else \"no\") }\n" +
-        "println(\"[\" ++ trimStart(\" \t x \") ++ \"]\")\n" +
-        "println(\"[\" ++ trimEnd(\" x \r\n\") ++ \"]\")\n" +
-        "show(isEmpty(\"\"))\n" +
-        "show(isEmpty(\" \"))\n" +
-        "show(isBlank(\" \t\n\"))\n" +
-        "show(isBlank(\" x \"))\n"
+        "println(\"[\" ++ String.trimStart(\" \t x \") ++ \"]\")\n" +
+        "println(\"[\" ++ String.trimEnd(\" x \r\n\") ++ \"]\")\n" +
+        "show(String.isEmpty(\"\"))\n" +
+        "show(String.isEmpty(\" \"))\n" +
+        "show(String.isBlank(\" \t\n\"))\n" +
+        "show(String.isBlank(\" x \"))\n"
     runSource source |> assertRan "[x ]\n[ x]\nyes\nno\nyes\nno\n"
 
 [<Fact>]
@@ -306,11 +306,11 @@ let ``Run - text lines and words`` () =
         "import nanyx/console\n" +
         "import nanyx/text\n" +
         "\n" +
-        "println(join(lines(\"a\nb\r\nc\n\"), \"|\"))\n" +
-        "println(join(lines(\"a\n\nb\"), \"|\"))\n" +
-        "dbg(length(concat(lines(\"\"))))\n" +
-        "println(join(words(\"  one two\tthree\n\"), \"|\"))\n" +
-        "dbg(length(concat(words(\"   \"))))\n"
+        "println(String.join(String.lines(\"a\nb\r\nc\n\"), \"|\"))\n" +
+        "println(String.join(String.lines(\"a\n\nb\"), \"|\"))\n" +
+        "dbg(String.length(String.concat(String.lines(\"\"))))\n" +
+        "println(String.join(String.words(\"  one two\tthree\n\"), \"|\"))\n" +
+        "dbg(String.length(String.concat(String.words(\"   \"))))\n"
     runSource source |> assertRan "a|b|c\na||b\ndbg: 0\none|two|three\ndbg: 0\n"
 
 [<Fact>]
@@ -319,13 +319,13 @@ let ``Run - text split, join and concat`` () =
         "import nanyx/console\n" +
         "import nanyx/text\n" +
         "\n" +
-        "def parts = split(\"a,b,,c\", \",\")\n" +
-        "println(join(parts, \" | \"))\n" +
-        "println(join(split(\"no separators\", \"-\"), \"+\"))\n" +
-        "println(join(split(\"a--b\", \"--\"), \"/\"))\n" +
-        "println(\"[\" ++ join([], \", \") ++ \"]\")\n" +
-        "println(concat([\"Hello\", \", \", \"World\"]))\n" +
-        "println(join(split(\"x\", \"\"), \"?\"))\n"
+        "def parts = String.split(\"a,b,,c\", \",\")\n" +
+        "println(String.join(parts, \" | \"))\n" +
+        "println(String.join(String.split(\"no separators\", \"-\"), \"+\"))\n" +
+        "println(String.join(String.split(\"a--b\", \"--\"), \"/\"))\n" +
+        "println(\"[\" ++ String.join([], \", \") ++ \"]\")\n" +
+        "println(String.concat([\"Hello\", \", \", \"World\"]))\n" +
+        "println(String.join(String.split(\"x\", \"\"), \"?\"))\n"
     runSource source |> assertRan "a | b |  | c\nno separators\na/b\n[]\nHello, World\nx\n"
 
 [<Fact>]
@@ -368,7 +368,7 @@ let ``Run - list spread in expressions`` () =
         "  def xs = [1, ...[2, 3]]\n" +
         "  println(\"{sum(xs)}\")\n" +
         "  def names = [\"b\"]\n" +
-        "  println(join([\"a\", ...names, \"c\", ...[], ...[\"d\"]], \"-\"))\n" +
+        "  println(String.join([\"a\", ...names, \"c\", ...[], ...[\"d\"]], \"-\"))\n" +
         "}\n"
     runSource source |> assertRan "6\na-b-c-d\n"
 
@@ -399,9 +399,9 @@ let ``Run - ++ joins lists`` () =
         "import nanyx/text\n" +
         "\n" +
         "def front = [\"a\", \"b\"]\n" +
-        "println(join(front ++ [\"c\"] ++ [], \"-\"))\n" +
-        "println(join([] ++ front, \"-\"))\n" +
-        "dbg(length(\"ab\" ++ \"cd\" ++ \"e\"))\n"
+        "println(String.join(front ++ [\"c\"] ++ [], \"-\"))\n" +
+        "println(String.join([] ++ front, \"-\"))\n" +
+        "dbg(String.length(\"ab\" ++ \"cd\" ++ \"e\"))\n"
     runSource source |> assertRan "a-b-c\na-b\ndbg: 5\n"
 
 [<Fact>]
@@ -526,7 +526,7 @@ let ``Run - string literals inside interpolation holes`` () =
         "import nanyx/text\n" +
         "\n" +
         "def main = {\n" +
-        "  println(\"len {length(\"abc\")} and {toUpper(\"x\")}\")\n" +
+        "  println(\"len {String.length(\"abc\")} and {String.uppercase(\"x\")}\")\n" +
         "}\n" +
         "\n" +
         "main()\n"
@@ -543,9 +543,9 @@ let ``Run - interpolation holes that allocate or have effects run once`` () =
         "def s = \"b\"\n" +
         "def shout: string -> string = { v ->\n" +
         "  println(\"shouting \" ++ v)\n" +
-        "  toUpper(v)\n" +
+        "  String.uppercase(v)\n" +
         "}\n" +
-        "println(\"a {s ++ \"!\"} c {toUpper(s)} d\")\n" +
+        "println(\"a {s ++ \"!\"} c {String.uppercase(s)} d\")\n" +
         "println(\"[{shout(\"x\")}]\")\n"
     runSource source |> assertRan "a b! c B d\nshouting x\n[X]\n"
 

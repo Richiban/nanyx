@@ -165,7 +165,7 @@ and its explicit imports take precedence over the prelude's, so a module can def
 | `nanyx/prelude` | Imported automatically. `proc`, the result workflow: in `proc { ... }`, `try x` continues with the payload of `#some` or gives back any other tag (the block's type collects them), and `return x` is `#some(x)`. The `Result(a, e)` type (`#some(a) \| #error(e)`) with `Result.map`, `mapError`, `bind`, `defaultValue`, `isOk`, `isError`. The helpers for option-like unions, attached to the name `Option`: `Option.map`, `bind`, `defaultValue`, `isSome`, `isNone`, `toResult`, `mapOr` |
 | `nanyx/console` | The `Console` context (`print`, `println`) and the instance the runtime supplies to the entry point |
 | `nanyx/result`  | Nothing: kept so that `import nanyx/result` still compiles now that `proc` is in the prelude      |
-| `nanyx/text`    | `length`, `substring`, `startsWith`, `endsWith`, `indexOf`, `lastIndexOf`, `contains`, `count`, `removePrefix`, `removeSuffix`, `toUpper`, `toLower`, `trim`, `trimStart`, `trimEnd`, `isEmpty`, `isBlank`, `repeat`, `padStart`, `padEnd`, `split`, `join`, `concat`, `replace`, `lines`, `words` |
+| `nanyx/text`    | Attached to `String`: `String.length`, `substring`, `startsWith`, `endsWith`, `indexOf`, `lastIndexOf`, `contains`, `count`, `removePrefix`, `removeSuffix`, `uppercase`, `lowercase`, `trim`, `trimStart`, `trimEnd`, `isEmpty`, `isBlank`, `repeat`, `padStart`, `padEnd`, `split`, `join`, `concat`, `replace`, `lines`, `words`; called as `String.trim(s)` or `s \trim` |
 
 The library is written over a handful of **compiler intrinsics**: operations that cannot be expressed in
 Nanyx itself, such as writing to standard output or reading a byte of a string. They are listed with
@@ -175,12 +175,12 @@ onto helper functions it emits with the module (`runtimeHelpers` in `Nanyx.Compi
 Their names all start with `__nanyx_`.
 
 Strings are UTF-8 and this first slice of `nanyx/text` works byte by byte: `length` counts bytes,
-indices and widths are byte offsets, `toUpper`/`toLower` only change ASCII letters and the trimming
+indices and widths are byte offsets, `uppercase`/`lowercase` only change ASCII letters and the trimming
 functions and `words` only treat ASCII whitespace as whitespace. `indexOf` and `lastIndexOf` return
-`#some(index)` or `#notFound`, as the language docs specify; `replace` takes its pattern and
-replacement positionally, where the docs name them. `++` (concatenation) and `==`
-on strings are language operators, lowered by the backend. (The language docs describe this module as
-`string` with `uppercase`/`lowercase`; the module is called `text` and the functions `toUpper`/`toLower`.)
+`#some(index)` or `#notFound`, as the language docs specify; `split`, `replace`, `substring` and `join`
+take their arguments positionally, where the docs name them. `++` (concatenation) and `==`
+on strings are language operators, lowered by the backend. (The language docs call this module
+`string`; it is imported as `nanyx/text`.)
 
 To add a module: create `stdlib/nanyx/<name>.nyx` declaring `module <name>`, mark what it offers with
 `export`, and rebuild; the glob picks it up and `import nanyx/<name>` resolves. Definitions inside a
