@@ -983,3 +983,43 @@ let ``Run - interpolating tags`` () =
         "  println(\"{a} {b} {c} {#done}\")\n" +
         "}\n"
     runSource source |> assertRan "#some(10) #some(\"hi\") #none #done\n"
+
+[<Fact>]
+let ``Run - a proc block continues past each #some and stops at the first #error`` () =
+    // `run(7)` fails at its first `try`, so nothing after it runs; `run(3)` fails at its second. `sum` binds two
+    // `try`s nested in its `return`.
+    let source =
+        "import nanyx/console\n" +
+        "import nanyx/result\n" +
+        "\n" +
+        "def f: int -> #some(int) | #error(#tooBig) = { n -> if n > 5 then #error(#tooBig) else #some(n) }\n" +
+        "def g: int -> #some(string) | #error(#tooBig) = { n -> if n == 3 then #error(#tooBig) else #some(\"n = {n}\") }\n" +
+        "\n" +
+        "def run: int -> #some(string) | #error(#tooBig) = { x -> proc {\n" +
+        "  def a = try f(x)\n" +
+        "  dbg(a)\n" +
+        "  def s = try g(a)\n" +
+        "  return s\n" +
+        "} }\n" +
+        "\n" +
+        "def add: (int, int) -> int = { a, b -> a + b }\n" +
+        "def sum: int -> #some(int) | #error(#tooBig) = { x -> proc {\n" +
+        "  return add(try f(x), try f(x + 1))\n" +
+        "} }\n" +
+        "\n" +
+        "def show: (#some(string) | #error(#tooBig)) -> () = {\n" +
+        "  | #some(s) -> println(s)\n" +
+        "  | #error(_) -> println(\"error\")\n" +
+        "}\n" +
+        "\n" +
+        "def showInt: (#some(int) | #error(#tooBig)) -> () = {\n" +
+        "  | #some(n) -> println(\"sum = {n}\")\n" +
+        "  | #error(_) -> println(\"error\")\n" +
+        "}\n" +
+        "\n" +
+        "show(run(1))\n" +
+        "show(run(3))\n" +
+        "show(run(7))\n" +
+        "showInt(sum(1))\n" +
+        "showInt(sum(5))\n"
+    runSource source |> assertRan "dbg: 1\nn = 1\ndbg: 3\nerror\nerror\nsum = 3\nerror\n"
