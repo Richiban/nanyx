@@ -20,6 +20,88 @@ let ``with applies to a member access and does not swallow identifiers starting 
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
     | Result.Error err -> failwith $"Parse failed: {err}"
 
+let private lines (source: string list) = String.concat "\n" source
+
+let private parsesLike (expected: string) (source: string) =
+    match parseModule source, parseModule expected with
+    | Result.Ok actual, Result.Ok wanted -> actual |> should equal wanted
+    | Result.Error err, _ -> failwith $"Parse failed: {err}"
+    | _, Result.Error err -> failwith $"Expected source failed to parse: {err}"
+
+[<Fact>]
+let ``record fields can be written one per line without commas`` () =
+    lines [ "def x = ("; "  a = 1"; "  b = 2"; ")" ]
+    |> parsesLike "def x = (a = 1, b = 2)"
+
+[<Fact>]
+let ``call arguments can be written one per line without commas`` () =
+    lines [ "def y = R("; "  a = 1"; "  b = 2"; ")" ]
+    |> parsesLike "def y = R(a = 1, b = 2)"
+
+[<Fact>]
+let ``positional fields can be written one per line without commas`` () =
+    lines [ "def t = ("; "  1"; "  \"two\""; ")" ]
+    |> parsesLike "def t = (1, \"two\")"
+
+[<Fact>]
+let ``commas and newlines can be mixed`` () =
+    lines [ "def x = ("; "  a = 1, b = 2"; "  c = 3,"; "  d = 4"; ")" ]
+    |> parsesLike "def x = (a = 1, b = 2, c = 3, d = 4)"
+
+[<Fact>]
+let ``blank lines and comments may come between fields on their own lines`` () =
+    lines [ "def x = ("; "  a = 1"; ""; "  -- the second field"; "  b = 2 -- trailing"; ")" ]
+    |> parsesLike "def x = (a = 1, b = 2)"
+
+[<Fact>]
+let ``a field may run over several lines`` () =
+    lines
+        [ "def x = ("
+          "  apply = { body ->"
+          "    body()"
+          "  }"
+          "  pick = match n"
+          "    | 0 -> \"zero\""
+          "    | _ -> \"many\""
+          "  last = 3"
+          ")" ]
+    |> parsesLike (
+        lines
+            [ "def x = ("
+              "  apply = { body ->"
+              "    body()"
+              "  },"
+              "  pick = match n"
+              "    | 0 -> \"zero\""
+              "    | _ -> \"many\","
+              "  last = 3"
+              ")" ])
+
+[<Fact>]
+let ``fields on their own lines nest inside an indented call`` () =
+    lines
+        [ "def decode = {"
+          "  json.decode(text, json.record("
+          "    name = json.field(\"name\", json.string)"
+          "    age = json.field(\"age\", json.int)"
+          "  ))"
+          "}" ]
+    |> parsesLike "def decode = {\n  json.decode(text, json.record(name = json.field(\"name\", json.string), age = json.field(\"age\", json.int)))\n}"
+
+[<Fact>]
+let ``a field on a line indented differently from the first field needs a comma`` () =
+    lines [ "def x = ("; "  a = 1"; "    b = 2"; ")" ]
+    |> parseModule
+    |> isError
+    |> should equal true
+
+[<Fact>]
+let ``fields are not aligned to the bracket when the first one shares its line`` () =
+    lines [ "def y = R(a = 1"; "          b = 2)" ]
+    |> parseModule
+    |> isError
+    |> should equal true
+
 [<Fact>]
 let ``Parse record feature files`` () =
     parseFeatureNyxFiles "Records"
