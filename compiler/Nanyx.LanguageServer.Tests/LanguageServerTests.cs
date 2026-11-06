@@ -182,7 +182,7 @@ public sealed class LanguageServerTests : IAsyncLifetime
     {
         var uri = DocumentUri.Parse("untitled:Untitled-1");
 
-        Open(uri, "import nanyx/text\n\ndef shout = toUpper(\"hi\")\n");
+        Open(uri, "import nanyx/text\n\ndef shout = String.uppercase(\"hi\")\n");
 
         var diagnostics = await NextPublished(uri);
         Assert.Empty(diagnostics.Diagnostics!);
@@ -366,7 +366,7 @@ public sealed class LanguageServerTests : IAsyncLifetime
         var uri = DocumentUri.Parse("untitled:Untitled-2");
 
         // The standard library is embedded in the compiler: there is no file to go to.
-        Open(uri, "import nanyx/text as t\ndef shout = t.toUpper(\"hi\")\n");
+        Open(uri, "import nanyx/text as t\ndef shout = t.String.uppercase(\"hi\")\n");
         Assert.Empty((await NextPublished(uri)).Diagnostics!);
 
         Assert.Empty(await DefinitionsAt(uri, 1, 15));
