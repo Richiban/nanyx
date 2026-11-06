@@ -1133,6 +1133,29 @@ let recordField =
     ) <|> (expression |>> PositionalField))
     <?> "record field"
 
+// The fields of a record or tuple, or a call's arguments, separated by commas or written one per line:
+//
+//   R(
+//     a = 1
+//     b = 2
+//   )
+//
+// When the first field starts its line, a field that starts a later line at the same indentation follows the
+// field before it without a comma. A field may itself run over several lines (a lambda, a `match`), as long as
+// its continuation lines are indented more than the fields.
+let recordFields =
+    ws >>. getPosition .>>. currentLineIndent >>= fun (first, firstLineIndent) ->
+        let comma = pstring "," .>> ws
+        let nextLine =
+            if first.Column <> firstLineIndent then pzero
+            else
+                ws >>. getPosition .>>. currentLineIndent >>= fun (pos, lineIndent) ->
+                    if pos.Column = first.Column && lineIndent = pos.Column then preturn () else pzero
+        pipe2
+            recordField
+            (many ((comma >>. recordField) <|> attempt (nextLine >>. recordField)))
+            (fun head tail -> head :: tail)
+
 // Unit literal: ()
 let unitExpr =
     spanned (between (pstring "(") (ws >>. pstring ")") (preturn ()) |>> fun _ -> UnitExpr)
@@ -1144,7 +1167,7 @@ let tupleOrParenExpr =
         between
             (pstring "(")
             (ws >>. pstring ")")
-            (sepBy1 (ws >>. recordField) (pstring "," .>> ws)))
+            recordFields)
     |>> fun (fields, span) ->
         match fields with
         | [PositionalField single] -> single  // Single expression in parens: (x) is just x
@@ -1639,7 +1662,7 @@ do
             pipe3
                 qualifiedIdentifierWithSpan
                 (between (pstring "(") (pstring ")")
-                    (opt (ws >>. (withSpan (sepBy1 (ws >>. recordField) (pstring "," .>> ws)) |>> fieldsToExpr) .>> ws)))
+                    (opt (ws >>. (withSpan recordFields |>> fieldsToExpr) .>> ws)))
                 (opt (attempt (skipMany (skipAnyOf " \t") >>. lambda)))
                 (fun (name, nameSpan) exprOpt trailingLambdaOpt ->
                     let baseArgs = match exprOpt with Some e -> [e] | None -> []
