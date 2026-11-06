@@ -98,25 +98,27 @@ let private calleeSpan (expr: Expression) =
 /// expression is at `offset`.
 ///
 /// The narrowest span wins rather than the deepest node, because a made-up node can sit inside the syntax it
-/// stands for: a `for` loop's element is an identifier spanning all of the loop's arms.
+/// stands for: a `for` loop's element is an identifier spanning all of the loop's arms. Of equal spans the
+/// outermost wins, for the same reason: the parameters a shorthand match lambda makes up span the whole lambda.
 let typeAt (names: TypeVarNames) (result: CompileResult) (offset: int) : HoverInfo option =
     match result.Syntax, result.Typed with
     | Some syntax, Some typed ->
         let candidates =
             expressionsAt offset syntax
-            |> List.collect (fun expr ->
+            |> List.mapi (fun depth expr ->
                 let callee =
                     match calleeSpan expr with
                     | Some nameSpan when contains offset nameSpan ->
-                        typed.CalleeTypes |> Map.tryFind expr.Id |> Option.map (fun ty -> ty, nameSpan)
+                        typed.CalleeTypes |> Map.tryFind expr.Id |> Option.map (fun ty -> ty, nameSpan, depth, 0)
                     | _ -> None
-                let own = typed.ExprTypes |> Map.tryFind expr.Id |> Option.map (fun ty -> ty, expr.Span)
-                // A callee's name is inside its call, so it comes first among equals.
+                let own = typed.ExprTypes |> Map.tryFind expr.Id |> Option.map (fun ty -> ty, expr.Span, depth, 1)
                 Option.toList callee @ Option.toList own)
+            |> List.concat
         match candidates with
         | [] -> None
         | _ ->
-            // `minBy` keeps the first of equal spans: the innermost.
-            let ty, span = candidates |> List.minBy (fun (_, span) -> span.End - span.Start)
+            // Depth counts outwards from the innermost; a callee's name is inside its call, so it comes first.
+            let ty, span, _, _ =
+                candidates |> List.minBy (fun (_, span, depth, rank) -> span.End - span.Start, -depth, rank)
             Some { Type = Unifier.tyToDisplayString names ty; Span = span }
     | _ -> None

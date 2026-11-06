@@ -1508,6 +1508,19 @@ let ``A union's rest variable is named from the end of the alphabet`` () =
     Assert.Equal(Some "#some(a) | z, (a -> b) -> #some(b) | z", latinHoverType source (offsetOf source "{" 0 0))
 
 [<Fact>]
+let ``A def's type is resolved before it is generalised, so a use of it has the inferred type`` () =
+    let source = "def increment = { x -> x + 1 }\ndef f = increment\n"
+    Assert.Equal(Some "int -> int", hoverType source (offsetOf source "increment" 1 0))
+
+[<Fact>]
+let ``A shorthand match lambda shows its own type, not that of the parameters it makes up`` () =
+    let source =
+        "def mapOption = { | #some(a), f -> #some(f(a)) | other, _ -> other }\n" +
+        "def g = mapOption\n"
+    Assert.Equal(Some "#some(α) | ω, (α -> β) -> #some(β) | ω", hoverType source (offsetOf source "{" 0 0))
+    Assert.Equal(Some "#some(α) | ω, (α -> β) -> #some(β) | ω", hoverType source (offsetOf source "mapOption" 1 0))
+
+[<Fact>]
 let ``Where the two ends of the alphabet meet, each goes round its own part again`` () =
     let var id = TyVar { Id = id; Name = None }
     let open' id = TyUnion [ TyTag("x", None); var id ]
