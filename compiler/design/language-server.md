@@ -69,9 +69,9 @@ _To do._ Candidate items, not yet filed, in rough dependency order:
 
 1. **Exact ranges.** Done ([#97](https://github.com/nanyx-lang/nanyx/issues/97)): diagnostics carry spans, codes
    and related locations, and are published as LSP ranges, `code` and `relatedInformation`. What is left waits on
-   [#96](https://github.com/nanyx-lang/nanyx/issues/96): a diagnostic about a pattern, a field name, a type
-   annotation or an attribute is reported at the nearest node that has a span (the match, the field's value, the
-   definition's name, the item after the attribute).
+   [#96](https://github.com/nanyx-lang/nanyx/issues/96): a diagnostic about a field name, a type annotation or an
+   attribute is reported at the nearest node that has a span (the field's value, the definition's name, the item
+   after the attribute).
 2. **Hover.** Inferred types are done ([#120](https://github.com/nanyx-lang/nanyx/issues/120)); declared
    signatures and docs follow from name resolution ([#98](https://github.com/nanyx-lang/nanyx/issues/98)).
 3. **Go-to-definition and find-references.** From the recorded symbols and references ([#98](https://github.com/nanyx-lang/nanyx/issues/98)).

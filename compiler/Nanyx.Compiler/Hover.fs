@@ -51,7 +51,7 @@ and private bindingExpression (binding: UseBinding) =
     | UseContextInstance(_, value) -> value
 
 and private patternExpressions (pattern: Pattern) : Expression list =
-    match pattern with
+    match pattern.Kind with
     | RangePattern(low, high) -> [ low; high ]
     | GuardPattern(_, value) -> [ value ]
     | TuplePattern items

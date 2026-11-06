@@ -16,7 +16,7 @@ let ``a..b is a call to __range that binds looser than arithmetic`` () =
 [<Fact>]
 let ``for with arms is a call to __for with a pattern lambda, and -> without an element`` () =
     match parseModule "def a = for 1..3 | i -> f(i)\ndef b = for xs -> g()" with
-    | Result.Ok [ Def (ValueDef (_, "a", _, Kind (FunctionCall ("__for", None, [ Kind (FunctionCall ("__range", _, _)); Kind (Lambda ([ (element, None) ], Kind (Match ([ Kind (IdentifierExpr scrutinee) ], [ [ IdentifierPattern "i" ], Kind (FunctionCall ("f", _, _)) ])))) ]))))
+    | Result.Ok [ Def (ValueDef (_, "a", _, Kind (FunctionCall ("__for", None, [ Kind (FunctionCall ("__range", _, _)); Kind (Lambda ([ (element, None) ], Kind (Match ([ Kind (IdentifierExpr scrutinee) ], [ [ Kind (IdentifierPattern "i") ], Kind (FunctionCall ("f", _, _)) ])))) ]))))
                   Def (ValueDef (_, "b", _, Kind (FunctionCall ("__for", None, [ Kind (IdentifierExpr "xs"); Kind (Lambda ([ _ ], Kind (FunctionCall ("g", _, _)))) ])))) ] ->
         scrutinee |> should equal element
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"

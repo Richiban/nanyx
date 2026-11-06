@@ -28,7 +28,7 @@ need it first. This workstream fills it with content.
 - **Diagnostics are structured** ([#97](https://github.com/nanyx-lang/nanyx/issues/97)): every compiler error has
   a code and title from the table in `Diagnostics.fs` (`DiagnosticCodes`), and the span, in its own file, of the
   node it is about. Few use related locations yet, and none has suggestions or fixes.
-- **Some spans are approximate.** Patterns, field names, type annotations and attributes have no spans yet
+- **Some spans are approximate.** Field names, type annotations and attributes have no spans yet
   ([#96](https://github.com/nanyx-lang/nanyx/issues/96)), so errors about them are reported at the nearest node
   that has one. A type mismatch is reported where the constraint that failed was made, which is not always where
   the conflicting types came from.

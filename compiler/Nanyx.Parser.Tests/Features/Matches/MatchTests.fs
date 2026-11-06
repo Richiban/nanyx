@@ -11,10 +11,10 @@ let ``a braced guard pattern takes any expression and the bare form still parses
     match parseModule "def f = { | { < 0 } -> 1 | { >= limit * 2 } -> 2 | > 5 -> 3 | _ -> 4 }" with
     | Result.Ok [ Def (ValueDef (_, "f", _, Kind (Lambda (_, Kind (Match (_, arms)))))) ] ->
         match arms |> List.map fst with
-        | [ [ GuardPattern ("<", Kind (LiteralExpr (IntLit 0))) ]
-            [ GuardPattern (">=", Kind (BinaryOp ("*", Kind (IdentifierExpr "limit"), _))) ]
-            [ GuardPattern (">", Kind (LiteralExpr (IntLit 5))) ]
-            [ WildcardPattern ] ] -> ()
+        | [ [ Kind (GuardPattern ("<", Kind (LiteralExpr (IntLit 0)))) ]
+            [ Kind (GuardPattern (">=", Kind (BinaryOp ("*", Kind (IdentifierExpr "limit"), _)))) ]
+            [ Kind (GuardPattern (">", Kind (LiteralExpr (IntLit 5)))) ]
+            [ Kind WildcardPattern ] ] -> ()
         | other -> failwith $"Unexpected arms: %A{other}"
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
     | Result.Error err -> failwith $"Parse failed: {err}"
@@ -43,7 +43,7 @@ let ``An or-pattern arm becomes one arm per alternative`` () =
         "}"
     match parseModule source with
     | Result.Ok [ Def (ValueDef (_, "f", _, Kind (Lambda (_, Kind (Block [ ExprStatement (Kind (Match (_, arms))) ]))))) ] ->
-        let patterns = arms |> List.map fst
+        let patterns = arms |> List.map (fst >> List.map (fun pattern -> pattern.Kind))
         patterns |> should equal [ [ LiteralPattern (StringLit "Sat") ]; [ LiteralPattern (StringLit "Sun") ]; [ WildcardPattern ] ]
         // Both alternatives share the same body.
         snd arms.[0] |> should equal (snd arms.[1])
@@ -61,7 +61,9 @@ let ``An or-pattern may put each alternative on its own line`` () =
         "}"
     match parseModule source with
     | Result.Ok [ Def (ValueDef (_, "f", _, Kind (Lambda (_, Kind (Block [ ExprStatement (Kind (Match (_, arms))) ]))))) ] ->
-        arms |> List.map fst |> should equal [ [ TagPattern ("sat", None) ]; [ TagPattern ("sun", None) ]; [ WildcardPattern ] ]
+        arms
+        |> List.map (fst >> List.map (fun pattern -> pattern.Kind))
+        |> should equal [ [ TagPattern ("sat", None) ]; [ TagPattern ("sun", None) ]; [ WildcardPattern ] ]
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
     | Result.Error err -> failwith $"Parse failed: {err}"
 

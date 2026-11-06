@@ -75,6 +75,30 @@ let ``A non-exhaustive match is reported at its scrutinee`` () =
     Assert.Equal("value", textAt source span)
 
 [<Fact>]
+let ``A pattern of the wrong type is reported at the pattern`` () =
+    let source =
+        "def value = 1\n" +
+        "def result = match value\n" +
+        "| 0 -> 0\n" +
+        "| \"one\" -> 1\n" +
+        "| _ -> 2\n"
+    let diagnostic = single (Compiler.compile source)
+    Assert.Equal(DiagnosticCodes.TypeMismatch.Code, diagnostic.Code)
+    Assert.Equal("\"one\"", textAt source (spanOf diagnostic))
+
+[<Fact>]
+let ``A mismatch inside a tuple pattern is reported within the pattern, not at the whole match`` () =
+    let source =
+        "def value = (1, 2)\n" +
+        "def result = match value\n" +
+        "| (a, \"two\") -> a\n" +
+        "| _ -> 0\n"
+    let diagnostic = single (Compiler.compile source)
+    Assert.Equal(DiagnosticCodes.TypeMismatch.Code, diagnostic.Code)
+    // The element's constraint is solved first, so the tuple's own constraint is the one that fails.
+    Assert.Equal("(a, \"two\")", textAt source (spanOf diagnostic))
+
+[<Fact>]
 let ``A reference to a private definition links to where it is declared`` () =
     let source = "module inner =\n  def secret = 1\n  export def open = secret + 1\ndef value = inner.secret"
     let diagnostic = single (Compiler.compile source)

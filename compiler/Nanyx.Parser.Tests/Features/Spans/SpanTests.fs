@@ -214,7 +214,7 @@ and private expressionsOfUse (binding: UseBinding) =
     | UseContextInstance (typeExpr, value) -> expressionsOfType typeExpr @ expressions value
 
 and private expressionsOfPattern (pattern: Pattern) =
-    match pattern with
+    match pattern.Kind with
     | LiteralPattern _
     | IdentifierPattern _
     | WildcardPattern
@@ -262,8 +262,31 @@ let rec private expressionsOfItem (item: TopLevelItem) =
         (parameters |> List.collect (snd >> Option.toList >> List.collect expressionsOfType)) @ expressionsOfType typeExpr
     | Expr value -> expressions value
 
-/// Checks that every expression parsed from `source` has a span within it that starts and ends on a
-/// non-whitespace character, whose line and column agree with its offset. Returns how many it checked.
+/// `pattern` and every pattern nested in it.
+let rec private patternsWithin (pattern: Pattern) : Pattern list =
+    pattern ::
+        match pattern.Kind with
+        | TuplePattern patterns
+        | RecordPattern (_, patterns) -> patterns |> List.collect patternsWithin
+        | RecordMemberPattern members -> members |> List.collect (snd >> patternsWithin)
+        | ListPattern (patterns, rest) -> (patterns @ Option.toList rest) |> List.collect patternsWithin
+        | ListSplatMiddle (before, after) -> (before @ after) |> List.collect patternsWithin
+        | TagPattern (_, payload) -> payload |> Option.toList |> List.collect patternsWithin
+        | LiteralPattern _
+        | IdentifierPattern _
+        | WildcardPattern
+        | ElsePattern
+        | RangePattern _
+        | GuardPattern _ -> []
+
+/// Every pattern in the arms of `expr`, if it is a match.
+let private armPatterns (expr: Expression) =
+    match expr.Kind with
+    | Match (_, arms) -> arms |> List.collect (fst >> List.collect patternsWithin)
+    | _ -> []
+
+/// Checks that every expression and pattern parsed from `source` has a span within it that starts and ends on a
+/// non-whitespace character, whose line and column agree with its offset. Returns how many nodes it checked.
 let private checkAllSpans (file: string) (rawSource: string) =
     // Spans are offsets into the source as the parser normalises it.
     let source = rawSource.Replace("\r\n", "\n").Replace("\r", "\n").TrimEnd()
@@ -271,10 +294,9 @@ let private checkAllSpans (file: string) (rawSource: string) =
         match parseModuleFile file rawSource with
         | Result.Ok module' -> module'
         | Result.Error err -> failwith $"Parse failed for {file}: {err}"
-    let all = module' |> List.collect expressionsOfItem
-    for expr in all do
-        let span = expr.Span
-        let describe () = $"{file}: %A{span} of %A{expr.Kind}"
+    let expressions = module' |> List.collect expressionsOfItem
+    let patterns = expressions |> List.collect armPatterns
+    let check (span: SourceSpan) (describe: unit -> string) =
         if SourceSpan.isNone span then failwith $"No span: {describe ()}"
         if span.File <> file then failwith $"Wrong file: {describe ()}"
         if span.Start < 0 || span.End > source.Length || span.End <= span.Start then
@@ -286,7 +308,11 @@ let private checkAllSpans (file: string) (rawSource: string) =
         let column = span.Start - (before.LastIndexOf('\n') + 1)
         if span.StartLine <> line || span.StartColumn <> column then
             failwith $"Line/column {span.StartLine}:{span.StartColumn} should be {line}:{column}: {describe ()}"
-    all.Length
+    for expr in expressions do
+        check expr.Span (fun () -> $"{file}: %A{expr.Span} of %A{expr.Kind}")
+    for pattern in patterns do
+        check pattern.Span (fun () -> $"{file}: %A{pattern.Span} of pattern %A{pattern.Kind}")
+    expressions.Length + patterns.Length
 
 [<Fact>]
 let ``an operator over parentheses or a lone spread spans the delimiters, and what is inside keeps its own span`` () =
@@ -361,3 +387,108 @@ let ``every expression in every parseable feature file has a real span within th
     checkedFiles.Length |> should be (greaterThan 50)
     for path in checkedFiles do
         checkAllSpans path (File.ReadAllText path) |> ignore
+
+/// The patterns of each arm of the match that is `def name`'s value.
+let private armsOf name (module': Module) =
+    match (valueOf name module').Kind with
+    | Match (_, arms) -> arms |> List.map fst
+    | other -> failwith $"Expected a match, got %A{other}"
+
+[<Fact>]
+let ``each pattern spans its text, and nested patterns span theirs`` () =
+    let source =
+        "def f = match v\n" +
+        "  | #some((a, _)) -> a\n" +
+        "  | [x, ...rest] -> x\n" +
+        "  | [first, ..., last] -> first\n" +
+        "  | 1..10 -> 0\n" +
+        "  | { < 0 } -> 0\n" +
+        "  | Point(px, py) -> px\n" +
+        "  | (name = n) -> n\n" +
+        "  | \"text\" -> 0\n" +
+        "  | other -> 0"
+    let texts = armsOf "f" (parse source) |> List.map (List.map (fun pattern -> textOf source pattern.Span))
+    texts
+    |> should equal [ [ "#some((a, _))" ]; [ "[x, ...rest]" ]; [ "[first, ..., last]" ]; [ "1..10" ]; [ "{ < 0 }" ]
+                      [ "Point(px, py)" ]; [ "(name = n)" ]; [ "\"text\"" ]; [ "other" ] ]
+    match armsOf "f" (parse source) with
+    | [ tag ] :: [ list ] :: [ middle ] :: [ range ] :: _ :: [ record ] :: [ members ] :: _ ->
+        match tag.Kind with
+        | TagPattern ("some", Some tuple) ->
+            textOf source tuple.Span |> should equal "(a, _)"
+            match tuple.Kind with
+            | TuplePattern [ a; wildcard ] ->
+                textOf source a.Span |> should equal "a"
+                a.Span.StartLine |> should equal 1
+                a.Span.StartColumn |> should equal 11
+                textOf source wildcard.Span |> should equal "_"
+            | other -> failwith $"Expected a tuple pattern, got %A{other}"
+        | other -> failwith $"Expected a tag pattern, got %A{other}"
+        match list.Kind with
+        | ListPattern ([ x ], Some rest) ->
+            textOf source x.Span |> should equal "x"
+            textOf source rest.Span |> should equal "rest"
+        | other -> failwith $"Expected a list pattern with a rest, got %A{other}"
+        match middle.Kind with
+        | ListSplatMiddle ([ first ], [ last ]) ->
+            textOf source first.Span |> should equal "first"
+            textOf source last.Span |> should equal "last"
+        | other -> failwith $"Expected a list pattern with a middle splat, got %A{other}"
+        match range.Kind with
+        | RangePattern (low, high) ->
+            textOf source low.Span |> should equal "1"
+            textOf source high.Span |> should equal "10"
+        | other -> failwith $"Expected a range pattern, got %A{other}"
+        match record.Kind with
+        | RecordPattern ("Point", [ px; py ]) ->
+            textOf source px.Span |> should equal "px"
+            textOf source py.Span |> should equal "py"
+        | other -> failwith $"Expected a record pattern, got %A{other}"
+        match members.Kind with
+        | RecordMemberPattern [ ("name", n) ] -> textOf source n.Span |> should equal "n"
+        | other -> failwith $"Expected a record member pattern, got %A{other}"
+    | other -> failwith $"Unexpected arms: %A{other}"
+
+[<Fact>]
+let ``a tag with several payload patterns matches them as a tuple spanning the parentheses`` () =
+    let source = "def f = match v\n  | #pair(a, b) -> a\n  | #one x -> x"
+    match armsOf "f" (parse source) with
+    | [ [ pair ]; [ one ] ] ->
+        match pair.Kind with
+        | TagPattern ("pair", Some payload) ->
+            textOf source payload.Span |> should equal "(a, b)"
+            match payload.Kind with
+            | TuplePattern [ a; b ] ->
+                textOf source a.Span |> should equal "a"
+                textOf source b.Span |> should equal "b"
+            | other -> failwith $"Expected a tuple payload, got %A{other}"
+        | other -> failwith $"Expected a tag pattern, got %A{other}"
+        textOf source one.Span |> should equal "#one x"
+        match one.Kind with
+        | TagPattern ("one", Some x) -> textOf source x.Span |> should equal "x"
+        | other -> failwith $"Expected a tag pattern, got %A{other}"
+    | other -> failwith $"Unexpected arms: %A{other}"
+
+[<Fact>]
+let ``the wildcard an if-match makes up for its else is reported at the else branch`` () =
+    let source = "def x = if p is (a, 0) then a else fallback\ndef y = if q is #some(v) then v"
+    let module' = parse source
+    match armsOf "x" module' with
+    | [ [ tuple ]; [ wildcard ] ] ->
+        textOf source tuple.Span |> should equal "(a, 0)"
+        wildcard.Kind |> should equal WildcardPattern
+        textOf source wildcard.Span |> should equal "fallback"
+    | other -> failwith $"Unexpected arms: %A{other}"
+    // Without an `else`, the `()` it stands for is made up at the `then` branch, and so is the wildcard.
+    match armsOf "y" module' with
+    | [ [ _ ]; [ wildcard ] ] -> textOf source wildcard.Span |> should equal "v"
+    | other -> failwith $"Unexpected arms: %A{other}"
+
+[<Fact>]
+let ``patterns are equal wherever they were written`` () =
+    let first = parse "def f = match v\n  | #some((a, _)) -> a" |> armsOf "f"
+    let second = parse "def f = match v\n  |   #some(( a,  _ )) -> a" |> armsOf "f"
+    first.[0].[0].Span |> should not' (equal second.[0].[0].Span)
+    first |> should equal second
+    hash first |> should equal (hash second)
+    compare first second |> should equal 0
