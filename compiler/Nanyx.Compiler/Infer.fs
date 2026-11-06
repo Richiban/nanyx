@@ -1871,8 +1871,10 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
                     | Error err -> errors <- err
                     | Ok () ->
                         // Generalize against an env without this def's own pre-binding, so the fresh
-                        // variable it was pre-bound at does not stop its type being generalized.
-                        let scheme = TypeEnv.generalize (env |> Map.remove name) declaredTy
+                        // variable it was pre-bound at does not stop its type being generalized. Resolve it
+                        // first, as a local def does: `{ x -> x + 1 }` is `α -> α` until its constraints are
+                        // applied, and generalising that would make every use `α -> α` too.
+                        let scheme = TypeEnv.generalize (env |> Map.remove name) (resolveSoFar finalState declaredTy)
                         env <- TypeEnv.declare name symbol scheme env
                         types <- types |> Map.add name declaredTy
                         items <- items @ [ TypedDef (TypedValueDef(isExport, name, typeOpt, typedExpr)) ]
