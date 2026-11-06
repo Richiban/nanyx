@@ -53,7 +53,9 @@ type ImportSource =
 
 type ImportItem =
     { Source: ImportSource
-      Alias: Identifier option }
+      Alias: Identifier option
+      /// The import as written: its source and alias.
+      Span: SourceSpan }
 
 type TypeExpr =
     | TypeName of Identifier
@@ -200,11 +202,36 @@ module Expression =
     /// An expression the compiler made up that has no source of its own.
     let synthetic (kind: ExpressionKind) = at SourceSpan.none kind
 
+/// How a node declares names. One node can declare in more than one way: `def f = { x -> x }` declares `f` by
+/// the lambda as a def's value, and `x` by the lambda's parameters.
+type Declarer =
+    /// The value of a def declares the def's name.
+    | DefValue
+    /// A lambda declares its parameters.
+    | LambdaParameters
+    /// The body of a match arm declares the variables its patterns bind.
+    | ArmBody
+
+/// The names nodes declare, each with the span it is written at. Declarations have no nodes of their own yet
+/// (#96), so their spans are kept here, keyed by the node they belong to.
+type DeclaredNames = Map<NodeId * Declarer, (Identifier * SourceSpan) list>
+
+/// What the parser keeps beside the input. FParsec restores it when it backtracks, so a declaration parsed on
+/// a path that failed is forgotten with it.
+type ParseState =
+    { Declared: DeclaredNames
+      /// Names parsed for a construct that has not been built yet (a lambda's parameters, a pattern's
+      /// variables), most recent first. The construct takes them with `collectingNames`.
+      PendingNames: (Identifier * SourceSpan) list }
+
+module ParseState =
+    let empty = { Declared = Map.empty; PendingNames = [] }
+
 // Helper: whitespace and comment handling
 let comment () = pstring "--" >>. skipRestOfLine true
 let inlineCommentNoNl () = pstring "--" >>. skipRestOfLine false
-let ws: Parser<unit, unit> = skipMany (skipMany1 spaces1 <|> comment ())
-let wsAll: Parser<unit, unit> = ws
+let ws: Parser<unit, ParseState> = skipMany (skipMany1 spaces1 <|> comment ())
+let wsAll: Parser<unit, ParseState> = ws
 let wsInline = skipMany (skipAnyOf " \t")
 let wsNoNl() = skipMany (skipAnyOf " \t") // whitespace without newlines
 let wsWithComments () = ws
@@ -233,7 +260,7 @@ let greaterIndentation (refCol: int64) =
         if pos.Column > refCol then preturn ()
         else pzero
 
-let newlineIndentedContinuation (refCol: int64) : Parser<unit, unit> =
+let newlineIndentedContinuation (refCol: int64) : Parser<unit, ParseState> =
     attempt (
         skipMany (skipAnyOf " \t") >>. newline >>.
         many (pchar ' ' <|> pchar '\t') >>.
@@ -241,23 +268,23 @@ let newlineIndentedContinuation (refCol: int64) : Parser<unit, unit> =
             if pos.Column > refCol then preturn () else pzero
     )
 
-let defEqualsContinuation (refCol: int64) : Parser<unit, unit> =
+let defEqualsContinuation (refCol: int64) : Parser<unit, ParseState> =
     attempt (wsNoNl() >>. followedBy (pstring "=")) <|> newlineIndentedContinuation refCol
 
 // Parser for identifiers
-let identifierNoWs: Parser<Identifier, unit> =
+let identifierNoWs: Parser<Identifier, ParseState> =
     let isIdentStart c = isLetter c || c = '_'
     let isIdentContinue c = isLetter c || isDigit c || c = '_'
     many1Satisfy2 isIdentStart isIdentContinue
     <?> "identifier"
 
-let identifier: Parser<Identifier, unit> = identifierNoWs .>> wsInline
+let identifier: Parser<Identifier, ParseState> = identifierNoWs .>> wsInline
 
-let typeNameIdentifier: Parser<Identifier, unit> =
+let typeNameIdentifier: Parser<Identifier, ParseState> =
     (pchar '$' >>. identifierNoWs |>> fun name -> "$" + name)
     <|> identifierNoWs
 
-let qualifiedIdentifier: Parser<Identifier, unit> =
+let qualifiedIdentifier: Parser<Identifier, ParseState> =
     pipe2
         typeNameIdentifier
         (many (pchar '.' >>. identifierNoWs))
@@ -272,7 +299,7 @@ let private spanOf (start: Position) (endIndex: int) : SourceSpan =
 
 /// The index just past the last character consumed that is not whitespace. Many parsers consume the whitespace
 /// after what they parse; it is not part of a node's span.
-let private trimmedEnd: Parser<int, unit> =
+let private trimmedEnd: Parser<int, ParseState> =
     fun stream ->
         let mutable back = 0
         let isTrailingSpace (offset: int) =
@@ -283,21 +310,51 @@ let private trimmedEnd: Parser<int, unit> =
         Reply(int stream.Index - back)
 
 /// Runs `p` and pairs its result with the span of the text it consumed.
-let withSpan (p: Parser<'a, unit>) : Parser<'a * SourceSpan, unit> =
+let withSpan (p: Parser<'a, ParseState>) : Parser<'a * SourceSpan, ParseState> =
     pipe3 getPosition p trimmedEnd (fun start value endIndex -> value, spanOf start endIndex)
 
+/// The span of `name`, written from `start` on one line.
+let private nameSpan (start: Position) (name: Identifier) = spanOf start (int start.Index + name.Length)
+
+/// Notes `name`, written at `start`, as declared by the construct being parsed: see `collectingNames`.
+let private noteName (start: Position) (name: Identifier) : Parser<unit, ParseState> =
+    updateUserState (fun state -> { state with PendingNames = (name, nameSpan start name) :: state.PendingNames })
+
+/// Runs `p`, and returns with its result the names noted while it ran, in the order they are written. They are
+/// no longer pending afterwards.
+let private collectingNames (p: Parser<'a, ParseState>) : Parser<'a * (Identifier * SourceSpan) list, ParseState> =
+    getUserState >>= fun before ->
+        p >>= fun value ->
+            getUserState >>= fun after ->
+                let noted =
+                    after.PendingNames
+                    |> List.take (after.PendingNames.Length - before.PendingNames.Length)
+                    |> List.rev
+                setUserState { after with PendingNames = before.PendingNames } >>% (value, noted)
+
+/// Records that `holder` declares `names` as `declarer`. A name declared twice, by the alternatives of an
+/// or-pattern, keeps the span of the first.
+let private declare (declarer: Declarer) (holder: NodeId) (names: (Identifier * SourceSpan) list) : Parser<unit, ParseState> =
+    if List.isEmpty names then
+        preturn ()
+    else
+        updateUserState (fun state ->
+            let key = holder, declarer
+            let existing = state.Declared |> Map.tryFind key |> Option.defaultValue []
+            { state with Declared = state.Declared |> Map.add key (existing @ names |> List.distinctBy fst) })
+
 /// Runs `p` and makes what it built an expression spanning the text it consumed.
-let spanned (p: Parser<ExpressionKind, unit>) : Parser<Expression, unit> =
+let spanned (p: Parser<ExpressionKind, ParseState>) : Parser<Expression, ParseState> =
     withSpan p |>> fun (kind, span) -> Expression.at span kind
 
-let identifierWithSpan: Parser<Identifier * SourceSpan option, unit> =
+let identifierWithSpan: Parser<Identifier * SourceSpan option, ParseState> =
     withSpan identifierNoWs |>> fun (name, span) -> name, Some span
 
-let qualifiedIdentifierWithSpan: Parser<Identifier * SourceSpan option, unit> =
+let qualifiedIdentifierWithSpan: Parser<Identifier * SourceSpan option, ParseState> =
     withSpan qualifiedIdentifier |>> fun (name, span) -> name, Some span
 
 /// One expression, or several separated by commas as a tuple of them.
-let private singleOrTuple (items: Parser<Expression list, unit>) : Parser<Expression, unit> =
+let private singleOrTuple (items: Parser<Expression list, ParseState>) : Parser<Expression, ParseState> =
     withSpan items |>> fun (exprs, span) ->
         match exprs with
         | [single] -> single
@@ -305,7 +362,7 @@ let private singleOrTuple (items: Parser<Expression list, unit>) : Parser<Expres
 
 /// A block of statements. It ends where its last statement's expression does: a statement may have consumed a
 /// trailing `-- comment`, which is not part of the block.
-let private blockSpanned (statements: Parser<Statement list, unit>) : Parser<Expression, unit> =
+let private blockSpanned (statements: Parser<Statement list, ParseState>) : Parser<Expression, ParseState> =
     withSpan statements |>> fun (stmts, span) ->
         let lastExpr =
             match List.tryLast stmts with
@@ -322,7 +379,7 @@ let private blockSpanned (statements: Parser<Statement list, unit>) : Parser<Exp
 
 
 // Parser for literals
-let stringLiteralNoWs: Parser<Literal, unit> =
+let stringLiteralNoWs: Parser<Literal, ParseState> =
     let doubleQuoted =
         between (pstring "\"") (pstring "\"") (manyChars (noneOf "\""))
         |>> StringLit
@@ -332,30 +389,30 @@ let stringLiteralNoWs: Parser<Literal, unit> =
     attempt doubleQuoted <|> singleQuoted
     <?> "string literal"
 
-let stringLiteral: Parser<Literal, unit> = stringLiteralNoWs  // Don't consume ws
+let stringLiteral: Parser<Literal, ParseState> = stringLiteralNoWs  // Don't consume ws
 
-let intLiteralNoWs: Parser<Literal, unit> =
+let intLiteralNoWs: Parser<Literal, ParseState> =
     // Allow parsing int even if followed by dots (for range operator "..")
     // Just don't allow a SINGLE dot (which would make it a float)
     let notFloat = followedBy (pstring "..") <|> notFollowedBy (pchar '.')
     pint32 .>> notFloat |>> IntLit
     <?> "integer literal"
 
-let intLiteral: Parser<Literal, unit> = intLiteralNoWs  // Don't consume ws - let caller decide
+let intLiteral: Parser<Literal, ParseState> = intLiteralNoWs  // Don't consume ws - let caller decide
 
-let floatLiteralNoWs: Parser<Literal, unit> =
+let floatLiteralNoWs: Parser<Literal, ParseState> =
     pfloat |>> FloatLit
     <?> "float literal"
 
-let floatLiteral: Parser<Literal, unit> = floatLiteralNoWs  // Don't consume ws - let caller decide
+let floatLiteral: Parser<Literal, ParseState> = floatLiteralNoWs  // Don't consume ws - let caller decide
 
-let boolLiteralNoWs: Parser<Literal, unit> =
+let boolLiteralNoWs: Parser<Literal, ParseState> =
     (stringReturn "true" (BoolLit true) <|> stringReturn "false" (BoolLit false))
     <?> "boolean literal"
 
-let boolLiteral: Parser<Literal, unit> = boolLiteralNoWs  // Don't consume ws - let caller decide
+let boolLiteral: Parser<Literal, ParseState> = boolLiteralNoWs  // Don't consume ws - let caller decide
 
-let literalNoWs: Parser<Literal, unit> =
+let literalNoWs: Parser<Literal, ParseState> =
     choice [
         attempt intLiteralNoWs
         attempt floatLiteralNoWs
@@ -364,7 +421,7 @@ let literalNoWs: Parser<Literal, unit> =
     ]
     <?> "literal"
 
-let literal: Parser<Literal, unit> =
+let literal: Parser<Literal, ParseState> =
     choice [
         attempt intLiteral
         attempt floatLiteral
@@ -373,26 +430,24 @@ let literal: Parser<Literal, unit> =
     ]
     <?> "literal"
 
-let modulePath: Parser<string, unit> =
+let modulePath: Parser<string, ParseState> =
     pipe2
         identifierNoWs
         (many (pipe2 (pchar '.' <|> pchar '/') identifierNoWs (fun sep seg -> string sep + seg)))
         (fun head tail -> head + String.concat "" tail)
 
-let importSource: Parser<ImportSource, unit> =
+let importSource: Parser<ImportSource, ParseState> =
     attempt (
         stringLiteralNoWs |>> function
             | StringLit s -> PathImport s
             | _ -> failwith "Expected string literal for import path"
     ) <|> (modulePath |>> ModuleImport)
 
-let importItem: Parser<ImportItem, unit> =
-    pipe2
-        importSource
-        (opt (attempt (ws >>. pstring "as" >>. ws >>. identifierNoWs)))
-        (fun source alias -> { Source = source; Alias = alias })
+let importItem: Parser<ImportItem, ParseState> =
+    withSpan (importSource .>>. opt (attempt (ws >>. pstring "as" >>. ws >>. identifierNoWs)))
+    |>> fun ((source, alias), span) -> { Source = source; Alias = alias; Span = span }
 
-let importItems: Parser<ImportItem list, unit> =
+let importItems: Parser<ImportItem list, ParseState> =
     let importParenItems =
         between
             (pstring "(")
@@ -411,26 +466,36 @@ let importItems: Parser<ImportItem list, unit> =
     ]
 
 // Forward references for recursive expression parsing
-let expression, expressionRef = createParserForwardedToRef<Expression, unit>()
-let exprWithoutCrossingNewlines, exprWithoutCrossingNewlinesRef = createParserForwardedToRef<Expression, unit>()
-let inlineExpression, inlineExpressionRef = createParserForwardedToRef<Expression, unit>()
-let simpleExpression, simpleExpressionRef = createParserForwardedToRef<Expression, unit>()
-let lambda, lambdaRef = createParserForwardedToRef<Expression, unit>()
-let functionCall, functionCallRef = createParserForwardedToRef<Expression, unit>()
-let matchExpr, matchExprRef = createParserForwardedToRef<Expression, unit>()
-let statement, statementRef = createParserForwardedToRef<Statement, unit>()
+let expression, expressionRef = createParserForwardedToRef<Expression, ParseState>()
+let exprWithoutCrossingNewlines, exprWithoutCrossingNewlinesRef = createParserForwardedToRef<Expression, ParseState>()
+let inlineExpression, inlineExpressionRef = createParserForwardedToRef<Expression, ParseState>()
+let simpleExpression, simpleExpressionRef = createParserForwardedToRef<Expression, ParseState>()
+let lambda, lambdaRef = createParserForwardedToRef<Expression, ParseState>()
+let functionCall, functionCallRef = createParserForwardedToRef<Expression, ParseState>()
+let matchExpr, matchExprRef = createParserForwardedToRef<Expression, ParseState>()
+let statement, statementRef = createParserForwardedToRef<Statement, ParseState>()
 /// One line of a block as the statements it stands for: a single statement, or the several a
 /// destructuring `def (x, y) = ...` desugars into.
-let statementItems, statementItemsRef = createParserForwardedToRef<Statement list, unit>()
-let typeExpr, typeExprRef = createParserForwardedToRef<TypeExpr, unit>()
+let statementItems, statementItemsRef = createParserForwardedToRef<Statement list, ParseState>()
+let typeExpr, typeExprRef = createParserForwardedToRef<TypeExpr, ParseState>()
 /// The type in a def's annotation: a type expression, or bare parameters `int, int -> int` (see `typeExpr`).
-let typeSignature, typeSignatureRef = createParserForwardedToRef<TypeExpr, unit>()
+let typeSignature, typeSignatureRef = createParserForwardedToRef<TypeExpr, ParseState>()
+/// Types separated by commas, and the result they go to when an arrow follows them.
+let typeList, typeListRef = createParserForwardedToRef<TypeExpr list * TypeExpr option, ParseState>()
+
+/// What a `typeList` means: `a, b -> c` is a function of two parameters, since `,` binds tighter than `->`.
+let private typeListToType (items: TypeExpr list, resultOpt: TypeExpr option) : TypeExpr =
+    match items, resultOpt with
+    | [ single ], None -> single
+    | _, None -> TypeTuple items
+    | [ single ], Some result -> TypeFunc(single, result)
+    | _, Some result -> TypeFunc(TypeTuple items, result)
 
 // Pattern parsers
-let pattern, patternRef = createParserForwardedToRef<Pattern, unit>()
+let pattern, patternRef = createParserForwardedToRef<Pattern, ParseState>()
 
 // Interpolated double-quoted strings with {expr} holes
-let interpolatedStringExprNoWs: Parser<Expression, unit> =
+let interpolatedStringExprNoWs: Parser<Expression, ParseState> =
     let textPart = many1Chars (noneOf "\"{") |>> StringText
     let holePart =
         between (pchar '{' .>> ws) (ws >>. pchar '}') expression
@@ -451,7 +516,8 @@ let interpolatedStringExprNoWs: Parser<Expression, unit> =
 
 let wildcardPattern = pstring "_" >>% WildcardPattern
 let elsePattern = pstring "else" >>% ElsePattern
-let identifierPattern = identifierNoWs |>> IdentifierPattern
+let identifierPattern =
+    getPosition .>>. identifierNoWs >>= fun (start, name) -> noteName start name >>% IdentifierPattern name
 
 // Parse either a range pattern (1..10), an integer literal pattern (1), 
 // or other literal types (float, bool, string)
@@ -503,17 +569,22 @@ let private destructuringBindings (position: Position) (pattern: Pattern) (value
     |> Option.map (fun bindings -> (temp, value) :: bindings)
 
 /// `[export] def (pattern) = value`, as the export flag and the bindings it stands for.
-let destructuringDefWith (lineStartCol: int64) (exprParser: Parser<Expression, unit>) : Parser<bool * (Identifier * Expression) list, unit> =
+let destructuringDefWith (lineStartCol: int64) (exprParser: Parser<Expression, ParseState>) : Parser<bool * (Identifier * Expression) list, ParseState> =
     pipe3
         (opt (attempt (pstring "export" >>. ws)))
-        (getPosition .>>. (pstring "def" >>. ws >>. tuplePattern .>> wsNoNl()))
+        (getPosition .>>. (pstring "def" >>. ws >>. collectingNames tuplePattern .>> wsNoNl()))
         (defEqualsContinuation lineStartCol >>. pstring "=" >>. wsNoNl() >>. exprParser)
         (fun exportOpt (position, pattern) value -> exportOpt.IsSome, position, pattern, value)
-    >>= fun (isExport, position, pattern, value) ->
+    >>= fun (isExport, position, (pattern, names), value) ->
         match pattern with
         | TuplePattern _ ->
             match destructuringBindings position pattern value with
-            | Some bindings -> preturn (isExport, bindings)
+            | Some bindings ->
+                // Each name is declared by the value of the def it becomes.
+                let declarations =
+                    bindings
+                    |> List.map (fun (name, bound) -> declare DefValue bound.Id (names |> List.filter (fun (declared, _) -> declared = name)))
+                List.foldBack (>>.) declarations (preturn (isExport, bindings))
             | None -> fail "only names, `_` and nested tuples can be destructured by a def"
         | _ -> fail "a destructuring def needs a tuple pattern"
 
@@ -543,7 +614,7 @@ let recordMemberPattern =
 // List pattern: [pat1, pat2, ...] or [pat1, ...rest] or [first, ..., last]
 let listPattern =
     let splatPattern = 
-        pstring "..." >>. ws >>. opt identifierNoWs
+        pstring "..." >>. ws >>. opt (getPosition .>>. identifierNoWs >>= fun (start, name) -> noteName start name >>% name)
         |>> Splat
     
     let regularPatternOrSplat =
@@ -691,18 +762,15 @@ do
                 (many (attempt (recordFieldSeparator >>. (attempt typeMemberField <|> typeField))))
                 (fun first rest -> TypeRecord(first :: rest)))
 
+    // Brackets group: `(int, a -> b)` is a function of two parameters, as it is without them, and `()` is unit.
     let typeTupleOrParen =
         between
             (pstring "(")
             (ws >>. pstring ")")
-            (sepBy (ws >>. typeExpr) (pstring "," .>> ws))
-        |>> fun items ->
-            match items with
-            | [] -> TypeUnit
-            | [single] -> single
-            | multiple -> TypeTuple multiple
+            (ws >>. opt (attempt typeSignature))
+        |>> Option.defaultValue TypeUnit
 
-    let typeTagPayloadItem =
+    let typeTag =
         let namedField =
             pipe3
                 identifierNoWs
@@ -711,32 +779,24 @@ do
                 (fun name optFlag typeValue ->
                     let isOptional = optFlag.IsSome
                     TypeField(name, false, isOptional, Some typeValue, None))
+        // A payload is a record of named fields, or the types in the brackets: `#pair(int, string)` carries a
+        // tuple and `#apply(a, b -> c)` a function.
+        let payload =
+            between
+                (pstring "(")
+                (ws >>. pstring ")")
+                (attempt (sepBy1 (ws >>. namedField) (pstring "," .>> ws) |>> TypeRecord) <|> (ws >>. typeList |>> typeListToType))
+        pipe2 (pstring "#" >>. identifierNoWs) (opt payload) (fun tagName payloadOpt -> TypeTag(tagName, payloadOpt))
 
-        attempt (namedField |>> Choice1Of2) <|> (typeExpr |>> Choice2Of2)
-
-    let typeTag =
-        pstring "#" >>. identifierNoWs >>= fun tagName ->
-        opt (between (pstring "(") (pstring ")") (sepBy1 (ws >>. typeTagPayloadItem) (pstring "," .>> ws))) >>= fun payloadOpt ->
-        match payloadOpt with
-        | None -> preturn (TypeTag(tagName, None))
-        | Some items ->
-            let hasNamed = items |> List.exists (function Choice1Of2 _ -> true | _ -> false)
-            if hasNamed then
-                let fields =
-                    items
-                    |> List.choose (function Choice1Of2 field -> Some field | _ -> None)
-                preturn (TypeTag(tagName, Some (TypeRecord fields)))
-            else
-                let payloadTypes = items |> List.choose (function Choice2Of2 t -> Some t | _ -> None)
-                match payloadTypes with
-                | [single] -> preturn (TypeTag(tagName, Some single))
-                | multiple -> preturn (TypeTag(tagName, Some (TypeTuple multiple)))
-
+    // `map(string, int)` has two arguments; `map(string, a -> b)` has one, a function, as `,` binds tighter.
     let typeApply =
         pipe2
             identifierNoWs
-            (between (pstring "(") (pstring ")") (sepBy1 (ws >>. typeExpr) (pstring "," .>> ws)))
-            (fun name args -> TypeApply(name, args))
+            (between (pstring "(") (ws >>. pstring ")") (ws >>. typeList))
+            (fun name (args, resultOpt) ->
+                match resultOpt with
+                | None -> TypeApply(name, args)
+                | Some _ -> TypeApply(name, [ typeListToType (args, resultOpt) ]))
 
     let contextSet =
         between
@@ -805,29 +865,23 @@ do
 
     typeExprRef := typeWithContext
 
-    // In a def's annotation `,` binds tighter than `->`, so `int, int -> int` means `(int, int) -> int`
-    // (see the types page); a parameter that is itself a function type needs parentheses. The bare form is
-    // only allowed there: elsewhere a `,` already separates lambda parameters, tuple items or fields.
-    let bareParameterArrow =
-        attempt (
-            pipe2
-                (sepBy1 typeUnion (attempt (wsInline >>. pstring "," >>. ws)))
-                (ws >>. pstring "->" >>. ws >>. typeExpr)
-                (fun parameters result -> parameters, result)
-            >>= function
-                | (_ :: _ :: _ as parameters), result -> preturn (TypeFunc(TypeTuple parameters, result))
-                | _ -> fail "a function type with bare parameters needs at least two")
+    // `,` binds tighter than `->` wherever types are listed (see the types page), so `int, int -> int` means
+    // `(int, int) -> int` in a def's annotation, in brackets, in type arguments and in a tag's payload alike. A
+    // function that is one of the items has brackets of its own. A record's fields and a lambda's parameters
+    // are separated by commas themselves, so a type there is a `typeExpr`, which takes no bare list.
+    typeListRef :=
+        sepBy1 typeUnion (attempt (wsInline >>. pstring "," >>. ws))
+        .>>. opt (attempt (ws >>. pstring "->" >>. ws >>. typeExpr))
 
+    // A def's annotation: a type list, possibly after the contexts it needs.
     typeSignatureRef :=
-        choice [
-            attempt (pipe2 (contextSet .>> ws) bareParameterArrow (fun ctx t ->
-                TypeWithContext((match ctx with TypeContext items -> items | _ -> []), t)))
-            bareParameterArrow
-            typeExpr
-        ]
+        attempt (
+            pipe2 (contextSet .>> ws) typeList (fun ctx list ->
+                TypeWithContext((match ctx with TypeContext items -> items | _ -> []), typeListToType list)))
+        <|> (typeList |>> typeListToType)
     ()
 
-let typedIdentifier: Parser<Identifier * TypeExpr option, unit> =
+let typedIdentifier: Parser<Identifier * TypeExpr option, ParseState> =
     pipe2
         identifierNoWs
         (opt (attempt (wsInline >>. pstring ":" >>. ws >>. typeExpr)))
@@ -835,13 +889,13 @@ let typedIdentifier: Parser<Identifier * TypeExpr option, unit> =
 
 /// A def's name with an optional same-line annotation. Unlike `typedIdentifier` (lambda parameters), the
 /// annotation is a `typeSignature`.
-let typedDefIdentifier: Parser<Identifier * TypeExpr option, unit> =
+let typedDefIdentifier: Parser<Identifier * TypeExpr option, ParseState> =
     pipe2
         identifierNoWs
         (opt (attempt (wsInline >>. pstring ":" >>. ws >>. typeSignature)))
         (fun name typeOpt -> (name, typeOpt))
 
-let typedQualifiedIdentifier: Parser<Identifier * TypeExpr option, unit> =
+let typedQualifiedIdentifier: Parser<Identifier * TypeExpr option, ParseState> =
     pipe2
         qualifiedIdentifier
         (opt (attempt (wsInline >>. pstring ":" >>. ws >>. typeSignature)))
@@ -849,7 +903,7 @@ let typedQualifiedIdentifier: Parser<Identifier * TypeExpr option, unit> =
 
 // A def's name and type annotation. The annotation may follow the name on the same line or start an
 // indented continuation line (`def f` / `  : T` / `  = ...`), like the `=` does.
-let defNameAndType (lineStartCol: int64) (identParser: Parser<Identifier * TypeExpr option, unit>) =
+let defNameAndType (lineStartCol: int64) (identParser: Parser<Identifier * TypeExpr option, ParseState>) =
     identParser .>> wsNoNl()
     >>= fun (name, typeOpt) ->
         match typeOpt with
@@ -858,20 +912,21 @@ let defNameAndType (lineStartCol: int64) (identParser: Parser<Identifier * TypeE
             opt (attempt (newlineIndentedContinuation lineStartCol >>. pstring ":" >>. ws >>. typeSignature .>> wsNoNl()))
             |>> fun continuationType -> (name, continuationType)
 
-let parseDefWith (lineStartCol: int64) (identParser: Parser<Identifier * TypeExpr option, unit>) (exprParser: Parser<Expression, unit>) =
-    (pstring "def" >>. ws >>. defNameAndType lineStartCol identParser)
-    >>= fun (name, typeOpt) ->
+/// `def name = value`. The def's name is declared by its value.
+let parseDefWith (lineStartCol: int64) (identParser: Parser<Identifier * TypeExpr option, ParseState>) (exprParser: Parser<Expression, ParseState>) =
+    (pstring "def" >>. ws >>. getPosition .>>. defNameAndType lineStartCol identParser)
+    >>= fun (start, (name, typeOpt)) ->
         defEqualsContinuation lineStartCol >>. pstring "=" >>. wsNoNl() >>. exprParser
-        |>> fun expr -> (name, typeOpt, expr)
+        >>= fun expr -> declare DefValue expr.Id [ name, nameSpan start name ] >>% (name, typeOpt, expr)
 
-let typeParam: Parser<Identifier * TypeExpr option, unit> =
+let typeParam: Parser<Identifier * TypeExpr option, ParseState> =
     pipe2
         identifierNoWs
         (opt (attempt (ws >>. pstring "::" >>. ws >>. typeExpr)))
         (fun name typeOpt -> (name, typeOpt))
 
 // Block parser - parses indented statements after a newline
-let blockExpr() : Parser<Expression, unit> =
+let blockExpr() : Parser<Expression, ParseState> =
     skipMany (skipAnyOf " \t") >>. newline >>.
     many (pchar ' ' <|> pchar '\t') >>= fun indentChars ->
         let indentLevel = indentChars.Length
@@ -887,10 +942,10 @@ let blockExpr() : Parser<Expression, unit> =
         else
             pzero
 
-let matchArmBody: Parser<Expression, unit> =
+let matchArmBody: Parser<Expression, ParseState> =
     attempt (blockExpr()) <|> (wsNoNl() >>. exprWithoutCrossingNewlines)
 
-let typeDefCore: Parser<Definition, unit> =
+let typeDefCore: Parser<Definition, ParseState> =
     let typeModifiers =
         many (attempt (
             choice [
@@ -947,7 +1002,7 @@ let typeDefCore: Parser<Definition, unit> =
     attempt contextDef <|> typeDefWithModifiers
     <?> "type definition"
 
-let valueDefCore: Parser<Definition, unit> =
+let valueDefCore: Parser<Definition, ParseState> =
     getPosition >>= fun lineStart ->
         pipe2
             (opt (attempt (pstring "export" >>. ws)))
@@ -959,23 +1014,25 @@ let valueDefCore: Parser<Definition, unit> =
 // `| p1 | p2 -> body` on one line or with each `|` on its own line; every arm ends in `->`, so a `|` that is
 // not preceded by `->` continues the current arm rather than starting a new one. The arm is desugared into one
 // arm per alternative, all sharing the body, so the rest of the compiler only ever sees plain arms.
-let matchArmAlternatives : Parser<(Pattern list * Expression) list, unit> =
+let matchArmAlternatives : Parser<(Pattern list * Expression) list, ParseState> =
     let alternative = sepBy1 pattern (pstring "," .>> ws)
     pipe2
-        (pstring "|" >>. ws >>. sepBy1 alternative (attempt (ws >>. pstring "|" >>. ws)))
+        (pstring "|" >>. ws >>. collectingNames (sepBy1 alternative (attempt (ws >>. pstring "|" >>. ws))))
         (pstring "->" >>. matchArmBody)
-        (fun alternatives body -> alternatives |> List.map (fun patterns -> patterns, body))
+        (fun (alternatives, names) body -> alternatives, names, body)
+    >>= fun (alternatives, names, body) ->
+        declare ArmBody body.Id names >>% (alternatives |> List.map (fun patterns -> patterns, body))
     <?> "match arm"
 
 /// One or more arms, each possibly an or-pattern, flattened into plain arms.
-let matchArms : Parser<(Pattern list * Expression) list, unit> =
+let matchArms : Parser<(Pattern list * Expression) list, ParseState> =
     many1 (attempt (ws >>. matchArmAlternatives)) |>> List.concat
 
 // `for iterable | arms` runs the arms' bodies for each element (the element is matched against the arms, as
 // the loops page shows with `| { < 5 } -> ... | _ -> ...`), and `for iterable -> body` ignores the element.
 // Both are represented as a call to the built-in "__for" with the iterable and a one-parameter lambda,
 // which the type checker and backend handle as a loop.
-let forExpr : Parser<Expression, unit> =
+let forExpr : Parser<Expression, ParseState> =
     let keywordEnd = notFollowedBy (satisfy (fun c -> Char.IsLetterOrDigit c || c = '_'))
     let elementName = "__for_element"
     // The whitespace before the first arm is skipped outside the span, which starts at its `|`.
@@ -995,7 +1052,7 @@ let forExpr : Parser<Expression, unit> =
 
 /// The column (counted from 1, as FParsec does) of the first character on the current line that is not a space
 /// or tab: how far the line the parser is on is indented.
-let private currentLineIndent: Parser<int64, unit> =
+let private currentLineIndent: Parser<int64, ParseState> =
     fun stream ->
         let isOnLine (offset: int) =
             let c = stream.Peek(offset)
@@ -1060,7 +1117,7 @@ do
 type Operand = Expression * SourceSpan
 
 // Operator precedence parser
-let opp = new OperatorPrecedenceParser<Operand, unit, unit>()
+let opp = new OperatorPrecedenceParser<Operand, unit, ParseState>()
 
 let private binary op ((left, leftText): Operand) ((right, rightText): Operand) : Operand =
     let span = SourceSpan.between leftText rightText
@@ -1163,6 +1220,11 @@ let ifExpr =
         |>> fun (value, pat) -> Choice2Of2 (pat, value)
     let condition = expression |>> Choice1Of2
     let head = patternBinding <|> condition
+    // A head and the branch it guards. The names the head's pattern binds are declared by the branch, which is
+    // the body of the match arm the head becomes.
+    let headThen (branchParser: Parser<Expression, ParseState>) =
+        collectingNames head .>>. branchParser
+        >>= fun ((head, names), branch) -> declare ArmBody branch.Id names >>% (head, branch)
     // A left-out `else` is `()` made up at the `then` branch.
     let desugar span head (thenExpr: Expression) (elseOpt: Expression option) =
         let elseExpr = elseOpt |> Option.defaultWith (fun () -> Expression.from thenExpr UnitExpr)
@@ -1171,7 +1233,7 @@ let ifExpr =
         | Choice2Of2 (pat, value) -> Expression.at span (Match([ value ], [ [ pat ], thenExpr; [ WildcardPattern ], elseExpr ]))
     let elseKeyword = pstring "else" >>. keywordEnd
     let conditionArm =
-        pstring "|" >>. ws >>. notFollowedBy elseKeyword >>. head .>>. (ws >>. pstring "->" >>. matchArmBody)
+        pstring "|" >>. ws >>. notFollowedBy elseKeyword >>. headThen (ws >>. pstring "->" >>. matchArmBody)
     let elseArm = pstring "|" >>. ws >>. elseKeyword >>. ws >>. pstring "->" >>. matchArmBody
     // Each form builds the if given the span of the whole `if ...`. An if nested in place of a later arm spans
     // from that arm's `|` to the end of the last arm.
@@ -1188,11 +1250,10 @@ let ifExpr =
                 let (head, body), _ = outer
                 desugar span head body rest)
     let singleBranch =
-        pipe3
-            head
-            (ws >>. pstring "then" >>. keywordEnd >>. branch)
+        pipe2
+            (headThen (ws >>. pstring "then" >>. keywordEnd >>. branch))
             (opt (attempt (ws >>. elseKeyword >>. branch)))
-            (fun head thenExpr elseOpt span -> desugar span head thenExpr elseOpt)
+            (fun (head, thenExpr) elseOpt span -> desugar span head thenExpr elseOpt)
     withSpan (pstring "if" >>. keywordEnd >>. ws >>. (multiBranch <|> singleBranch))
     |>> fun (build, span) -> build span
     <?> "if expression"
@@ -1335,7 +1396,7 @@ let private keywordOperatorEnd = keywordEnd >>. ws
 // `not` binds tighter than every infix operator, so `not a == b` is `(not a) == b`, as `!` does elsewhere. That
 // makes it part of the operand it applies to, so it is parsed here rather than by the operator precedence parser,
 // and spans from the keyword.
-let private operand : Parser<Operand, unit> =
+let private operand : Parser<Operand, ParseState> =
     let notKeyword = attempt (withSpan (pstring "not" .>> keywordEnd)) .>> ws
     pipe2 (many notKeyword) (withSpan primaryExpr) (fun nots term ->
         List.foldBack (fun (_, notSpan) ((inner: Expression), innerText) ->
@@ -1399,7 +1460,7 @@ let pipeTarget =
         )
 
 // Inline operator precedence parser (no newlines in operator whitespace)
-let oppInline = new OperatorPrecedenceParser<Operand, unit, unit>()
+let oppInline = new OperatorPrecedenceParser<Operand, unit, ParseState>()
 oppInline.TermParser <- withSpan primaryExpr
 
 oppInline.AddOperator(InfixOperator("*", wsInline, 7, Associativity.Left, binary "*"))
@@ -1454,7 +1515,9 @@ do expressionRef := (attempt matchExpr <|> pipeExpr)
 
 // Wire up the lambda parser
 do 
-    let paramList = sepBy typedIdentifier (pstring "," .>> ws)
+    let parameter =
+        getPosition .>>. typedIdentifier >>= fun (start, (name, typeOpt)) -> noteName start name >>% (name, typeOpt)
+    let paramList = sepBy parameter (pstring "," .>> ws)
     let arrow = wsInline >>. pstring "->" .>> wsInline
     
     // Lambda body: allow multi-line statement blocks or a single expression
@@ -1534,20 +1597,24 @@ do
                 |> List.map (fun (name, _) -> made (IdentifierExpr name))
             Lambda(argNames, made (Match(scrutinees, arms))))
 
+    // The names noted while a lambda is parsed are its parameters: whatever is nested in it takes its own.
     lambdaRef :=
-        withSpan (
-            between (pstring "{") (pstring "}") (
-                skipMany (skipAnyOf " \t") >>. choice [
-                    attempt emptyLambda
-                    attempt shorthandUnaryOp
-                    attempt shorthandBinaryOp
-                    attempt shorthandPropertyAccess
-                    attempt shorthandMatchLambda
-                    attempt lambdaWithParams
-                    lambdaNoParams
-                ] .>> skipMany (skipAnyOf " \t\r\n")
-            ))
-        |>> (fun (build, span) -> Expression.at span (build span))
+        collectingNames (
+            withSpan (
+                between (pstring "{") (pstring "}") (
+                    skipMany (skipAnyOf " \t") >>. choice [
+                        attempt emptyLambda
+                        attempt shorthandUnaryOp
+                        attempt shorthandBinaryOp
+                        attempt shorthandPropertyAccess
+                        attempt shorthandMatchLambda
+                        attempt lambdaWithParams
+                        lambdaNoParams
+                    ] .>> skipMany (skipAnyOf " \t\r\n")
+                )))
+        >>= (fun ((build, span), parameters) ->
+            let lambda = Expression.at span (build span)
+            declare LambdaParameters lambda.Id parameters >>% lambda)
         <?> "lambda expression"
 
 // Wire up the function call parser
@@ -1633,10 +1700,12 @@ do
     let recStatement =
         let keywordEnd = notFollowedBy (satisfy (fun c -> Char.IsLetterOrDigit c || c = '_'))
         getPosition >>= fun lineStart ->
-            (pstring "rec" >>. keywordEnd >>. ws >>. defNameAndType lineStart.Column typedQualifiedIdentifier)
-            >>= fun (name, typeOpt) ->
+            (pstring "rec" >>. keywordEnd >>. ws >>. getPosition .>>. defNameAndType lineStart.Column typedQualifiedIdentifier)
+            >>= fun (start, (name, typeOpt)) ->
                 defEqualsContinuation lineStart.Column >>. pstring "=" >>. wsNoNl() >>. defExprParser
-                |>> fun expr -> DefStatement(false, name, typeOpt, Expression.from expr (FunctionCall("__rec", None, [ expr ])))
+                >>= fun expr ->
+                    let value = Expression.from expr (FunctionCall("__rec", None, [ expr ]))
+                    declare DefValue value.Id [ name, nameSpan start name ] >>% DefStatement(false, name, typeOpt, value)
 
     let exprStatement =
         wsNoNl()
@@ -1649,7 +1718,7 @@ do
     statementRef := (attempt importStatement <|> attempt typeDefStatement <|> attempt defStatement <|> attempt recStatement <|> attempt useStatement <|> exprStatement) <?> "statement"
 
 // Parser for module declaration
-let moduleDecl: Parser<TopLevelItem, unit> =
+let moduleDecl: Parser<TopLevelItem, ParseState> =
     pstring "module" >>. ws >>. identifier |>> ModuleDecl
     <?> "module declaration"
 
@@ -1657,7 +1726,7 @@ let private valueDefExprParser =
     attempt (blockExpr()) <|> (wsInline >>. singleOrTuple (sepBy1 expression (pstring "," .>> ws)))
 
 // Parser for value definition (top-level)
-let valueDef: Parser<TopLevelItem, unit> =
+let valueDef: Parser<TopLevelItem, ParseState> =
     getPosition >>= fun lineStart ->
         pipe2
             (opt (attempt (pstring "export" >>. ws)))
@@ -1666,7 +1735,7 @@ let valueDef: Parser<TopLevelItem, unit> =
     <?> "value definition"
 
 // Top-level `def (x, y) = ...`, as the defs it desugars into (see `destructuringBindings`).
-let valueDestructuringDef: Parser<TopLevelItem list, unit> =
+let valueDestructuringDef: Parser<TopLevelItem list, ParseState> =
     getPosition >>= fun lineStart ->
         destructuringDefWith lineStart.Column valueDefExprParser
         |>> fun (isExport, bindings) ->
@@ -1674,20 +1743,20 @@ let valueDestructuringDef: Parser<TopLevelItem list, unit> =
     <?> "value definition"
 
 // Parser for type definition (top-level)
-let typeDef: Parser<TopLevelItem, unit> =
+let typeDef: Parser<TopLevelItem, ParseState> =
     typeDefCore |>> Def
 
 // Parser for top-level expressions (script-style)
-let topLevelExpr: Parser<TopLevelItem, unit> =
+let topLevelExpr: Parser<TopLevelItem, ParseState> =
     exprWithoutCrossingNewlines |>> Expr
     <?> "top-level expression"
 
 // Parser for an attribute line such as `@entry`; it annotates the next top-level item
-let attributeItem: Parser<TopLevelItem, unit> =
+let attributeItem: Parser<TopLevelItem, ParseState> =
     pchar '@' >>. identifierNoWs |>> Attribute
     <?> "attribute"
 
-let private moduleBlockItem: Parser<TopLevelItem, unit> =
+let private moduleBlockItem: Parser<TopLevelItem, ParseState> =
     choice [
         (attempt (pstring "import" >>. wsNoNl() >>. importItems) |>> Import)
         attributeItem
@@ -1696,8 +1765,8 @@ let private moduleBlockItem: Parser<TopLevelItem, unit> =
         topLevelExpr
     ]
 
-let moduleBlockDecl: Parser<TopLevelItem, unit> =
-    let linePayload: Parser<TopLevelItem option, unit> =
+let moduleBlockDecl: Parser<TopLevelItem, ParseState> =
+    let linePayload: Parser<TopLevelItem option, ParseState> =
         choice [
             attempt (skipMany (skipAnyOf " \t") >>. inlineCommentNoNl() >>% None)
             attempt (skipMany (skipAnyOf " \t") >>. (followedBy newline <|> followedBy eof) >>% None)
@@ -1731,7 +1800,7 @@ let moduleBlockDecl: Parser<TopLevelItem, unit> =
     <?> "module block declaration"
 
 // Parser for top-level items
-let topLevelItem: Parser<TopLevelItem, unit> =
+let topLevelItem: Parser<TopLevelItem, ParseState> =
     ws >>. choice [
         attempt moduleBlockDecl
         moduleDecl
@@ -1743,11 +1812,11 @@ let topLevelItem: Parser<TopLevelItem, unit> =
     ] .>> ws
     <?> "top-level item"
 
-let private topLevelItems: Parser<TopLevelItem list, unit> =
+let private topLevelItems: Parser<TopLevelItem list, ParseState> =
     attempt (ws >>. valueDestructuringDef .>> ws) <|> (topLevelItem |>> List.singleton)
 
 // Parser for a complete module
-let moduleParser: Parser<Module, unit> =
+let moduleParser: Parser<Module, ParseState> =
     ws >>. many topLevelItems .>> ws .>> eof |>> List.concat
     <?> "module"
 
@@ -1929,15 +1998,20 @@ let private expandMidFileModules (items: TopLevelItem list) : TopLevelItem list 
 
 // Public API for parsing
 
+/// Parses the source of the file at `filePath`, as `parseModuleFile` does, together with the names its nodes
+/// declare.
+let parseModuleFileWithNames (filePath: string) (input: string) : Result<Module * DeclaredNames, string> =
+    let normalized =
+        input.Replace("\r\n", "\n").Replace("\r", "\n").TrimEnd()
+    match runParserOnString moduleParser ParseState.empty filePath normalized with
+    | ParserResult.Success(result, state, _) -> Result.Ok (expandMidFileModules result, state.Declared)
+    | ParserResult.Failure(errorMsg, _, _) -> Result.Error errorMsg
+
 /// Parses the source of the file at `filePath`, which is what the spans of the module's nodes refer to. Line
 /// endings are normalised to `\n` first, so span offsets are into the normalised source (lines and columns are
 /// unaffected).
 let parseModuleFile (filePath: string) (input: string) : Result<Module, string> =
-    let normalized =
-        input.Replace("\r\n", "\n").Replace("\r", "\n").TrimEnd()
-    match runParserOnString moduleParser () filePath normalized with
-    | ParserResult.Success(result, _, _) -> Result.Ok (expandMidFileModules result)
-    | ParserResult.Failure(errorMsg, _, _) -> Result.Error errorMsg
+    parseModuleFileWithNames filePath input |> Result.map fst
 
 
 /// Parses source that has no file of its own.

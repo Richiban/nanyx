@@ -21,7 +21,19 @@ type InferState =
             ExprTypes: Map<NodeId, Ty>;
             /// The callee's type at each call (and pipe), by the call's node: the function's type instantiated
             /// at that call site, which a call's own type (its result) does not show.
-            CalleeTypes: Map<NodeId, Ty> }
+            CalleeTypes: Map<NodeId, Ty>;
+            /// Where the module's declarations are written, as the parser found them.
+            Declared: DeclaredNames;
+            /// The symbol made for each declaration, by its declaring node, how that node declares it and its
+            /// name, so that a declaration inferred more than once keeps one symbol.
+            DeclarationSymbols: Map<NodeId * Declarer * string, SymbolId>;
+            Symbols: Map<SymbolId, Symbol>;
+            /// The symbol each name resolved to, by the node of the name.
+            References: Map<NodeId, SymbolId>;
+            /// The import that brought each imported definition into scope, by the definition's symbol.
+            ImportedThrough: Map<SymbolId, SymbolId>;
+            /// The import each name brought in by an import came through, by the node of the name.
+            ImportReferences: Map<NodeId, SymbolId> }
 
 let emptyState =
         { NextId = 0;
@@ -33,11 +45,53 @@ let emptyState =
             LocalNominals = Set.empty;
             LocalPrivateNominals = Set.empty;
             ExprTypes = Map.empty;
-            CalleeTypes = Map.empty }
+            CalleeTypes = Map.empty;
+            Declared = Map.empty;
+            DeclarationSymbols = Map.empty;
+            Symbols = Map.empty;
+            References = Map.empty;
+            ImportedThrough = Map.empty;
+            ImportReferences = Map.empty }
 
 let private freshVar (state: InferState) =
     let var = { Id = state.NextId; Name = None }
     TyVar var, { state with NextId = state.NextId + 1 }
+
+/// The symbol for `name` as `holder` declares it, made the first time it is asked for. `None` when the parser
+/// saw no such declaration: the compiler made the name up (a destructured tuple, a `for` loop's element).
+let private declareSymbol (declarer: Declarer) (holder: NodeId) (name: string) (kind: SymbolKind) (isExported: bool) (state: InferState) : SymbolId option * InferState =
+    let key = holder, declarer, name
+    match state.DeclarationSymbols |> Map.tryFind key with
+    | Some symbol -> Some symbol, state
+    | None ->
+        let declared =
+            state.Declared
+            |> Map.tryFind (holder, declarer)
+            |> Option.bind (fun names ->
+                match declarer with
+                // A def's value declares only that def, whose name a module block has qualified since.
+                | DefValue -> List.tryHead names
+                | LambdaParameters
+                | ArmBody -> names |> List.tryFind (fun (declaredName, _) -> declaredName = name))
+        match declared with
+        | None -> None, state
+        | Some (_, span) ->
+            let symbol = { Id = SymbolId.next (); Name = name; Kind = kind; Declaration = span; IsExported = isExported }
+            Some symbol.Id,
+            { state with
+                DeclarationSymbols = state.DeclarationSymbols |> Map.add key symbol.Id
+                Symbols = state.Symbols |> Map.add symbol.Id symbol }
+
+/// Records that `expr` names what `scheme` is bound for, and the import it came through if it was imported.
+let private recordReference (expr: Expression) (scheme: TypeScheme) (state: InferState) =
+    match scheme.Symbol with
+    | None -> state
+    | Some symbol ->
+        let importReferences =
+            match state.ImportedThrough |> Map.tryFind symbol with
+            | Some import -> state.ImportReferences |> Map.add expr.Id import
+            | None -> state.ImportReferences
+        { state with References = state.References |> Map.add expr.Id symbol; ImportReferences = importReferences }
 
 let private addConstraint left right (state: InferState) =
     { state with Constraints = (left, right, Equal) :: state.Constraints }
@@ -596,7 +650,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
     | IdentifierExpr name ->
         match TypeEnv.tryFind name env with
         | Some scheme ->
-            let ty, next = instantiate state scheme
+            let ty, next = instantiate (recordReference expr scheme state) scheme
             Ok (mkTypedExpr expr ty None None None, next)
         | None ->
             match spanPosition expr.Span with
@@ -701,7 +755,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
             match TypeEnv.tryFind name env with
             | Some scheme ->
                 let mutable current = state
-                let funcTy, nextState = instantiate current scheme
+                let funcTy, nextState = instantiate (recordReference expr scheme current) scheme
                 current <- { nextState with CalleeTypes = nextState.CalleeTypes |> Map.add expr.Id funcTy }
 
                 let recordFieldsOpt =
@@ -1031,13 +1085,14 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                 | TyRecord fields -> Some fields
                 | TyNominal(_, underlying, _) -> tryRecordFields underlying
                 | _ -> None
-            let rec inferPattern (env': TypeEnv) (state': InferState) (scrutineeTy: Ty) (pattern: Pattern) =
+            // The variables a pattern binds are declared by the body of its arm, `armBody`.
+            let rec inferPattern (armBody: NodeId) (env': TypeEnv) (state': InferState) (scrutineeTy: Ty) (pattern: Pattern) =
                 match pattern with
                 | WildcardPattern
                 | ElsePattern -> Ok (env', state', mkTypedPattern pattern scrutineeTy)
                 | IdentifierPattern name ->
-                    let scheme = TypeEnv.mono scrutineeTy
-                    Ok (TypeEnv.extend name scheme env', state', mkTypedPattern pattern scrutineeTy)
+                    let symbol, declared = declareSymbol ArmBody armBody name PatternVariable false state'
+                    Ok (TypeEnv.declare name symbol (TypeEnv.mono scrutineeTy) env', declared, mkTypedPattern pattern scrutineeTy)
                 | LiteralPattern literal ->
                     let constrained = addConstraint scrutineeTy (literalType literal) state'
                     Ok (env', constrained, mkTypedPattern pattern scrutineeTy)
@@ -1075,7 +1130,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                     let mutable innerErrors: Diagnostic list = []
                     let mutable innerPatterns: TypedPattern list = []
                     for (pat, ty) in List.zip patterns itemTypes do
-                        match inferPattern innerEnv innerState ty pat with
+                        match inferPattern armBody innerEnv innerState ty pat with
                         | Ok (nextEnv, nextState, typedPattern) ->
                             innerEnv <- nextEnv
                             innerState <- nextState
@@ -1093,7 +1148,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                     | Some payload ->
                         let payloadTy, nextState = freshVar state'
                         let constrained = addAssignableConstraint (TyTag(tagName, Some payloadTy)) scrutineeTy nextState
-                        match inferPattern env' constrained payloadTy payload with
+                        match inferPattern armBody env' constrained payloadTy payload with
                         | Ok (nextEnv, nextState, _) ->
                             Ok (nextEnv, nextState, mkTypedPattern pattern scrutineeTy)
                         | Error err -> Error err
@@ -1104,7 +1159,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                     let mutable innerState = constrained
                     let mutable innerErrors: Diagnostic list = []
                     for pat in patterns do
-                        match inferPattern innerEnv innerState elementTy pat with
+                        match inferPattern armBody innerEnv innerState elementTy pat with
                         | Ok (nextEnv, nextState, _) ->
                             innerEnv <- nextEnv
                             innerState <- nextState
@@ -1112,10 +1167,9 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                     let innerStateWithSplat =
                         match splatOpt with
                         | Some (IdentifierPattern name) ->
-                            let scheme = TypeEnv.mono (listType elementTy)
-                            let updatedEnv = TypeEnv.extend name scheme innerEnv
-                            innerEnv <- updatedEnv
-                            innerState
+                            let symbol, declared = declareSymbol ArmBody armBody name PatternVariable false innerState
+                            innerEnv <- TypeEnv.declare name symbol (TypeEnv.mono (listType elementTy)) innerEnv
+                            declared
                         | _ -> innerState
                     if innerErrors.IsEmpty then
                         Ok (innerEnv, innerStateWithSplat, mkTypedPattern pattern scrutineeTy)
@@ -1128,7 +1182,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                     let mutable innerState = constrained
                     let mutable innerErrors: Diagnostic list = []
                     for pat in prefix @ suffix do
-                        match inferPattern innerEnv innerState elementTy pat with
+                        match inferPattern armBody innerEnv innerState elementTy pat with
                         | Ok (nextEnv, nextState, _) ->
                             innerEnv <- nextEnv
                             innerState <- nextState
@@ -1151,7 +1205,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                     let mutable innerState = constrained
                     let mutable innerErrors: Diagnostic list = []
                     for (pat, ty) in List.zip patterns itemTypes do
-                        match inferPattern innerEnv innerState ty pat with
+                        match inferPattern armBody innerEnv innerState ty pat with
                         | Ok (nextEnv, nextState, _) ->
                             innerEnv <- nextEnv
                             innerState <- nextState
@@ -1173,7 +1227,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                             | Some ty -> ty, innerState
                             | None -> freshVar innerState
                         innerState <- nextState
-                        match inferPattern innerEnv innerState memberTy pat with
+                        match inferPattern armBody innerEnv innerState memberTy pat with
                         | Ok (nextEnv, nextState, _) ->
                             innerEnv <- nextEnv
                             innerState <- nextState
@@ -1374,7 +1428,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                     let patternPairs = List.zip patterns effectiveScrutineeTypes
                     let mutable typedPatterns: TypedPattern list = []
                     for (pattern, scrutineeTy) in patternPairs do
-                        match inferPattern env' state' scrutineeTy pattern with
+                        match inferPattern expr.Id env' state' scrutineeTy pattern with
                         | Ok (nextEnv, nextState, typedPattern) ->
                             env' <- nextEnv
                             state' <- nextState
@@ -1433,7 +1487,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
             let qualifiedName = $"{baseName}.{memberName}"
             match TypeEnv.tryFind qualifiedName env with
             | Some scheme ->
-                let ty, next = instantiate state scheme
+                let ty, next = instantiate (recordReference expr scheme state) scheme
                 Ok (mkTypedExpr expr ty None None None, next)
             | None ->
                 match inferExpr env state baseExpr with
@@ -1503,7 +1557,9 @@ and inferLambdaWithExpected (env: TypeEnv) (state: InferState) (lambda: Expressi
                 current <- next
                 ty)
     for ((name, _), ty) in List.zip args argTys do
-        env' <- TypeEnv.extend name (TypeEnv.mono ty) env'
+        let symbol, next = declareSymbol LambdaParameters lambda.Id name Parameter false current
+        current <- next
+        env' <- TypeEnv.declare name symbol (TypeEnv.mono ty) env'
     match inferExpr env' current body with
     | Ok (bodyExpr, next) ->
         let withReturnConstraint =
@@ -1563,12 +1619,13 @@ and inferBlock (env: TypeEnv) (state: InferState) (block: Expression) (statement
                             | Some _ -> expectedInputOpt
                             | None when expectedDeclaredOpt.IsNone -> tryInferAttachedLambdaInput nextState2 name expr
                             | None -> None
+                        let symbol, declaredState = declareSymbol DefValue expr.Id name LocalValue false nextState2
                         let preboundTy, preboundState, envWithRec, preboundFresh =
                             match expectedDeclaredOpt with
-                            | Some declaredTy -> declaredTy, nextState2, TypeEnv.extend name (TypeEnv.mono declaredTy) envWithCtx, false
+                            | Some declaredTy -> declaredTy, declaredState, TypeEnv.declare name symbol (TypeEnv.mono declaredTy) envWithCtx, false
                             | None ->
-                                let ty, st = freshVar nextState2
-                                ty, st, TypeEnv.extend name (TypeEnv.mono ty) envWithCtx, true
+                                let ty, st = freshVar declaredState
+                                ty, st, TypeEnv.declare name symbol (TypeEnv.mono ty) envWithCtx, true
                         let nextStateWithReq =
                             match contextOpt with
                             | Some contexts -> registerContextRequirement preboundState name contexts
@@ -1603,7 +1660,7 @@ and inferBlock (env: TypeEnv) (state: InferState) (block: Expression) (statement
                             // it is would make every later use a fresh, unrelated variable (and let a match
                             // on it skip the exhaustiveness check, #61). Resolve it first.
                             let scheme = TypeEnv.generalize env' (resolveSoFar current declaredTy)
-                            env' <- TypeEnv.extend name scheme env'
+                            env' <- TypeEnv.declare name symbol scheme env'
                             typedStatements <- typedStatements @ [ TypedDefStatement(isExport, name, typeOpt, typedExpr) ]
                             lastExpr <- typedExpr
                         | Error err -> errors <- err
@@ -1712,18 +1769,20 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
         match item with
         | Def (TypeDef(name, modifiers, parameters, body)) ->
             state <- registerTypeDef state name modifiers parameters body
-        | Def (ValueDef(_, name, typeOpt, _)) ->
+        | Def (ValueDef(isExport, name, typeOpt, value)) ->
+            let symbol, declared = declareSymbol DefValue value.Id name TopLevelValue isExport state
+            state <- declared
             let _, declaredTypeExprOpt = extractContextFromTypeExpr typeOpt
             match declaredTypeExprOpt with
             | Some declaredExpr ->
                 let ty, st = typeExprToTy state declaredExpr
                 state <- st
-                env <- TypeEnv.extend name (TypeEnv.generalize env ty) env
+                env <- TypeEnv.declare name symbol (TypeEnv.generalize env ty) env
             | None ->
                 let ty, st = freshVar state
                 state <- st
                 preboundFreshVars <- preboundFreshVars |> Map.add name ty
-                env <- TypeEnv.extend name (TypeEnv.mono ty) env
+                env <- TypeEnv.declare name symbol (TypeEnv.mono ty) env
         | _ -> ()
 
     for item in module' do
@@ -1757,9 +1816,11 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
                 // The name is already in `env` from the pre-binding pass: at its declared type, or at the
                 // fresh variable recorded in `preboundFreshVars`. Self-recursion sees the declared type as a
                 // monomorphic binding while the body is checked, as before.
+                // The symbol the pre-binding pass made.
+                let symbol, _ = declareSymbol DefValue expr.Id name TopLevelValue isExport state
                 let envWithRec =
                     match expectedDeclaredOpt with
-                    | Some declaredTy -> TypeEnv.extend name (TypeEnv.mono declaredTy) envWithCtx
+                    | Some declaredTy -> TypeEnv.declare name symbol (TypeEnv.mono declaredTy) envWithCtx
                     | None -> envWithCtx
                 let nextStateWithReq =
                     match contextOpt with
@@ -1803,7 +1864,7 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
                         // Generalize against an env without this def's own pre-binding, so the fresh
                         // variable it was pre-bound at does not stop its type being generalized.
                         let scheme = TypeEnv.generalize (env |> Map.remove name) declaredTy
-                        env <- TypeEnv.extend name scheme env
+                        env <- TypeEnv.declare name symbol scheme env
                         types <- types |> Map.add name declaredTy
                         items <- items @ [ TypedDef (TypedValueDef(isExport, name, typeOpt, typedExpr)) ]
                 | Error err -> errors <- err

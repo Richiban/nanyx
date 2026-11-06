@@ -689,7 +689,7 @@ let ``Typecheck allows wider unions in assignment`` () =
 [<Fact>]
 let ``Typecheck supports tag union rest parameter`` () =
     let source =
-        "def mapOption: ((#some(a) | r), a -> b) -> #some(b) | r = { o, f ->\n" +
+        "def mapOption: (#some(a) | r), (a -> b) -> #some(b) | r = { o, f ->\n" +
         "  match o\n" +
         "  | #some(v) -> #some(f(v))\n" +
         "  | other -> other\n" +
@@ -742,7 +742,7 @@ let ``Typecheck accepts annotations the body proves`` () =
 [<Fact>]
 let ``Typecheck requires catch-all for tag union rest`` () =
     let source =
-        "def mapOption: ((#some(a) | r), a -> b) -> #some(b) | r = { o, f ->\n" +
+        "def mapOption: (#some(a) | r), (a -> b) -> #some(b) | r = { o, f ->\n" +
         "  match o\n" +
         "  | #some(v) -> #some(f(v))\n" +
         "}\n"
@@ -757,7 +757,7 @@ let ``Typecheck tag union width and rest regression`` () =
         "def u: #some(string) | #nil = #nil\n" +
         "def g: (#some(string) | #nil | #notFound) -> string = { o -> \"\" }\n" +
         "def _ = g(u)\n" +
-        "def mapOption: ((#some(a) | r), a -> b) -> #some(b) | r = { o, f ->\n" +
+        "def mapOption: (#some(a) | r), (a -> b) -> #some(b) | r = { o, f ->\n" +
         "  match o\n" +
         "  | #some(v) -> #some(f(v))\n" +
         "  | other -> other\n" +
@@ -1482,12 +1482,12 @@ let ``Hover on a polymorphic function shows it instantiated at the call`` () =
 [<Fact>]
 let ``Type variables are shown as α, β in order of appearance`` () =
     let source = "def pair = { a, b -> (b, a) }"
-    Assert.Equal(Some "(α, β) -> (β, α)", hoverType source (offsetOf source "{" 0 0))
+    Assert.Equal(Some "α, β -> (β, α)", hoverType source (offsetOf source "{" 0 0))
 
 [<Fact>]
 let ``Type variables are shown as a, b when Latin names are asked for`` () =
     let source = "def pair = { a, b -> (b, a) }"
-    Assert.Equal(Some "(a, b) -> (b, a)", latinHoverType source (offsetOf source "{" 0 0))
+    Assert.Equal(Some "a, b -> (b, a)", latinHoverType source (offsetOf source "{" 0 0))
 
 [<Fact>]
 let ``Greek type variable names go through the alphabet, then start again with a subscript`` () =
@@ -1535,7 +1535,7 @@ let ``A workflow bind is not given the type of the rest of the workflow`` () =
 [<Fact>]
 let ``Type variables named in an annotation keep their names, written as in the annotation`` () =
     let source = "def first: (t, a) -> t = { x, y -> x }"
-    Assert.Equal(Some "(t, a) -> t", hoverType source (offsetOf source "{" 0 0))
+    Assert.Equal(Some "t, a -> t", hoverType source (offsetOf source "{" 0 0))
     let mixed =
         "def f: a -> int = { x ->\n" +
         "  def g = { y -> (y, x) }\n" +
@@ -1554,26 +1554,152 @@ let ``Hover shows tags with their hash`` () =
         "def mapOption: (#some(a) | r), (a -> b) -> (#some(b) | r) = { | #some(a), f -> #some(f(a)) | other, _ -> other }\n" +
         "def result = mapOption(#some(1), { n -> \"Mapped: {n}\" })"
     Assert.Equal(
-        Some "((#some(int) | α), (int -> string)) -> (#some(string) | α)",
+        Some "#some(int) | α, (int -> string) -> #some(string) | α",
         hoverType union (offsetOf union "mapOption(" 0 0))
 
 [<Fact>]
-let ``Printed types bracket functions and unions where they would run together`` () =
+let ``Printed types have the fewest brackets the grammar allows`` () =
     let a = TyVar { Id = 1; Name = Some "a" }
     let b = TyVar { Id = 2; Name = Some "b" }
     let c = TyVar { Id = 3; Name = Some "c" }
     let union = TyUnion [ TyTag("some", Some a); TyTag("none", None) ]
+    let pair x y = TyRecord(Map.ofList [ "0", x; "1", y ])
     // `->` groups to the right: a function input is bracketed, a function result is not.
     Assert.Equal("(a -> b) -> c", Unifier.tyToString (TyFunc(TyFunc(a, b), c)))
     Assert.Equal("a -> b -> c", Unifier.tyToString (TyFunc(a, TyFunc(b, c))))
-    // A union result and a union input are bracketed.
-    Assert.Equal("a -> (#some(a) | #none)", Unifier.tyToString (TyFunc(a, union)))
-    Assert.Equal("(#some(a) | #none) -> a", Unifier.tyToString (TyFunc(union, a)))
-    // Items separated by commas.
-    Assert.Equal("(int, (a -> b))", Unifier.tyToString (TyRecord(Map.ofList [ "0", TyPrimitive "int"; "1", TyFunc(a, b) ])))
+    // `|` binds tighter than `->`: a union is never bracketed next to an arrow.
+    Assert.Equal("a -> #some(a) | #none", Unifier.tyToString (TyFunc(a, union)))
+    Assert.Equal("#some(a) | #none -> a", Unifier.tyToString (TyFunc(union, a)))
+    // A signature's parameters are bare; a function among them, or anywhere items are separated by commas,
+    // has brackets of its own.
+    Assert.Equal("int, (a -> b) -> c", Unifier.tyToString (TyFunc(pair (TyPrimitive "int") (TyFunc(a, b)), c)))
+    Assert.Equal("(int, (a -> b))", Unifier.tyToString (pair (TyPrimitive "int") (TyFunc(a, b))))
     Assert.Equal("map(string, (a -> b))", Unifier.tyToString (TyApply("map", [ TyPrimitive "string"; TyFunc(a, b) ])))
-    // A lone argument or payload needs no brackets.
-    Assert.Equal("list(a -> b)",Unifier.tyToString (TyApply("list", [ TyFunc(a, b) ])))
+    // Only the signature itself writes parameters bare: a function nested in it, as its input or its result,
+    // keeps its brackets, since a bare list can only come before the arrow.
+    Assert.Equal("((a, b) -> c) -> (a, b) -> c", Unifier.tyToString (TyFunc(TyFunc(pair a b, c), TyFunc(pair a b, c))))
+    Assert.Equal("a -> (a, b) -> c", Unifier.tyToString (TyFunc(a, TyFunc(pair a b, c))))
+    // A lone argument or payload needs no brackets, and a tuple payload's items are the payload's.
+    Assert.Equal("list(a -> b)", Unifier.tyToString (TyApply("list", [ TyFunc(a, b) ])))
     Assert.Equal("#some(int)", Unifier.tyToString (TyTag("some", Some (TyPrimitive "int"))))
+    Assert.Equal("#pair(int, (a -> b))", Unifier.tyToString (TyTag("pair", Some (pair (TyPrimitive "int") (TyFunc(a, b))))))
+    Assert.Equal("#apply((int, a) -> b)",Unifier.tyToString (TyTag("apply", Some (TyFunc(pair (TyPrimitive "int") a, b)))))
     // The unit type is written `()`.
     Assert.Equal("() -> ()", Unifier.tyToString (TyFunc(TyPrimitive "unit", TyPrimitive "unit")))
+
+// Symbols and references: what each name refers to.
+
+/// The symbol that `table` records for the innermost expression at `offset` that it has an entry for.
+let private symbolAt (table: TypedModule -> Map<NodeId, SymbolId>) (result: CompileResult) (offset: int) =
+    Assert.True(result.Diagnostics.IsEmpty, sprintf "%A" result.Diagnostics)
+    let typed = result.Typed.Value
+    Hover.expressionsAt offset result.Syntax.Value
+    |> List.tryPick (fun expr -> table typed |> Map.tryFind expr.Id)
+    |> Option.map (fun id -> typed.Symbols.[id])
+
+/// The kind of what the name at `offset` refers to, and where that is declared.
+let private resolvesTo (source: string) (offset: int) =
+    symbolAt (fun typed -> typed.References) (Compiler.compile source) offset
+    |> Option.map (fun symbol -> symbol.Kind, symbol.Declaration.Start)
+
+[<Fact>]
+let ``Names refer to parameters and locals`` () =
+    let source =
+        "def scale = { factor ->\n" +
+        "  def offset = 1\n" +
+        "  factor * 2 + offset\n" +
+        "}\n"
+    Assert.Equal(Some (Parameter, offsetOf source "factor" 0 0), resolvesTo source (offsetOf source "factor *" 0 0))
+    Assert.Equal(Some (LocalValue, offsetOf source "offset" 0 0), resolvesTo source (offsetOf source "offset" 1 0))
+    // A declaration spans its name.
+    let symbol = (symbolAt (fun typed -> typed.References) (Compiler.compile source) (offsetOf source "offset" 1 0)).Value
+    Assert.Equal(offsetOf source "offset" 0 6, symbol.Declaration.End)
+
+[<Fact>]
+let ``Names refer to the variables patterns bind`` () =
+    let source =
+        "def rest = { items -> match items\n" +
+        "  | [_, ...tail] -> tail\n" +
+        "  | _ -> items }\n" +
+        "def either = { pair -> match pair\n" +
+        "  | (a, 0) | (0, a) -> a\n" +
+        "  | _ -> 0 }\n" +
+        "def unwrap = if #some(1) is #some(v) then v else 0\n"
+    Assert.Equal(Some (PatternVariable, offsetOf source "tail" 0 0), resolvesTo source (offsetOf source "tail" 1 0))
+    // Each alternative of an or-pattern binds the same variable, declared where it is first written.
+    Assert.Equal(Some (PatternVariable, offsetOf source "a, 0" 0 0), resolvesTo source (offsetOf source "-> a" 0 3))
+    Assert.Equal(Some (PatternVariable, offsetOf source "v)" 0 0), resolvesTo source (offsetOf source "then v" 0 5))
+
+[<Fact>]
+let ``The nearest declaration of a name wins`` () =
+    let source =
+        "def x = 1\n" +
+        "def f = { x -> x }\n" +
+        "def g = {\n" +
+        "  def x = 2\n" +
+        "  x\n" +
+        "}\n" +
+        "def h = x\n"
+    Assert.Equal(Some (Parameter, offsetOf source "{ x" 0 2), resolvesTo source (offsetOf source "-> x" 0 3))
+    Assert.Equal(Some (LocalValue, offsetOf source "def x = 2" 0 4), resolvesTo source (offsetOf source "  x\n" 0 2))
+    Assert.Equal(Some (TopLevelValue, offsetOf source "def x = 1" 0 4), resolvesTo source (offsetOf source "def h = x" 0 8))
+
+[<Fact>]
+let ``Names refer to top-level definitions declared later`` () =
+    let source =
+        "def a = b + 1\n" +
+        "def c = twice(b)\n" +
+        "def d = b \\twice\n" +
+        "def b = 2\n" +
+        "def twice = { n -> n * 2 }\n" +
+        "def (p, q) = (1, 2)\n" +
+        "def r = q\n"
+    let b = offsetOf source "def b" 0 4
+    let twice = offsetOf source "def twice" 0 4
+    Assert.Equal(Some (TopLevelValue, b), resolvesTo source (offsetOf source "b + 1" 0 0))
+    // A call and a pipe refer to the function by its name.
+    Assert.Equal(Some (TopLevelValue, twice), resolvesTo source (offsetOf source "twice(" 0 0))
+    Assert.Equal(Some (TopLevelValue, twice), resolvesTo source (offsetOf source "\\twice" 0 1))
+    // A destructuring def declares each name where the pattern writes it.
+    Assert.Equal(Some (TopLevelValue, offsetOf source "q)" 0 0), resolvesTo source (offsetOf source "= q" 0 2))
+
+[<Fact>]
+let ``Every declaration is a symbol, referred to or not`` () =
+    let result = Compiler.compile "def f = { used, unused -> used }\ndef g = 1\n"
+    let typed = result.Typed.Value
+    let declared =
+        typed.Symbols
+        |> Map.values
+        |> Seq.map (fun symbol -> symbol.Name, symbol.Kind)
+        |> Set.ofSeq
+    Assert.Equal<Set<string * SymbolKind>>(
+        set [ "f", TopLevelValue; "used", Parameter; "unused", Parameter; "g", TopLevelValue ],
+        declared)
+    let referred = typed.References |> Map.values |> Seq.map (fun id -> typed.Symbols.[id].Name) |> Set.ofSeq
+    Assert.Equal<Set<string>>(set [ "used" ], referred)
+
+[<Fact>]
+let ``Imported names refer to the imported definition and the import`` () =
+    withTempDir (fun dir ->
+        let modulePath = Path.Combine(dir, "mod.nyx")
+        let moduleSource = "module mod\nexport def foo = 1"
+        File.WriteAllText(modulePath, moduleSource)
+        let check (mainSource: string) (useText: string) (importName: string) =
+            let mainPath = Path.Combine(dir, "main.nyx")
+            File.WriteAllText(mainPath, mainSource)
+            let result = Compiler.compileFile mainPath
+            let offset = offsetOf mainSource useText 0 0
+            let definition = (symbolAt (fun typed -> typed.References) result offset).Value
+            Assert.Equal(TopLevelValue, definition.Kind)
+            Assert.Equal(modulePath, definition.Declaration.File)
+            Assert.Equal(offsetOf moduleSource "foo" 0 0, definition.Declaration.Start)
+            let import = (symbolAt (fun typed -> typed.ImportReferences) result offset).Value
+            Assert.Equal(ImportedModule, import.Kind)
+            Assert.Equal(importName, import.Name)
+            Assert.Equal(offsetOf mainSource "\"mod.nyx\"" 0 0, import.Declaration.Start)
+        check "module main\nimport \"mod.nyx\" as m1\ndef value = m1.foo" "m1.foo" "m1"
+        check "module main\nimport \"mod.nyx\"\ndef value = foo" "foo" "mod.nyx"
+        // A standard-library definition is declared in the library's own module.
+        let source = "import nanyx/text as t\ndef shout = t.toUpper(\"hi\")"
+        let toUpper = (symbolAt (fun typed -> typed.References) (Compiler.compile source) (offsetOf source "t.toUpper" 0 2)).Value
+        Assert.Equal("nanyx/text.nyx", toUpper.Declaration.File))

@@ -178,14 +178,20 @@ type Mapper(a, b) = (list(a), (a -> b)) -> list(b)
 
 ## Function type precedence
 
-In a type, `,` binds tighter than `->`. That means these two annotations are the same type:
+In a type, `,` binds tighter than `->`, and `|` binds tighter than both. That means these two annotations are the same type:
 
 ```nanyx
 def add: (int, int) -> int = { x, y -> x + y }
 def add: int, int -> int = { x, y -> x + y }
 ```
 
-Both describe a function whose single argument is a two-field record of ints. The parenthesised form is the one the formatter emits, and the one used throughout these docs. Parentheses are only _required_ when a function type appears as a field of the argument record, as in `(list(a), (a -> b)) -> list(b)`, so that the inner `->` is not read as the outer one.
+Both describe a function whose single argument is a two-field record of ints. The same rule holds inside brackets, so `(int, a -> b)` is that kind of function too, in brackets, like `| a, b -> ...` in a match is a tuple pattern that goes to its body. Brackets only group; they never change what `,` and `->` mean. So:
+
+- A function that is an item of a tuple, a type argument or a tag payload has brackets of its own: `(list(a), (a -> b)) -> list(b)`, `map(string, (a -> b))`.
+- A union never needs them: `#some(int) | #none -> int` is a function from the union.
+- In a record and in a lambda's parameter list the comma already separates fields and parameters, so a function with several parameters has them bracketed there: `(combine: (a, a) -> a)`.
+
+The compiler prints a type with the fewest brackets the rule allows, with a signature's parameters bare: `#some(int) | r, (int -> string) -> #some(string) | r`.
 
 # typeof
 
