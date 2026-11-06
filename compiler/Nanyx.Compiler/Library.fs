@@ -700,9 +700,13 @@ module Compiler =
         | StandardLibraryModule name -> StandardLibrary.importPrefix + name + ".nyx"
         | InMemory -> ""
 
+    /// The modules one compilation has checked, by `originKey`, so that a module imported along several paths is
+    /// checked once and every importer sees the same symbols.
+    type private CheckedModules = System.Collections.Generic.Dictionary<string, Result<CheckedModule, CompilationPhase * Diagnostic list>>
+
     /// Parses, desugars and type-checks one module, resolving and checking the modules it imports first. An
     /// error says which phase it came from.
-    let rec private typecheckModule (origin: ModuleOrigin) (source: string) (visited: Set<string>) : Result<CheckedModule, CompilationPhase * Diagnostic list> =
+    let rec private typecheckModule (checkedModules: CheckedModules) (origin: ModuleOrigin) (source: string) (visited: Set<string>) : Result<CheckedModule, CompilationPhase * Diagnostic list> =
         let key = originKey origin
         if visited.Contains key then
             Error (Typed, [ Diagnostics.error ($"Import cycle detected for {key}") ])
@@ -783,7 +787,7 @@ module Compiler =
                             let available = String.concat ", " (StandardLibrary.moduleNames |> List.map (fun name -> StandardLibrary.importPrefix + name))
                             errors <- errors @ [ Diagnostics.error ($"Unknown standard library module '{StandardLibrary.importPrefix}{moduleName}' (available: {available})") ]
                         | Some moduleSource ->
-                            match typecheckModule (StandardLibraryModule moduleName) moduleSource (visited.Add key) with
+                            match typecheckImport checkedModules (StandardLibraryModule moduleName) (fun () -> moduleSource) (visited.Add key) with
                             | Error (_, diags) -> errors <- errors @ diags
                             | Ok imported when imported.Name <> Some moduleName ->
                                 let declared = imported.Name |> Option.defaultValue "(none)"
@@ -795,7 +799,7 @@ module Compiler =
                             match resolveImportPath (Path.GetDirectoryName fullPath) item with
                             | Error diag -> errors <- errors @ [ diag ]
                             | Ok importPath ->
-                                match typecheckModule (SourceFile importPath) (File.ReadAllText importPath) (visited.Add key) with
+                                match typecheckImport checkedModules (SourceFile importPath) (fun () -> File.ReadAllText importPath) (visited.Add key) with
                                 | Error (_, diags) -> errors <- errors @ diags
                                 | Ok imported -> mergeImport (originKey (SourceFile importPath)) item imported
                         | StandardLibraryModule name ->
@@ -817,7 +821,8 @@ module Compiler =
                     |> Map.ofSeq
                 state <- { state with AmbiguousImports = ambiguousImports }
                 if not errors.IsEmpty then
-                    Error (Typed, errors)
+                    // A module imported along several paths fails each importer with the same diagnostics.
+                    Error (Typed, List.distinct errors)
                 else
                     match NyxCompiler.Infer.inferModuleWithEnv env state desugared with
                     | Error diagnostics -> Error (Typed, diagnostics)
@@ -866,13 +871,23 @@ module Compiler =
                                     |> Seq.map (fun symbol -> symbol.Name, symbol)
                                     |> Map.ofSeq }
 
+    /// An imported module, checked the first time this compilation imports it; its source is only read then.
+    and private typecheckImport (checkedModules: CheckedModules) (origin: ModuleOrigin) (readSource: unit -> string) (visited: Set<string>) : Result<CheckedModule, CompilationPhase * Diagnostic list> =
+        let key = originKey origin
+        match checkedModules.TryGetValue key with
+        | true, checkedModule -> checkedModule
+        | false, _ ->
+            let checkedModule = typecheckModule checkedModules origin (readSource ()) visited
+            checkedModules.[key] <- checkedModule
+            checkedModule
+
     let parse (source: string) : Result<Module, Diagnostic list> =
         match parseModule source with
         | Result.Ok ast -> Ok ast
         | Result.Error err -> Error [ Diagnostics.error err ]
 
     let private compileWith (origin: ModuleOrigin) (source: string) : CompileResult =
-        match typecheckModule origin source Set.empty with
+        match typecheckModule (CheckedModules()) origin source Set.empty with
         | Result.Error (phase, diagnostics) ->
             { Phase = phase
               Diagnostics = annotateDiagnosticsWithSource source diagnostics
