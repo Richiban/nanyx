@@ -158,6 +158,21 @@ let rec private isAssignableType (expected: Ty) (actual: Ty) =
     | TyUnion options, _ -> options |> List.exists (fun optionTy -> isAssignableType optionTy actual)
     | _ -> true
 
+let private lookupPrimitive (name: string) =
+    match name with
+    | "int" | "Int" -> Some (primitiveType "int")
+    | "float" | "Float" -> Some (primitiveType "float")
+    | "bool" | "Bool" -> Some (primitiveType "bool")
+    | "string" | "String" -> Some (primitiveType "string")
+    | "unit" | "Unit" -> Some (primitiveType "unit")
+    | _ -> None
+
+/// Whether `name` is a type the compiler provides, such as `Int` or `List`, rather than one the program defines.
+let private isBuiltInTypeName (name: string) =
+    (lookupPrimitive name).IsSome
+    || name.Equals("list", StringComparison.OrdinalIgnoreCase)
+    || name.Equals("seq", StringComparison.OrdinalIgnoreCase)
+
 let private ensureAttachedTypeExists (state: InferState) (currentModuleOpt: string option) (name: Identifier) : Result<unit, Diagnostic list> =
     let firstDot = name.IndexOf(".")
     if firstDot <= 0 then
@@ -165,7 +180,7 @@ let private ensureAttachedTypeExists (state: InferState) (currentModuleOpt: stri
     else
         let lastDot = name.LastIndexOf(".")
         let candidateTypeName = name.Substring(0, lastDot)
-        if state.TypeDefs.ContainsKey candidateTypeName then
+        if state.TypeDefs.ContainsKey candidateTypeName || isBuiltInTypeName candidateTypeName then
             Ok ()
         else
             if firstDot = lastDot then
@@ -236,7 +251,7 @@ let private tryInferAttachedLambdaInput (state: InferState) (name: Identifier) (
         match state.TypeDefs |> Map.tryFind typeName with
         | Some info when typeName.StartsWith("$") -> Some (TyNominal(typeName, info.Underlying, info.IsPrivate))
         | Some info -> Some (aliasType typeName info)
-        | None -> None
+        | None -> lookupPrimitive typeName
     | _ -> None
 
 let private isContextDef (modifiers: TypeDefModifier list) =
@@ -257,15 +272,6 @@ let private inputTypeFromArgs argTys =
 let private isPrivateType modifiers =
     modifiers |> List.exists (fun modifier -> modifier = TypeDefModifier.Private)
 
-
-let private lookupPrimitive (name: string) =
-    match name with
-    | "int" | "Int" -> Some (primitiveType "int")
-    | "float" | "Float" -> Some (primitiveType "float")
-    | "bool" | "Bool" -> Some (primitiveType "bool")
-    | "string" | "String" -> Some (primitiveType "string")
-    | "unit" | "Unit" -> Some (primitiveType "unit")
-    | _ -> None
 
 let rec private typeExprToTy (state: InferState) (typeExpr: TypeExpr) : Ty * InferState =
     match typeExpr with
