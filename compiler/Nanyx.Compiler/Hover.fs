@@ -94,8 +94,8 @@ let private calleeSpan (expr: Expression) =
 
 /// The hover for the expression at `offset` in the compiled root module: the type of the narrowest expression
 /// there that has one, or of the function itself on a call's function name, where it is instantiated at that
-/// call, with made-up type variables named by `names`. `None` when the module did not type-check or no typed
-/// expression is at `offset`.
+/// call, or of what a declaration's own name declares (a def, a parameter, a pattern variable), with made-up
+/// type variables named by `names`. `None` when the module did not type-check or nothing typed is at `offset`.
 ///
 /// The narrowest span wins rather than the deepest node, because a made-up node can sit inside the syntax it
 /// stands for: a `for` loop's element is an identifier spanning all of the loop's arms. Of equal spans the
@@ -103,8 +103,17 @@ let private calleeSpan (expr: Expression) =
 let typeAt (names: TypeVarNames) (result: CompileResult) (offset: int) : HoverInfo option =
     match result.Syntax, result.Typed with
     | Some syntax, Some typed ->
+        // Only the module's own declarations have types recorded, so no imported one is found here.
+        let declarations =
+            typed.SymbolTypes
+            |> Map.toList
+            |> List.choose (fun (id, ty) ->
+                let declaration = typed.Symbols.[id].Declaration
+                if contains offset declaration then Some (ty, declaration) else None)
         let candidates =
-            expressionsAt offset syntax
+            // A declaration's name is written as it is, so it comes before any expression of the same span.
+            (declarations |> List.map (fun (ty, span) -> ty, span, System.Int32.MaxValue, 0))
+            @ (expressionsAt offset syntax
             |> List.mapi (fun depth expr ->
                 let callee =
                     match calleeSpan expr with
@@ -113,7 +122,7 @@ let typeAt (names: TypeVarNames) (result: CompileResult) (offset: int) : HoverIn
                     | _ -> None
                 let own = typed.ExprTypes |> Map.tryFind expr.Id |> Option.map (fun ty -> ty, expr.Span, depth, 1)
                 Option.toList callee @ Option.toList own)
-            |> List.concat
+            |> List.concat)
         match candidates with
         | [] -> None
         | _ ->

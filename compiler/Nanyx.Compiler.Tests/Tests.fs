@@ -1460,6 +1460,32 @@ let ``Hover shows the type of literals, locals, parameters, calls and lambdas`` 
     Assert.Equal(Some "int -> int", hoverType source (offsetOf source "double(" 0 1))
 
 [<Fact>]
+let ``Hover on a declaration's name shows the type of what it declares`` () =
+    let source =
+        "def id = { x -> x }\n" +
+        "def answer = {\n" +
+        "  def half = 21\n" +
+        "  half * 2\n" +
+        "}\n" +
+        "def describe = { o ->\n" +
+        "  match o\n" +
+        "  | #some(n) -> n + 1\n" +
+        "  | _ -> 0\n" +
+        "}\n"
+    // Top-level defs, generalised.
+    Assert.Equal(Some "α -> α", hoverType source (offsetOf source "id" 0 1))
+    Assert.Equal(Some "() -> int", hoverType source (offsetOf source "answer" 0 0))
+    // A parameter, a local def and a pattern variable.
+    Assert.Equal(Some "α", hoverType source (offsetOf source "x ->" 0 0))
+    Assert.Equal(Some "int", hoverType source (offsetOf source "half" 0 2))
+    Assert.Equal(Some "int", hoverType source (offsetOf source "(n)" 0 1))
+    Assert.Equal(Some "#some(int) | ω -> int", hoverType source (offsetOf source "describe" 0 0))
+    // The range is the declared name.
+    let info = (hoverAt source (offsetOf source "half" 0 2)).Value
+    Assert.Equal(offsetOf source "half" 0 0, info.Span.Start)
+    Assert.Equal(offsetOf source "half" 0 4, info.Span.End)
+
+[<Fact>]
 let ``Hover range is the span of the expression`` () =
     let source = "def value = 1 + 23"
     let info = (hoverAt source (offsetOf source "23" 0 1)).Value
