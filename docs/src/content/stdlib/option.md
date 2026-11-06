@@ -37,7 +37,7 @@ Chains option-producing operations.
 
 ```nanyx
 def a: (#some(string) | #notFound) = #some("42")
-def b = a \Option.bind(int.parse) -- b: (#some(int) | #notFound | #invalidInt)
+def b = a \Option.bind(Int.parse) -- b: (#some(int) | #notFound | #invalidInt)
 ```
 
 ---
