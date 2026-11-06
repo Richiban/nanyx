@@ -1,5 +1,6 @@
 /// The inferred types an editor shows for the declarations that do not write theirs, as F# tooling does: a lens
-/// above each top-level def with its whole type, and an inlay hint after each local, parameter and pattern variable.
+/// above each top-level def with its whole type, and an inlay hint after each local, parameter and pattern variable
+/// (or inlay hints for the top-level defs too, for an editor set up to show no lenses).
 /// Positions are character offsets into the source as the parser saw it, with line endings normalised to `\n`, as
 /// for `Hover`.
 module NyxCompiler.TypeHints
@@ -77,3 +78,9 @@ let typeLenses (names: TypeVarNames) (file: string) (result: CompileResult) : Ty
 /// not write its type, in source order, as for `typeLenses`.
 let inlayHints (names: TypeVarNames) (file: string) (result: CompileResult) : TypeHint list =
     snd (hints names file result)
+
+/// The hints of `typeLenses` and `inlayHints` together in source order, for an editor that shows a top-level def's
+/// type after its name, as an inlay hint, rather than in a lens above it.
+let inlayHintsWithTopLevel (names: TypeVarNames) (file: string) (result: CompileResult) : TypeHint list =
+    let lenses, others = hints names file result
+    lenses @ others |> List.sortBy (fun hint -> hint.Span.Start)

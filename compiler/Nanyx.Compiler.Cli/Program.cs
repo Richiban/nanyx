@@ -88,13 +88,31 @@ internal static class CliCommands
     /// </summary>
     /// <param name="stdio">Accepted and ignored: stdio is the only transport, but LSP clients conventionally pass it.</param>
     /// <param name="latinTypeVars">Name inferred type variables a, b, ... in hovers, rather than α, β, ...</param>
+    /// <param name="topLevelTypeHints">Where to show top-level defs' inferred types: lens (above them, the default), inlay (after their names) or off.</param>
     [Consolo("lsp")]
-    public static void Lsp(
+    public static int Lsp(
         [Consolo("stdio")] bool stdio = false,
-        [Consolo("latin-type-vars")] bool latinTypeVars = false)
+        [Consolo("latin-type-vars")] bool latinTypeVars = false,
+        [Consolo("top-level-type-hints")] string topLevelTypeHints = "lens")
     {
-        var settings = new Nanyx.LanguageServer.ServerSettings(latinTypeVars ? TypeVarNames.Latin : TypeVarNames.Greek);
+        Nanyx.LanguageServer.TopLevelTypeHints? topLevel = topLevelTypeHints switch
+        {
+            "lens" => Nanyx.LanguageServer.TopLevelTypeHints.Lens,
+            "inlay" => Nanyx.LanguageServer.TopLevelTypeHints.Inlay,
+            "off" => Nanyx.LanguageServer.TopLevelTypeHints.Off,
+            _ => null
+        };
+        if (topLevel is null)
+        {
+            Console.Error.WriteLine($"--top-level-type-hints must be lens, inlay or off, not '{topLevelTypeHints}'.");
+            return 2;
+        }
+
+        var settings = new Nanyx.LanguageServer.ServerSettings(
+            latinTypeVars ? TypeVarNames.Latin : TypeVarNames.Greek,
+            topLevel.Value);
         Nanyx.LanguageServer.NanyxLanguageServer.RunStdioAsync(settings).GetAwaiter().GetResult();
+        return 0;
     }
 
     private static int Execute(string inputFile, Target target, string? outputPath)

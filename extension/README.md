@@ -8,8 +8,10 @@ from the Nanyx language server.
 - Syntax highlighting for `.nyx` files.
 - Diagnostics as you type, from the Nanyx compiler running as a language server (`nanyx lsp`).
 - Inferred types on hover, in a lens above each top-level definition that does not write its type,
-  and as inlay hints after unannotated locals and parameters. VS Code's `editor.codeLens` and
-  `editor.inlayHints.enabled` settings turn the lenses and hints off.
+  and as inlay hints after unannotated locals and parameters. Set `nanyx.topLevelTypeHints` to
+  `inlayHint` to show top-level definitions' types as inlay hints too, instead of lenses, or to `off`. VS Code's
+  `editor.codeLens` and `editor.inlayHints.enabled` settings turn the lenses and hints off; under
+  `"[nanyx]": { ... }` they do so for Nanyx files only.
 - Go to definition.
 - Commands: **Nanyx: Download the compiler** and **Nanyx: Restart the language server**.
 
@@ -54,6 +56,10 @@ the extension says so and you can run **Nanyx: Download the compiler** later or 
 - `nanyx.greekTypeVariables`: hovers, lenses and inlay hints name inferred type variables `α`, `β`, `γ`, ... (the default).
   Turn it off for `a`, `b`, `c`, ...; this starts the server with `nanyx lsp --latin-type-vars`,
   which compilers before this setting do not understand.
+- `nanyx.topLevelTypeHints`: where a top-level definition's inferred type is shown: `codeLens` (the
+  default: a lens above it), `inlayHint` (after its name, like `def id: α -> α = { x -> x }`) or
+  `off`. The last two start the server with `nanyx lsp --top-level-type-hints inlay` or `off`, which
+  compilers before this setting do not understand.
 
 Changing any of these restarts the language server.
 

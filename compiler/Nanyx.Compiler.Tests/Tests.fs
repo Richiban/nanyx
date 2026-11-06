@@ -1846,6 +1846,21 @@ let ``Hints name type variables as their top-level def's type does`` () =
         typeHints TypeHints.typeLenses source)
 
 [<Fact>]
+let ``Inlay hints with top-level defs have the lenses' types too, in source order`` () =
+    let source =
+        "def pair = { a, b -> (a, b) }\n" +
+        "def answer: int = 42\n" +
+        "def second = { a, b -> b }\n"
+    Assert.Equal<(string * string * int) list>(
+        [ "pair", "α, β -> (α, β)", 4
+          "a", "α", offsetOf source "{ a" 0 2
+          "b", "β", offsetOf source "b ->" 0 0
+          "second", "α, β -> β", offsetOf source "second" 0 0
+          "a", "α", offsetOf source "{ a" 1 2
+          "b", "β", offsetOf source "b ->" 1 0 ],
+        typeHints TypeHints.inlayHintsWithTopLevel source)
+
+[<Fact>]
 let ``A call to a def that matches on a tag union keeps the argument's payload type`` () =
     // Regression: the def's type was generalized before its constraints were solved, so its input came out
     // as a fresh variable unrelated to its result, and `y` had a payload of no particular type.

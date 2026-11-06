@@ -217,7 +217,9 @@ What it does today:
   (`p: int`). `textDocument/inlayHint` shows `: type` after each unannotated local def, lambda parameter
   and pattern variable. The types come from the typed module's `SymbolTypes`, leaving out its
   `AnnotatedSymbols`, and are named together a top-level def at a time, so a hint's `α` is the one in its def's
-  lens (see `NyxCompiler.TypeHints`). A file that does not type-check shows neither.
+  lens (see `NyxCompiler.TypeHints`). `nanyx lsp --top-level-type-hints inlay` shows the top-level defs'
+  types as inlay hints after their names instead of lenses, and `--top-level-type-hints off` shows
+  neither for them (the default is `lens`). A file that does not type-check shows neither.
 
 Find-references and completion are not implemented yet: each is one handler class in
 `Nanyx.LanguageServer/Handlers/`, registered in `NanyxLanguageServer.Configure` (tracked in

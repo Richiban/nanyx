@@ -8,8 +8,8 @@ namespace Nanyx.LanguageServer.Handlers;
 
 /// <summary>
 /// Shows the inferred type after the name of each local def, lambda parameter and pattern variable that does not
-/// write its own, read from the document's last compile, as <c>: int</c>. Nothing is shown in a document that did
-/// not type-check.
+/// write its own, read from the document's last compile, as <c>: int</c>; with <see cref="TopLevelTypeHints.Inlay"/>,
+/// after each such top-level def too. Nothing is shown in a document that did not type-check.
 /// </summary>
 public sealed class InlayHintHandler : InlayHintsHandlerBase
 {
@@ -38,8 +38,11 @@ public sealed class InlayHintHandler : InlayHintsHandlerBase
         }
 
         var positions = document.Positions;
+        var hints = _settings.TopLevelTypeHints == TopLevelTypeHints.Inlay
+            ?TypeHints.inlayHintsWithTopLevel(_settings.TypeVarNames, document.FileName, compiled)
+            : TypeHints.inlayHints(_settings.TypeVarNames, document.FileName, compiled);
         return new InlayHintContainer(
-            TypeHints.inlayHints(_settings.TypeVarNames, document.FileName, compiled)
+            hints
                 .Select(hint => new InlayHint
                 {
                     Position = positions.ToPosition(hint.Span.End),

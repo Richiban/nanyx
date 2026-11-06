@@ -47,7 +47,8 @@ export async function activate(context: vscode.ExtensionContext) {
         event.affectsConfiguration("nanyx.path") ||
         event.affectsConfiguration("nanyx.compilerVersion") ||
         event.affectsConfiguration("nanyx.downloadUrl") ||
-        event.affectsConfiguration("nanyx.greekTypeVariables")
+        event.affectsConfiguration("nanyx.greekTypeVariables") ||
+        event.affectsConfiguration("nanyx.topLevelTypeHints")
       ) {
         void startOrRestart(context);
       }
@@ -177,9 +178,18 @@ async function download(context: vscode.ExtensionContext, settings: CompilerSett
 async function restartClient(context: vscode.ExtensionContext, executable: string): Promise<void> {
   await stopClient();
 
-  // The switch is passed only when it is on, so turning nothing off still works with compilers that predate it.
-  const greek = vscode.workspace.getConfiguration("nanyx").get<boolean>("greekTypeVariables", true);
-  const args = greek ? ["lsp"] : ["lsp", "--latin-type-vars"];
+  // Each switch is passed only when it is on, so the defaults still work with compilers that predate it.
+  const config = vscode.workspace.getConfiguration("nanyx");
+  const args = ["lsp"];
+  if (!config.get<boolean>("greekTypeVariables", true)) {
+    args.push("--latin-type-vars");
+  }
+  const topLevel = config.get<string>("topLevelTypeHints", "codeLens");
+  if (topLevel === "inlayHint") {
+    args.push("--top-level-type-hints", "inlay");
+  } else if (topLevel === "off") {
+    args.push("--top-level-type-hints", "off");
+  }
 
   // No `transport`: stdio is the default, and naming it makes the client append `--stdio` to the args.
   const serverOptions: ServerOptions = {

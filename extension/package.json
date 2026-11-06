@@ -8,7 +8,7 @@
     "url": "https://github.com/nanyx-lang/nanyx"
   },
   "license": "MIT",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "icon": "img/nanyx.png",
   "galleryBanner": {
     "color": "#5b5bf2",
@@ -77,6 +77,21 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "Name inferred type variables `α`, `β`, `γ`, ... in hovers. Turn off for `a`, `b`, `c`, ... (passes `--latin-type-vars` to `nanyx lsp`, which needs a compiler that has it)."
+        },
+        "nanyx.topLevelTypeHints": {
+          "type": "string",
+          "enum": [
+            "off",
+            "inlayHint",
+            "codeLens"
+          ],
+          "enumDescriptions": [
+            "Not shown (hover still shows it).",
+            "As an inlay hint after each top-level definition's name, like the hints for locals and parameters.",
+            "In a lens above each top-level definition."
+          ],
+          "default": "codeLens",
+          "markdownDescription": "Where to show the inferred type of a top-level definition that does not write its type. `off` and `inlayHint` pass `--top-level-type-hints` to `nanyx lsp`, which needs a compiler that has it."
         }
       }
     }
