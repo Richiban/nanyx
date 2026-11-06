@@ -236,14 +236,14 @@ module Unifier =
                 items |> List.map collect |> Set.unionMany |> Set.union rests
         collect ty
 
-    /// `ty` for a reader: type variables the compiler made up are renamed in the order they appear, through the
-    /// Greek (`α`, `β`, ...) or Latin (`a`, `b`, ...) alphabet, skipping names already taken; variables named in an
-    /// annotation keep their names. A union's rest variable is named from the other end of the alphabet, as in
-    /// `#some(α) | ω`.
+    /// Replaces the type variables the compiler made up in `ty` with primitives that print as their names for a
+    /// reader. They are named in the order they appear, through the Greek (`α`, `β`, ...) or Latin (`a`, `b`, ...)
+    /// alphabet, skipping names already taken; variables named in an annotation keep their names. A union's rest
+    /// variable is named from the other end of the alphabet, as in `#some(α) | ω`.
     ///
     /// When the two ends run into each other, the alphabet is split where they met while giving out its letters
     /// the first time, and each end goes round its own part again with a suffix: `α₁`, `ω₁` (`a1`, `z1`).
-    let tyToDisplayString (names: TypeVarNames) (ty: Ty) : string =
+    let private displayRenaming (names: TypeVarNames) (ty: Ty) : Subst =
         let alphabet, suffix =
             match names with
             | Greek -> greekLetters, subscript
@@ -277,11 +277,20 @@ module Unifier =
         let fromBack = goRound backCount (fun position -> letters.Length - 1 - position)
         let free = Seq.filter (fun name -> not (taken.Contains name))
         // Each made-up variable is replaced by a primitive that prints as its new name.
-        let renamed =
-            Seq.append (Seq.zip ordinary (free fromFront)) (Seq.zip rest (free fromBack))
-            |> Seq.map (fun (v, name) -> v.Id, TyPrimitive name)
-            |> Map.ofSeq
-        tyToString (apply renamed ty)
+        Seq.append (Seq.zip ordinary (free fromFront)) (Seq.zip rest (free fromBack))
+        |> Seq.map (fun (v, name) -> v.Id, TyPrimitive name)
+        |> Map.ofSeq
+
+    /// `ty` for a reader, with the variables the compiler made up named as `displayRenaming` describes.
+    let tyToDisplayString (names: TypeVarNames) (ty: Ty) : string =
+        tyToString (apply (displayRenaming names ty) ty)
+
+    /// Each of `tys` for a reader, as `tyToDisplayString` writes it, with a variable they share given the same name
+    /// in each. The first one's variables are named first, so it reads as it would alone unless the others use a
+    /// name from an annotation that it would have been given.
+    let tysToDisplayStrings (names: TypeVarNames) (tys: Ty list) : string list =
+        let renamed = displayRenaming names (TyApply("", tys))
+        tys |> List.map (apply renamed >> tyToString)
 
     let rec occurs (varId: int) (ty: Ty) : bool =
         match ty with

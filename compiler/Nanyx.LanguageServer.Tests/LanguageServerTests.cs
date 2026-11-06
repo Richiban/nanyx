@@ -288,6 +288,74 @@ public sealed class LanguageServerTests : IAsyncLifetime
         Assert.Empty(await DefinitionsAt(uri, 1, 15));
     }
 
+    [Fact]
+    public void Server_advertises_code_lenses_and_inlay_hints()
+    {
+        Assert.NotNull(_client.ServerSettings.Capabilities.CodeLensProvider);
+        Assert.NotNull(_client.ServerSettings.Capabilities.InlayHintProvider);
+    }
+
+    [Fact]
+    public async Task Code_lenses_show_the_types_of_unannotated_top_level_defs()
+    {
+        var uri = DocumentUri.FromFileSystemPath(Path.Combine(Path.GetTempPath(), "lenses.nyx"));
+
+        Open(uri, "def id = { x -> x }\r\ndef answer: int = 42\r\ndef (p, q) = (1, \"s\")\r\n");
+        Assert.Empty((await NextPublished(uri)).Diagnostics!);
+
+        var lenses = (await _client.TextDocument.RequestCodeLens(
+            new CodeLensParams { TextDocument = new TextDocumentIdentifier(uri) },
+            _cancellation.Token))?.ToList() ?? [];
+
+        // The annotated `answer` has none; the two names of one destructuring def each say which they are for.
+        Assert.Equal(
+            [
+                (new Range(0, 4, 0, 6), "α -> α"),
+                (new Range(2, 5, 2, 6), "p: int"),
+                (new Range(2, 8, 2, 9), "q: string")
+            ],
+            lenses.Select(lens => (lens.Range, lens.Command?.Title)));
+    }
+
+    [Fact]
+    public async Task Inlay_hints_show_the_types_of_unannotated_locals_and_parameters()
+    {
+        var uri = DocumentUri.FromFileSystemPath(Path.Combine(Path.GetTempPath(), "inlay-hints.nyx"));
+
+        Open(uri, "def scale = { factor ->\r\n  def offset = 1\r\n  factor * 2 + offset\r\n}\r\n");
+        Assert.Empty((await NextPublished(uri)).Diagnostics!);
+
+        var everywhere = await InlayHintsIn(uri, new Range(0, 0, 4, 0));
+        Assert.Equal(
+            [(new Position(0, 20), ": int"), (new Position(1, 12), ": int")],
+            everywhere.Select(hint => (hint.Position, hint.Label.String)));
+        Assert.All(everywhere, hint => Assert.Equal(InlayHintKind.Type, hint.Kind));
+
+        // Only the hints in the range asked for.
+        var secondLine = await InlayHintsIn(uri, new Range(1, 0, 1, 16));
+        Assert.Equal([new Position(1, 12)], secondLine.Select(hint => hint.Position));
+    }
+
+    [Fact]
+    public async Task Lenses_and_inlay_hints_in_a_document_that_does_not_type_check_are_empty()
+    {
+        var uri = DocumentUri.FromFileSystemPath(Path.Combine(Path.GetTempPath(), "hints-error.nyx"));
+
+        Open(uri, "def scale = { factor -> factor + missing }\n");
+        Assert.NotEmpty((await NextPublished(uri)).Diagnostics!);
+
+        var lenses = await _client.TextDocument.RequestCodeLens(
+            new CodeLensParams { TextDocument = new TextDocumentIdentifier(uri) },
+            _cancellation.Token);
+        Assert.Empty(lenses ?? []);
+        Assert.Empty(await InlayHintsIn(uri, new Range(0, 0, 1, 0)));
+    }
+
+    private async Task<List<InlayHint>> InlayHintsIn(DocumentUri uri, Range range) =>
+        (await _client.TextDocument.RequestInlayHints(
+            new InlayHintParams { TextDocument = new TextDocumentIdentifier(uri), Range = range },
+            _cancellation.Token))?.ToList() ?? [];
+
     /// <summary>The definitions found at a position. The client reads the server's "none" (null) as no locations.</summary>
     private async Task<List<LocationOrLocationLink>> DefinitionsAt(DocumentUri uri, int line, int character) =>
         (await _client.TextDocument.RequestDefinition(

@@ -37,6 +37,13 @@ what the compiler keeps: exact spans, resolved names and types.
   to itself. A definition in an imported source file opens that file; one in the standard library goes nowhere,
   since the library is embedded in the compiler, not a file on disk. Type names and context members are not
   symbols yet, so they go nowhere either.
+- **Inferred types in lenses and inlay hints**, as F# tooling shows them. A top-level def that does not write
+  its type gets a lens above it with its whole type; a local def, lambda parameter or pattern variable gets an
+  inlay hint after its name (`: int`). Inference records the type of each such declaration by symbol
+  (`TypedModule.InferredTypes`), and the types in one top-level def are named together, so a parameter's `α` is
+  the `α` in its def's lens (see `NyxCompiler.TypeHints`). Like hover, a file that fails to type-check shows none,
+  so they disappear while the file is broken and the code moves up and down as the lenses come and go; keeping
+  the last good ones until the next good compile is a follow-up.
 - **No find-references or completion.** Each is one handler in `Handlers/`. Find-references can read the same
   `References` table, though only of the open document's own compile.
 - **A parse error hides the rest of the file**, because the parser has no error recovery.

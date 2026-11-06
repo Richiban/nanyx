@@ -28,6 +28,9 @@ type InferState =
             /// name, so that a declaration inferred more than once keeps one symbol.
             DeclarationSymbols: Map<NodeId * Declarer * string, SymbolId>;
             Symbols: Map<SymbolId, Symbol>;
+            /// The type of each declaration that does not write its own, by its symbol, as inference bound it;
+            /// like `ExprTypes`, the substitution turns them into resolved types.
+            InferredTypes: Map<SymbolId, Ty>;
             /// The symbol each name resolved to, by the node of the name.
             References: Map<NodeId, SymbolId>;
             /// The import that brought each imported definition into scope, by the definition's symbol.
@@ -49,6 +52,7 @@ let emptyState =
             Declared = Map.empty;
             DeclarationSymbols = Map.empty;
             Symbols = Map.empty;
+            InferredTypes = Map.empty;
             References = Map.empty;
             ImportedThrough = Map.empty;
             ImportReferences = Map.empty }
@@ -81,6 +85,12 @@ let private declareSymbol (declarer: Declarer) (holder: NodeId) (name: string) (
             { state with
                 DeclarationSymbols = state.DeclarationSymbols |> Map.add key symbol.Id
                 Symbols = state.Symbols |> Map.add symbol.Id symbol }
+
+/// Records `ty` as the inferred type of the declaration `symbol` stands for, if the parser saw it.
+let private recordInferredType (symbol: SymbolId option) (ty: Ty) (state: InferState) =
+    match symbol with
+    | Some id -> { state with InferredTypes = state.InferredTypes |> Map.add id ty }
+    | None -> state
 
 /// Records that `expr` names what `scheme` is bound for, and the import it came through if it was imported.
 let private recordReference (expr: Expression) (scheme: TypeScheme) (state: InferState) =
@@ -1092,7 +1102,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                 | ElsePattern -> Ok (env', state', mkTypedPattern pattern scrutineeTy)
                 | IdentifierPattern name ->
                     let symbol, declared = declareSymbol ArmBody armBody name PatternVariable false state'
-                    Ok (TypeEnv.declare name symbol (TypeEnv.mono scrutineeTy) env', declared, mkTypedPattern pattern scrutineeTy)
+                    Ok (TypeEnv.declare name symbol (TypeEnv.mono scrutineeTy) env', recordInferredType symbol scrutineeTy declared, mkTypedPattern pattern scrutineeTy)
                 | LiteralPattern literal ->
                     let constrained = addConstraint scrutineeTy (literalType literal) state'
                     Ok (env', constrained, mkTypedPattern pattern scrutineeTy)
@@ -1169,7 +1179,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                         | Some (IdentifierPattern name) ->
                             let symbol, declared = declareSymbol ArmBody armBody name PatternVariable false innerState
                             innerEnv <- TypeEnv.declare name symbol (TypeEnv.mono (listType elementTy)) innerEnv
-                            declared
+                            recordInferredType symbol (listType elementTy) declared
                         | _ -> innerState
                     if innerErrors.IsEmpty then
                         Ok (innerEnv, innerStateWithSplat, mkTypedPattern pattern scrutineeTy)
@@ -1556,9 +1566,9 @@ and inferLambdaWithExpected (env: TypeEnv) (state: InferState) (lambda: Expressi
                     | None -> freshVar current
                 current <- next
                 ty)
-    for ((name, _), ty) in List.zip args argTys do
+    for ((name, typeOpt), ty) in List.zip args argTys do
         let symbol, next = declareSymbol LambdaParameters lambda.Id name Parameter false current
-        current <- next
+        current <- if typeOpt.IsNone then recordInferredType symbol ty next else next
         env' <- TypeEnv.declare name symbol (TypeEnv.mono ty) env'
     match inferExpr env' current body with
     | Ok (bodyExpr, next) ->
@@ -1625,7 +1635,7 @@ and inferBlock (env: TypeEnv) (state: InferState) (block: Expression) (statement
                             | Some declaredTy -> declaredTy, declaredState, TypeEnv.declare name symbol (TypeEnv.mono declaredTy) envWithCtx, false
                             | None ->
                                 let ty, st = freshVar declaredState
-                                ty, st, TypeEnv.declare name symbol (TypeEnv.mono ty) envWithCtx, true
+                                ty, recordInferredType symbol ty st, TypeEnv.declare name symbol (TypeEnv.mono ty) envWithCtx, true
                         let nextStateWithReq =
                             match contextOpt with
                             | Some contexts -> registerContextRequirement preboundState name contexts
@@ -1780,7 +1790,7 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
                 env <- TypeEnv.declare name symbol (TypeEnv.generalize env ty) env
             | None ->
                 let ty, st = freshVar state
-                state <- st
+                state <- recordInferredType symbol ty st
                 preboundFreshVars <- preboundFreshVars |> Map.add name ty
                 env <- TypeEnv.declare name symbol (TypeEnv.mono ty) env
         | _ -> ()
