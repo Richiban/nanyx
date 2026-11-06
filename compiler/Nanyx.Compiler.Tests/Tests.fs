@@ -1475,6 +1475,23 @@ let ``Typecheck joins nested if branches and repeated tags once`` () =
     Assert.Equal(expected, typed.Types.["pick"])
 
 [<Fact>]
+let ``Typecheck joins the tags inside tuple branches field by field`` () =
+    let source =
+        "def splitOnce: (string, string) -> (string, #some(string) | #none) = { s, separator ->\n" +
+        "  match s == separator\n" +
+        "    | true -> (\"\", #some(s))\n" +
+        "    | false -> (s, #none)\n" +
+        "}"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+
+[<Fact>]
+let ``Typecheck still rejects tuple branches whose fields disagree`` () =
+    let source = "def f = { c -> if c then (1, #a) else (\"one\", #b) }"
+    let result = Compiler.compile source
+    Assert.False(result.Diagnostics.IsEmpty)
+
+[<Fact>]
 let ``Typecheck still rejects same-named tags with different payloads across branches`` () =
     let source = "def f = { c -> if c then #some(1) else #some(\"one\") }"
     let result = Compiler.compile source
