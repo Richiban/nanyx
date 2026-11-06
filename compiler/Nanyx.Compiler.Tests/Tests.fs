@@ -1322,6 +1322,27 @@ let ``A pipe finds the prelude's Result helpers by the Result alias`` () =
     Assert.Equal(TyPrimitive "int", result.Typed.Value.Types.["fallback"])
 
 [<Fact>]
+let ``Int.parse is in the prelude`` () =
+    let result = Compiler.compile "def n = Int.parse(\"42\")\ndef piped = \"7\" \\ Int.parse"
+    Assert.True(result.Diagnostics.IsEmpty, sprintf "%A" result.Diagnostics)
+    Assert.Equal("#some(int) | #invalidInt", Unifier.tyToString result.Typed.Value.Types.["n"])
+    Assert.Equal("#some(int) | #invalidInt", Unifier.tyToString result.Typed.Value.Types.["piped"])
+
+[<Fact>]
+let ``nanyx/math exports int functions with their types`` () =
+    let result =
+        Compiler.compile (
+            "import nanyx/math as math\n" +
+            "def a = math.abs(-3)\n" +
+            "def b = math.min(1, 2)\n" +
+            "def c = math.max(1, 2)\n" +
+            "def d = math.clamp(5, 0, 3)\n" +
+            "def e = math.pow(2, 3)")
+    Assert.True(result.Diagnostics.IsEmpty, sprintf "%A" result.Diagnostics)
+    for name in [ "a"; "b"; "c"; "d"; "e" ] do
+        Assert.Equal(TyPrimitive "int", result.Typed.Value.Types.[name])
+
+[<Fact>]
 let ``A module's own definition wins over the prelude's`` () =
     let result = Compiler.compile "def proc = 5\ndef x = proc + 1"
     Assert.True(result.Diagnostics.IsEmpty, sprintf "%A" result.Diagnostics)

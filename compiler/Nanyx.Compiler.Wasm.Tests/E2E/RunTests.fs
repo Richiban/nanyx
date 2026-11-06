@@ -1128,6 +1128,44 @@ let ``Run - a proc block gives back whichever failure stopped it`` () =
     runSource source |> assertRan "found\nnot found\nnil\n"
 
 [<Fact>]
+let ``Run - Int.parse reads decimal integers and rejects anything else`` () =
+    // Negative and large results are left out: a tag's int payload is kept in 16 bits by the backend (#181).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def show: (#some(int) | #invalidInt) -> () = {\n" +
+        "  | #some(n) -> println(\"#some({n})\")\n" +
+        "  | #invalidInt -> println(\"#invalidInt\")\n" +
+        "}\n" +
+        "\n" +
+        "show(Int.parse(\"42\"))\n" +
+        "show(Int.parse(\"+5\"))\n" +
+        "show(Int.parse(\"007\"))\n" +
+        "show(Int.parse(\"0\"))\n" +
+        "show(Int.parse(\"\"))\n" +
+        "show(Int.parse(\"-\"))\n" +
+        "show(Int.parse(\"4x2\"))\n" +
+        "show(Int.parse(\" 1\"))\n" +
+        "show(\"12\" \\ Int.parse)\n"
+    runSource source |> assertRan "#some(42)\n#some(5)\n#some(7)\n#some(0)\n#invalidInt\n#invalidInt\n#invalidInt\n#invalidInt\n#some(12)\n"
+
+[<Fact>]
+let ``Run - nanyx/math abs, min, max, clamp and pow`` () =
+    let source =
+        "import nanyx/console\n" +
+        "import nanyx/math as math\n" +
+        "\n" +
+        "def a = math.abs(-42)\n" +
+        "def b = math.min(3, 7)\n" +
+        "def c = math.max(3, 7)\n" +
+        "def d = math.clamp(120, 0, 100)\n" +
+        "def e = math.clamp(-5, 0, 100)\n" +
+        "def f = math.pow(2, 8)\n" +
+        "def g = math.pow(5, 0)\n" +
+        "println(\"{a} {b} {c} {d} {e} {f} {g}\")\n"
+    runSource source |> assertRan "42 3 7 100 0 256 1\n"
+
+[<Fact>]
 let ``Run - the prelude's proc, Result and Option helpers need no import`` () =
     let source =
         "import nanyx/console\n" +
