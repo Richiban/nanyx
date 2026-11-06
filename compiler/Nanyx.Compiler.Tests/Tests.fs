@@ -244,7 +244,7 @@ let ``Typecheck dotted def name`` () =
     Assert.True(result.Diagnostics.IsEmpty)
     let typed = result.Typed.Value
     match typed.Types.["Person.fullName"] with
-    | TyFunc(TyRecord fields, TyPrimitive "string") when fields.ContainsKey("firstName") ->
+    | TyFunc(TyAlias("Person", [], TyRecord fields), TyPrimitive "string") when fields.ContainsKey("firstName") ->
         Assert.True(true)
     | other -> Assert.True(false, $"Unexpected dotted def type: %A{other}")
 
@@ -270,7 +270,7 @@ let ``Typecheck infers attached receiver type for unannotated lambda`` () =
     Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
     let typed = result.Typed.Value
     match typed.Types.["Person.toString"] with
-    | TyFunc(TyRecord fields, TyPrimitive "string") when fields.ContainsKey("firstName") ->
+    | TyFunc(TyAlias("Person", [], TyRecord fields), TyPrimitive "string") when fields.ContainsKey("firstName") ->
         Assert.True(true)
     | other -> Assert.True(false, $"Unexpected inferred attached def type: %A{other}")
 
@@ -613,7 +613,7 @@ let ``Typecheck supports record constructor syntax`` () =
     Assert.True(result.Diagnostics.IsEmpty)
     let typed = result.Typed.Value
     match typed.Types.["p"] with
-    | TyRecord fields ->
+    | TyAlias("Person", [], TyRecord fields) ->
         Assert.Equal(TyPrimitive "string", fields.["firstName"])
         Assert.Equal(TyPrimitive "string", fields.["surname"])
     | other -> Assert.True(false, $"Unexpected constructor type: %A{other}")
@@ -1566,6 +1566,12 @@ let ``A rest variable nothing can add tags to is empty`` () =
     Assert.Equal(Some "#some(α) | ω -> #some(α) | ω", hoverType inLambda (offsetOf inLambda "{ o" 0 0))
 
 [<Fact>]
+let ``A record type is written in brackets, as in source`` () =
+    let fields = [ "name", TyPrimitive "string"; "age", TyPrimitive "int" ] |> Map.ofList
+    Assert.Equal("(age: int, name: string)", Unifier.tyToString (TyRecord fields))
+    Assert.Equal("#some(name: string)",Unifier.tyToString (TyTag("some", Some (TyRecord (Map.ofList [ "name", TyPrimitive "string" ])))))
+
+[<Fact>]
 let ``The empty union is the bottom type`` () =
     Assert.Equal("undefined", Unifier.tyToString (TyUnion []))
 
@@ -1859,6 +1865,37 @@ let ``Inlay hints with top-level defs have the lenses' types too, in source orde
           "a", "α", offsetOf source "{ a" 1 2
           "b", "β", offsetOf source "b ->" 1 0 ],
         typeHints TypeHints.inlayHintsWithTopLevel source)
+
+[<Fact>]
+let ``Hints keep the names of type aliases`` () =
+    let source =
+        "type Customer = (name: string)\n" +
+        "def getCustomer = { name -> match name\n" +
+        "  | \"\" -> #customerNotFound\n" +
+        "  | _ -> #some(Customer(name = name)) }\n" +
+        "type Box(a) = (value: a)\n" +
+        "def unbox: Box(int) -> int = { b -> b.value }\n" +
+        "def rename: Customer -> Customer = { c -> c with name = \"x\" }\n" +
+        "def firstName = { c -> rename(c).name }\n"
+    Assert.Equal<(string * string * int) list>(
+        [ "getCustomer", "string -> #customerNotFound | #some(Customer)", offsetOf source "getCustomer" 0 0
+          "firstName", "Customer -> string", offsetOf source "firstName" 0 0 ],
+        typeHints TypeHints.typeLenses source)
+    Assert.Equal<(string * string * int) list>(
+        [ "name", "string", offsetOf source "name ->" 0 0
+          "b", "Box(int)", offsetOf source "b ->" 0 0
+          "c", "Customer", offsetOf source "c ->" 0 0
+          "c", "Customer", offsetOf source "c ->" 1 0 ],
+        typeHints TypeHints.inlayHints source)
+
+[<Fact>]
+let ``A match on an alias of a tag union is checked for exhaustiveness`` () =
+    let source =
+        "type Lookup = #found(int) | #missing\n" +
+        "def describe: Lookup -> int = { l -> match l\n" +
+        "  | #found(n) -> n }\n"
+    let result = Compiler.compile source
+    Assert.Contains(result.Diagnostics, fun diag -> diag.Message.Contains "missing tags: missing")
 
 [<Fact>]
 let ``A call to a def that matches on a tag union keeps the argument's payload type`` () =

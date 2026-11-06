@@ -912,7 +912,7 @@ let private buildStringLiteralMap (literals: string list) =
     map, entries
 
 let private trySimpleTypeName (ty: Ty) =
-    match ty with
+    match Unifier.unalias ty with
     | TyPrimitive "string" -> Some "string"
     | TyPrimitive "int" -> Some "int"
     | TyPrimitive "bool" -> Some "bool"
@@ -921,12 +921,13 @@ let private trySimpleTypeName (ty: Ty) =
     | _ -> None
 
 /// The payload type of `#tagName(...)` within `ty`, which may be the tag itself, a union containing it, or a
-/// nominal type wrapping either.
+/// nominal type or alias wrapping either.
 let rec private tryTagPayloadType (tagName: string) (ty: Ty) : Ty option =
     match ty with
     | TyTag(name, Some payloadTy) when name = tagName -> Some payloadTy
     | TyUnion options -> options |> List.tryPick (tryTagPayloadType tagName)
-    | TyNominal(_, underlying, _) -> tryTagPayloadType tagName underlying
+    | TyNominal(_, underlying, _)
+    | TyAlias(_, _, underlying) -> tryTagPayloadType tagName underlying
     | _ -> None
 
 /// The tags a value of type `ty` can be, each with its payload type, when `ty` is a tag or a union of tags. A
@@ -938,20 +939,36 @@ let rec private tryTagMembers (ty: Ty) : (string * Ty option) list option =
         match options |> List.choose (function TyTag(name, payloadTy) -> Some (name, payloadTy) | _ -> None) with
         | [] -> None
         | members -> Some members
-    | TyNominal(_, underlying, _) -> tryTagMembers underlying
+    | TyNominal(_, underlying, _)
+    | TyAlias(_, _, underlying) -> tryTagMembers underlying
     | _ -> None
 
 let rec private tryListElementType (ty: Ty) : Ty option =
     match ty with
     | TyApply("list", [ elementTy ]) -> Some elementTy
-    | TyNominal(_, underlying, _) -> tryListElementType underlying
+    | TyNominal(_, underlying, _)
+    | TyAlias(_, _, underlying) -> tryListElementType underlying
     | _ -> None
 
 let rec private tryRecordFieldTys (ty: Ty) : Map<string, Ty> option =
     match ty with
     | TyRecord fields -> Some fields
-    | TyNominal(_, underlying, _) -> tryRecordFieldTys underlying
+    | TyNominal(_, underlying, _)
+    | TyAlias(_, _, underlying) -> tryRecordFieldTys underlying
     | _ -> None
+
+/// The types of a lambda's parameters, from the function type `ty` inference gave it.
+let private lambdaParameterTys (parameters: (Identifier * TypeExpr option) list) (ty: Ty) : (Identifier * Ty) list =
+    match parameters, Unifier.unalias ty with
+    | [ (name, _) ], TyFunc(inputTy, _) -> [ name, inputTy ]
+    | _, TyFunc(inputTy, _) ->
+        match Unifier.unalias inputTy with
+        | TyRecord fields ->
+            parameters
+            |> List.mapi (fun index (name, _) -> fields |> Map.tryFind (string index) |> Option.map (fun ty -> name, ty))
+            |> List.choose id
+        | _ -> []
+    | _ -> []
 
 /// The simple types of the identifiers a typed pattern binds: `#some(n)` binds `n` at the tag's payload
 /// type, `[x, ...rest]` binds `x` at the element type and `rest` as a list, and a bare `n` binds at the
@@ -1003,12 +1020,8 @@ let rec private tryFindTypedExpr (target: Expression) (typedExpr: TypedExpr) : T
 /// The full inferred types of a function's parameters and the locals defined anywhere in its body.
 let private collectTypedValueTys (typedExpr: TypedExpr) : Map<string, Ty> =
     let parameterTys =
-        match typedExpr.Expr.Kind, typedExpr.Type with
-        | Lambda([ (name, _) ], _), TyFunc(inputTy, _) -> [ name, inputTy ]
-        | Lambda(parameters, _), TyFunc(TyRecord fields, _) ->
-            parameters
-            |> List.mapi (fun index (name, _) -> fields |> Map.tryFind (string index) |> Option.map (fun ty -> name, ty))
-            |> List.choose id
+        match typedExpr.Expr.Kind with
+        | Lambda(parameters, _) -> lambdaParameterTys parameters typedExpr.Type
         | _ -> []
     let rec collectExpr (acc: Map<string, Ty>) (expr: TypedExpr) =
         let accWithBody =
@@ -1035,17 +1048,10 @@ let private collectTypedValueTys (typedExpr: TypedExpr) : Map<string, Ty> =
 /// The simple types inference found for a function's parameters and the locals of its body.
 let private collectTypedValueTypes (typedExpr: TypedExpr) =
     let parameterTypes =
-        match typedExpr.Expr.Kind, typedExpr.Type with
-        | Lambda([ (name, _) ], _), TyFunc(inputTy, _) ->
-            trySimpleTypeName inputTy |> Option.map (fun tyName -> name, tyName) |> Option.toList
-        | Lambda(parameters, _), TyFunc(TyRecord fields, _) ->
-            parameters
-            |> List.mapi (fun index (name, _) ->
-                fields
-                |> Map.tryFind (string index)
-                |> Option.bind trySimpleTypeName
-                |> Option.map (fun tyName -> name, tyName))
-            |> List.choose id
+        match typedExpr.Expr.Kind with
+        | Lambda(parameters, _) ->
+            lambdaParameterTys parameters typedExpr.Type
+            |> List.choose (fun (name, ty) -> trySimpleTypeName ty |> Option.map (fun tyName -> name, tyName))
         | _ -> []
     let rec collectExpr (acc: Map<string, string>) (expr: TypedExpr) =
         let accWithBody =
@@ -1096,7 +1102,8 @@ let rec private tryExprTy (env: TranspileEnv) (expr: Expression) : Ty option =
     | Pipe(_, name, _, _) ->
         env.ValueTys
         |> Map.tryFind name
-        |> Option.bind (function
+        |> Option.bind (fun ty ->
+            match Unifier.unalias ty with
             | TyFunc(_, returnTy) -> Some returnTy
             | _ -> None)
     | _ -> None
@@ -1897,7 +1904,7 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
         let members = holeTy inner |> Option.bind tryTagMembers |> Option.defaultValue []
         let named = members |> List.map fst |> Set.ofList
         let others =
-            match holeTy inner with
+            match holeTy inner |> Option.map Unifier.unalias with
             | Some (TyUnion options) when options |> List.exists (function TyVar _ -> true | _ -> false) ->
                 env.TagIds |> Map.toList |> List.filter (fun (name, _) -> not (named.Contains name)) |> List.map (fun (name, _) -> name, None)
             | _ -> []
@@ -3641,13 +3648,17 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                             let sourceTyped = origin.Source |> Option.bind (fun source -> tryFindTypedExpr source ownerTyped)
                             let localTy =
                                 match origin.LocalName with
-                                | Some localName -> ownerTys |> Map.tryFind localName
-                                | None -> sourceTyped |> Option.map (fun typed -> typed.Type)
+                                | Some localName -> ownerTys |> Map.tryFind localName |> Option.map Unifier.unalias
+                                | None -> sourceTyped |> Option.map (fun typed -> Unifier.unalias typed.Type)
+                            let recordInput ty =
+                                match Unifier.unalias ty with
+                                | TyRecord fields -> Some fields
+                                | _ -> None
                             let parameterTys =
                                 match localTy, origin.Source with
                                 | Some (TyFunc(single, _)), Some (Kind (Lambda([ _ ], _))) -> [ "1", single ]
-                                | Some (TyFunc(TyRecord fields, _)), _ ->
-                                    fields
+                                | Some (TyFunc(input, _)), _ when (recordInput input).IsSome ->
+                                    (recordInput input).Value
                                     |> Map.toList
                                     |> List.choose (fun (key, ty) ->
                                         match Int32.TryParse key with
@@ -4088,7 +4099,7 @@ let transpileTypedModuleToWat (typed: TypedModule) : string =
         typed.Types
         |> Map.toList
         |> List.choose (fun (name, ty) ->
-            match ty with
+            match Unifier.unalias ty with
             | TyFunc(_, returnTy) -> trySimpleTypeName returnTy |> Option.map (fun tyName -> name, tyName)
             | _ -> None)
         |> Map.ofList
