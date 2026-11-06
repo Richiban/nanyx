@@ -1215,8 +1215,15 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                 | TyNominal(_, underlying, _)
                 | TyAlias(_, _, underlying) -> tryRecordFields underlying
                 | _ -> None
-            // The variables a pattern binds are declared by the body of its arm, `armBody`.
+            // The variables a pattern binds are declared by the body of its arm, `armBody`. As with `inferExpr`, the
+            // constraints inferring `pattern` adds are reported at `pattern`.
             let rec inferPattern (armBody: NodeId) (env': TypeEnv) (state': InferState) (scrutineeTy: Ty) (pattern: Pattern) =
+                let outer = state'.Origin
+                let origin = if SourceSpan.isNone pattern.Span then outer else pattern.Span
+                inferPatternKind armBody env' { state' with Origin = origin } scrutineeTy pattern
+                |> Result.map (fun (nextEnv, next, typedPattern) -> nextEnv, { next with Origin = outer }, typedPattern)
+
+            and inferPatternKind (armBody: NodeId) (env': TypeEnv) (state': InferState) (scrutineeTy: Ty) (pattern: Pattern) =
                 match pattern.Kind with
                 | WildcardPattern
                 | ElsePattern -> Ok (env', state', mkTypedPattern pattern scrutineeTy)
