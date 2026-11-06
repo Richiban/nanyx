@@ -65,6 +65,71 @@ let ``An or-pattern may put each alternative on its own line`` () =
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
     | Result.Error err -> failwith $"Parse failed: {err}"
 
+/// The scrutinees of the one match in `def f = { x -> <body> }`, or the parse error.
+let private scrutineesOf (body: string) =
+    match parseModule ("def f = { x ->\n" + body + "\n}") with
+    | Result.Ok [ Def (ValueDef (_, "f", _, Kind (Lambda (_, Kind (Block [ ExprStatement (Kind (Match (scrutinees, _))) ]))))) ] ->
+        Result.Ok scrutinees
+    | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
+    | Result.Error err -> Result.Error err
+
+[<Fact>]
+let ``A scrutinee may be a pipe`` () =
+    match scrutineesOf "  match s \\indexOf(separator)\n    | #some(i) -> i\n    | #none -> 0" with
+    | Result.Ok [ Kind (Pipe (Kind (IdentifierExpr "s"), "indexOf", _, [ Kind (IdentifierExpr "separator") ])) ] -> ()
+    | other -> failwith $"Unexpected scrutinees: %A{other}"
+
+[<Fact>]
+let ``A scrutinee may use operators, and several may be piped`` () =
+    match scrutineesOf "  match a + 1, xs \\length\n    | 1, 0 -> 1\n    | _, _ -> 0" with
+    | Result.Ok [ Kind (BinaryOp ("+", _, _)); Kind (Pipe (_, "length", _, [])) ] -> ()
+    | other -> failwith $"Unexpected scrutinees: %A{other}"
+
+[<Fact>]
+let ``A scrutinee may be a block indented more than the match and its arms`` () =
+    let body =
+        "  match\n" +
+        "      def trimmed = s \\trim\n" +
+        "      trimmed \\split(\",\")\n" +
+        "    | [a, b] -> a\n" +
+        "    | _ -> \"\""
+    match scrutineesOf body with
+    | Result.Ok [ Kind (Block [ DefStatement _; ExprStatement (Kind (Pipe (_, "split", _, _))) ]) ] -> ()
+    | other -> failwith $"Unexpected scrutinees: %A{other}"
+
+[<Fact>]
+let ``A block scrutinee of one expression is that expression`` () =
+    match scrutineesOf "  match\n      xs \\length\n    | 0 -> 1\n    | _ -> 0" with
+    | Result.Ok [ Kind (Pipe (Kind (IdentifierExpr "xs"), "length", _, [])) ] -> ()
+    | other -> failwith $"Unexpected scrutinees: %A{other}"
+
+[<Fact>]
+let ``A block scrutinee is measured against the match line, not the match keyword`` () =
+    let source =
+        "def f = { xs ->\n" +
+        "  def n = match\n" +
+        "      xs \\length\n" +
+        "    | 0 -> 1\n" +
+        "    | _ -> 0\n" +
+        "  n\n" +
+        "}"
+    match parseModule source with
+    | Result.Ok [ Def (ValueDef (_, "f", _, Kind (Lambda (_, Kind (Block [ DefStatement (_, _, _, Kind (Match ([ Kind (Pipe _) ], _))); _ ]))))) ] -> ()
+    | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
+    | Result.Error err -> failwith $"Parse failed: {err}"
+
+[<Fact>]
+let ``A block scrutinee indented no more than the arms is an error`` () =
+    match scrutineesOf "  match\n    xs \\length\n    | 0 -> 1\n    | _ -> 0" with
+    | Result.Error _ -> ()
+    | other -> failwith $"Expected a parse error, got %A{other}"
+
+[<Fact>]
+let ``A block scrutinee indented no more than the match is an error`` () =
+    match scrutineesOf "    match\n    xs \\length\n  | 0 -> 1\n  | _ -> 0" with
+    | Result.Error _ -> ()
+    | other -> failwith $"Expected a parse error, got %A{other}"
+
 [<Fact>]
 let ``Or-patterns work in pattern lambdas and with several scrutinees`` () =
     match parseModule "def f = { | 0, _ | _, 0 -> \"axis\" | _, _ -> \"plane\" }" with
