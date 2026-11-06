@@ -44,7 +44,9 @@ type private CheckedModule =
       Subst: Subst
       /// The types inference recorded by node, unresolved: only the root module's are resolved (see `compileWith`).
       RawExprTypes: Map<NodeId, Ty>
-      RawCalleeTypes: Map<NodeId, Ty> }
+      RawCalleeTypes: Map<NodeId, Ty>
+      /// The symbols of the module's own exported definitions, by name: not those of what it imports.
+      Exports: Map<string, Symbol> }
 
 module Compiler =
     let private normalizeSource (source: string) =
@@ -253,14 +255,15 @@ module Compiler =
         |> Map.fold (fun acc key value ->
             if Map.containsKey key acc then acc else acc |> Map.add key value) target
 
-    let private extendEnvWithImport (env: TypeEnv) (qualifierOpt: string option) (types: Map<string, Ty>) =
+    /// Brings an imported module's exported values into scope, as references to their symbols (`symbols`, by name).
+    let private extendEnvWithImport (env: TypeEnv) (qualifierOpt: string option) (types: Map<string, Ty>) (symbols: Map<string, SymbolId>) =
         types
         |> Map.fold (fun acc name ty ->
             let importedName =
                 match qualifierOpt with
                 | Some qualifier -> $"{qualifier}.{name}"
                 | None -> name
-            acc |> TypeEnv.extend importedName (TypeEnv.mono ty)) env
+            acc |> TypeEnv.declare importedName (symbols |> Map.tryFind name) (TypeEnv.mono ty)) env
 
     let private tryParseLineColumn (message: string) : (int * int) option =
         let patterns =
@@ -279,9 +282,9 @@ module Compiler =
             else
                 None)
 
-    let private parseWithDiagnostics (filePath: string) (source: string) : Result<Module, Diagnostic list> =
-        match parseModuleFile filePath source with
-        | Result.Ok ast -> Ok ast
+    let private parseWithDiagnostics (filePath: string) (source: string) : Result<Module * DeclaredNames, Diagnostic list> =
+        match parseModuleFileWithNames filePath source with
+        | Result.Ok parsed -> Ok parsed
         | Result.Error err ->
             match tryParseLineColumn err with
             | Some (line, col) -> Error [ Diagnostics.errorAt err (line, col) ]
@@ -461,7 +464,7 @@ module Compiler =
         | items, entryCalls, [] ->
             let entryImport =
                 if not entryCalls.IsEmpty && not (importsModule entryContextModule items) then
-                    [ Import [ { Source = ModuleImport entryContextModule; Alias = None } ] ]
+                    [ Import [ { Source = ModuleImport entryContextModule; Alias = None; Span = SourceSpan.none } ] ]
                 else
                     []
             Ok (entryImport @ items @ entryCalls)
@@ -541,20 +544,20 @@ module Compiler =
             let resolved =
                 parseWithDiagnostics (sourceFileName origin) source
                 |> Result.mapError (fun diagnostics -> Parsed, diagnostics)
-                |> Result.bind (fun ast ->
+                |> Result.bind (fun (ast, declared) ->
                     applyAttributes (desugar ast)
-                    |> Result.map (fun desugared -> ast, desugared)
+                    |> Result.map (fun desugared -> ast, declared, desugared)
                     |> Result.mapError (fun diagnostics -> Desugared, diagnostics))
             match resolved with
             | Result.Error failure -> Error failure
-            | Result.Ok (ast, desugared) ->
+            | Result.Ok (ast, declared, desugared) ->
                 let imports = collectImports desugared
                 let mutable env =
                     match origin with
                     | StandardLibraryModule _ -> Intrinsics.typeEnv
                     | SourceFile _
                     | InMemory -> TypeEnv.empty
-                let mutable state = NyxCompiler.Infer.emptyState
+                let mutable state = { NyxCompiler.Infer.emptyState with Declared = declared }
                 let mutable errors: Diagnostic list = []
                 let mutable inlined: TopLevelItem list = []
                 let mergeImport (item: ImportItem) (imported: CheckedModule) =
@@ -565,8 +568,32 @@ module Compiler =
                         imported.Typed.Types |> Map.filter (fun name _ -> exportedValues.Contains name)
                     let exportedTypeDefs =
                         imported.Typed.TypeDefs |> Map.filter (fun name _ -> exportedTypes.Contains name)
-                    env <- extendEnvWithImport env qualifier exportedValueTypes
-                    state <- { state with TypeDefs = mergeTypeDefs state.TypeDefs exportedTypeDefs }
+                    // The exported definitions, declared in the imported module's file.
+                    let exportedSymbols =
+                        imported.Exports
+                        |> Map.filter (fun name _ -> exportedValues.Contains name)
+                        |> Map.values
+                        |> Seq.map (fun symbol -> symbol.Id, symbol)
+                        |> Map.ofSeq
+                    env <- extendEnvWithImport env qualifier exportedValueTypes (imported.Exports |> Map.map (fun _ symbol -> symbol.Id))
+                    // The import is a symbol of its own, unless the compiler made it up (for `@entry`).
+                    let importSymbols, importedThrough =
+                        if SourceSpan.isNone item.Span then
+                            Map.empty, state.ImportedThrough
+                        else
+                            let name =
+                                match item.Alias, item.Source with
+                                | Some alias, _ -> alias
+                                | None, ModuleImport moduleName -> moduleName
+                                | None, PathImport path -> path
+                            let import = { Id = SymbolId.next (); Name = name; Kind = ImportedModule; Declaration = item.Span; IsExported = false }
+                            Map.ofList [ import.Id, import ],
+                            exportedSymbols |> Map.fold (fun acc id _ -> acc |> Map.add id import.Id) state.ImportedThrough
+                    state <-
+                        { state with
+                            TypeDefs = mergeTypeDefs state.TypeDefs exportedTypeDefs
+                            Symbols = Seq.fold (fun acc (KeyValue(id, symbol)) -> acc |> Map.add id symbol) state.Symbols (Seq.append exportedSymbols importSymbols)
+                            ImportedThrough = importedThrough }
                     inlined <- inlined @ inlinedItemsForImport item imported
                 for item in imports do
                     match StandardLibrary.tryModuleName item with
@@ -625,14 +652,25 @@ module Compiler =
                                       Items = resolvedItems
                                       // Filled in for the root module only, by `compileWith`.
                                       ExprTypes = Map.empty
-                                      CalleeTypes = Map.empty }
+                                      CalleeTypes = Map.empty
+                                      Symbols = state.Symbols
+                                      References = state.References
+                                      ImportReferences = state.ImportReferences }
                                  Own = own
                                  Inlined = inlined
                                  Name = declaredModuleName desugared
                                  Syntax = ast
                                  Subst = subst
                                  RawExprTypes = state.ExprTypes
-                                 RawCalleeTypes = state.CalleeTypes }
+                                 RawCalleeTypes = state.CalleeTypes
+                                 // Only declarations the module made itself are in `DeclarationSymbols`.
+                                 Exports =
+                                    state.DeclarationSymbols
+                                    |> Map.values
+                                    |> Seq.map (fun id -> state.Symbols.[id])
+                                    |> Seq.filter (fun symbol -> symbol.Kind = TopLevelValue && symbol.IsExported)
+                                    |> Seq.map (fun symbol -> symbol.Name, symbol)
+                                    |> Map.ofSeq }
 
     let parse (source: string) : Result<Module, Diagnostic list> =
         match parseModule source with

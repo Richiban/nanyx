@@ -1,9 +1,11 @@
 namespace NyxCompiler
 
-/// A type scheme with generalized variables.
+/// A type scheme with generalized variables, and the declaration the name it is bound to refers to (none for a
+/// built-in, or a name the compiler made up).
 type TypeScheme =
     { Quantified: Set<int>
-      Type: Ty }
+      Type: Ty
+      Symbol: SymbolId option }
 
 type TypeEnv = Map<string, TypeScheme>
 
@@ -13,12 +15,17 @@ module TypeEnv =
     let extend (name: string) (scheme: TypeScheme) (env: TypeEnv) =
         env |> Map.add name scheme
 
+    /// Binds `name` to `scheme` as a reference to the declaration `symbol`.
+    let declare (name: string) (symbol: SymbolId option) (scheme: TypeScheme) (env: TypeEnv) =
+        env |> Map.add name { scheme with Symbol = symbol }
+
     let tryFind (name: string) (env: TypeEnv) =
         env |> Map.tryFind name
 
     let mono (ty: Ty) : TypeScheme =
         { Quantified = Set.empty
-          Type = ty }
+          Type = ty
+          Symbol = None }
 
     let rec freeTyVars (ty: Ty) : Set<int> =
         match ty with
@@ -56,4 +63,5 @@ module TypeEnv =
         let envVars = freeEnvVars env
         let tyVars = freeTyVars ty
         { Quantified = Set.difference tyVars envVars
-          Type = ty }
+          Type = ty
+          Symbol = None }
