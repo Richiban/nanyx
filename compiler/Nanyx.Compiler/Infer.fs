@@ -600,6 +600,35 @@ let private resolveSoFar (state: InferState) (ty: Ty) : Ty =
         | Ok subst -> Unifier.apply subst ty
         | Error _ -> ty
 
+/// A def's type `ty` generalised against `env`, both resolved against the constraints gathered so far. Unresolved,
+/// a local bound to a call's result is a type variable, and generalising that would make every later use a fresh,
+/// unrelated variable (and let a match on it skip the exhaustiveness check, #61); a variable `env` only has once
+/// resolved, as a parameter's `#some(a) | r` does, would be generalised as if nothing else had it.
+///
+/// Every union rest variable that nothing can add tags to is solved to the empty union first:
+/// `#some(5) \mapOption f` is a `#some(string)`, not a `#some(string) | r`. Such a variable is in no function's
+/// input (see `Unifier.outputOnlyRestVars`), was not named in an annotation, and is not shared with `env`, where a
+/// later constraint could still give it tags. The constraint solving it is added to the state, so the types
+/// recorded for the def's expressions lose it too.
+let private generalizeDef (env: TypeEnv) (state: InferState) (ty: Ty) : TypeScheme * InferState =
+    match Unifier.unify state.Constraints with
+    | Error _ -> TypeEnv.generalize env ty, state
+    | Ok subst ->
+        let resolved = Unifier.apply subst ty
+        let envVars =
+            TypeEnv.freeEnvVars env
+            |> Seq.map (fun id -> TypeEnv.freeTyVars (Unifier.apply subst (TyVar { Id = id; Name = None })))
+            |> Set.unionMany
+        let closed =
+            Unifier.outputOnlyRestVars resolved
+            |> List.filter (fun v -> v.Name.IsNone && not (envVars.Contains v.Id))
+        let bottom = TyUnion []
+        let closedTy = Unifier.apply (closed |> List.map (fun v -> v.Id, bottom) |> Map.ofList) resolved
+        { Quantified = Set.difference (TypeEnv.freeTyVars closedTy) envVars
+          Type = closedTy
+          Symbol = None },
+        closed |> List.fold (fun st v -> addConstraint (TyVar v) bottom st) state
+
 /// Arithmetic and ordering work on `int` and `float`. Without numeric type classes yet, an operation is on
 /// floats when either operand is already known to be one, and defaults to `int` otherwise.
 let private numericOperandType (state: InferState) (leftTy: Ty) (rightTy: Ty) =
@@ -1677,10 +1706,8 @@ and inferBlock (env: TypeEnv) (state: InferState) (block: Expression) (statement
                                 finalState
                                 |> recordSymbolType symbol declaredTy
                                 |> recordAnnotated symbol expectedDeclaredOpt.IsSome
-                            // A local bound to a call's result has a type variable here; generalising that as
-                            // it is would make every later use a fresh, unrelated variable (and let a match
-                            // on it skip the exhaustiveness check, #61). Resolve it first.
-                            let scheme = TypeEnv.generalize env' (resolveSoFar current declaredTy)
+                            let scheme, generalizedState = generalizeDef env' current declaredTy
+                            current <- generalizedState
                             env' <- TypeEnv.declare name symbol scheme env'
                             typedStatements <- typedStatements @ [ TypedDefStatement(isExport, name, typeOpt, typedExpr) ]
                             lastExpr <- typedExpr
@@ -1886,10 +1913,11 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
                     | Error err -> errors <- err
                     | Ok () ->
                         // Generalize against an env without this def's own pre-binding, so the fresh
-                        // variable it was pre-bound at does not stop its type being generalized. Resolve it
-                        // first, as a local def does: `{ x -> x + 1 }` is `α -> α` until its constraints are
+                        // variable it was pre-bound at does not stop its type being generalized. It is resolved
+                        // first, as a local def's is: `{ x -> x + 1 }` is `α -> α` until its constraints are
                         // applied, and generalising that would make every use `α -> α` too.
-                        let scheme = TypeEnv.generalize (env |> Map.remove name) (resolveSoFar finalState declaredTy)
+                        let scheme, generalizedState = generalizeDef (env |> Map.remove name) state declaredTy
+                        state <- generalizedState
                         env <- TypeEnv.declare name symbol scheme env
                         types <- types |> Map.add name declaredTy
                         items <- items @ [ TypedDef (TypedValueDef(isExport, name, typeOpt, typedExpr)) ]

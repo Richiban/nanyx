@@ -99,6 +99,8 @@ module Unifier =
             | None -> $"#{name}"
         | TyApply(name, [ arg ]) -> $"{name}({printTy false arg})"
         | TyApply(name, args) -> $"{name}({items args})"
+        // A union of no tags has no values: the bottom type.
+        | TyUnion [] -> "undefined"
         | TyUnion members ->
             members
             |> List.map grouped
@@ -202,14 +204,18 @@ module Unifier =
             fields |> Map.map (fun _ v -> apply subst v) |> TyRecord
         | TyTag(name, payload) -> TyTag(name, payload |> Option.map (apply subst))
         | TyApply(name, args) -> TyApply(name, args |> List.map (apply subst))
-        // A rest variable solved to a union (`r` := `#notFound`) is spliced into the union it is the rest of.
+        // A rest variable solved to a union (`r` := `#notFound`) is spliced into the union it is the rest of. One
+        // solved to the empty union leaves the others; when that is just one, the union is that one.
         | TyUnion items ->
-            items
-            |> List.collect (fun item ->
-                match apply subst item with
-                | TyUnion inner -> inner
-                | applied -> [ applied ])
-            |> TyUnion
+            let spliced =
+                items
+                |> List.collect (fun item ->
+                    match apply subst item with
+                    | TyUnion inner -> inner
+                    | applied -> [ applied ])
+            match spliced with
+            | [ single ] when items.Length > 1 -> single
+            | _ -> TyUnion spliced
         | TyPrimitive _ -> ty
 
     let private greekLetters = "αβγδεζηθικλμνξοπρστυφχψω"
@@ -291,6 +297,34 @@ module Unifier =
     let tysToDisplayStrings (names: TypeVarNames) (tys: Ty list) : string list =
         let renamed = displayRenaming names (TyApply("", tys))
         tys |> List.map (apply renamed >> tyToString)
+
+    /// The rest variables of `ty` that only stand for tags it gives out: ones that appear in no function's input.
+    /// Nothing can add a tag to such a union, so it has no more tags than those written: its rest is empty. In
+    /// `#some(int), (int -> string) -> #some(string) | r`, `r` is; in `#some(a) | r -> #some(a) | r` it is not,
+    /// as what the function is given more of it gives back. A nominal's variables are taken to be in an input,
+    /// as its underlying type is not shown.
+    let outputOnlyRestVars (ty: Ty) : TyVar list =
+        // Each variable once for each time it appears, with whether it is a union's rest there and whether that
+        // is in an input.
+        let rec collect (input: bool) ty : (TyVar * bool * bool) list =
+            match ty with
+            | TyVar v -> [ v, false, input ]
+            | TyPrimitive _ -> []
+            | TyNominal(_, underlying, _) -> collect true underlying
+            | TyFunc(arg, ret) -> collect (not input) arg @ collect input ret
+            | TyRecord fields -> fields |> Map.toList |> List.collect (snd >> collect input)
+            | TyTag(_, payload) -> payload |> Option.map (collect input) |> Option.defaultValue []
+            | TyApply(_, args) -> args |> List.collect (collect input)
+            | TyUnion items ->
+                items
+                |> List.collect (function
+                    | TyVar v -> [ v, true, input ]
+                    | item -> collect input item)
+        let occurrences = collect false ty
+        let inInput = occurrences |> List.choose (fun (v, _, input) -> if input then Some v.Id else None) |> Set.ofList
+        occurrences
+        |> List.choose (fun (v, isRest, _) -> if isRest && not (inInput.Contains v.Id) then Some v else None)
+        |> List.distinctBy (fun v -> v.Id)
 
     let rec occurs (varId: int) (ty: Ty) : bool =
         match ty with
