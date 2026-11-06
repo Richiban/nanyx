@@ -40,17 +40,26 @@ const node_1 = require("vscode-languageclient/node");
 const compiler_1 = require("./compiler");
 const COMMAND_DOWNLOAD = "nanyx.downloadCompiler";
 const COMMAND_RESTART = "nanyx.restartServer";
+/** When the extension last asked GitHub for a newer compiler release (milliseconds since the epoch). */
+const LAST_UPDATE_CHECK = "nanyx.lastUpdateCheck";
+const UPDATE_CHECK_INTERVAL = 24 * 60 * 60 * 1000;
 let client;
 let outputChannel;
 let declinedDownload = false;
+let declinedUpdate = false;
 async function activate(context) {
     outputChannel = vscode.window.createOutputChannel("Nanyx");
     context.subscriptions.push(outputChannel);
     context.subscriptions.push(vscode.commands.registerCommand(COMMAND_DOWNLOAD, async () => {
         declinedDownload = false;
-        const executable = await promptAndDownload(context);
+        const settings = (0, compiler_1.readSettings)();
+        const version = await (0, compiler_1.versionToDownload)(context, settings, log);
+        const executable = await downloadAndRecordCheck(context, settings, version);
         if (executable) {
             await restartClient(context, executable);
+            if ((0, compiler_1.tracksNewestRelease)(settings)) {
+                (0, compiler_1.removeDownloadedExcept)(context, version);
+            }
         }
     }), vscode.commands.registerCommand(COMMAND_RESTART, () => startOrRestart(context)), vscode.workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration("nanyx.path") ||
@@ -65,41 +74,90 @@ async function activate(context) {
 async function deactivate() {
     await stopClient();
 }
-/** Starts the language server with whatever `nanyx` can be found, downloading one if the user agrees. */
+/**
+ * Starts the language server with whatever `nanyx` can be found, downloading one if the user agrees.
+ * When it is a downloaded copy, a newer compiler release is looked for afterwards, never before.
+ */
 async function startOrRestart(context) {
-    let executable;
+    const settings = (0, compiler_1.readSettings)();
+    let located;
     try {
-        executable = (0, compiler_1.locateCompiler)(context, (0, compiler_1.readSettings)());
+        located = (0, compiler_1.locateCompiler)(context, settings);
     }
     catch (error) {
         void vscode.window.showErrorMessage(`Nanyx: ${messageOf(error)}`);
         return;
     }
-    if (!executable) {
-        executable = await promptAndDownload(context);
-    }
+    const executable = located?.executable ?? (await promptAndDownload(context, settings));
     if (executable) {
         await restartClient(context, executable);
     }
+    if (located?.downloadedVersion && (0, compiler_1.tracksNewestRelease)(settings)) {
+        void checkForUpdate(context, settings, located.downloadedVersion);
+    }
 }
 /** Offers to download the compiler once per session; returns the executable if the user agreed and it worked. */
-async function promptAndDownload(context) {
+async function promptAndDownload(context, settings) {
     if (declinedDownload) {
         return undefined;
     }
-    const settings = (0, compiler_1.readSettings)();
+    const version = await (0, compiler_1.versionToDownload)(context, settings, log);
     const download = "Download";
-    const choice = await vscode.window.showInformationMessage(`The Nanyx compiler was not found on PATH. Download nanyx ${settings.version} for this platform? ` +
+    const choice = await vscode.window.showInformationMessage(`The Nanyx compiler was not found on PATH. Download nanyx ${version} for this platform? ` +
         "(It is kept in the extension's storage; set nanyx.path to use your own build instead.)", download, "Not now");
     if (choice !== download) {
         declinedDownload = true;
         return undefined;
     }
+    return downloadAndRecordCheck(context, settings, version);
+}
+async function downloadAndRecordCheck(context, settings, version) {
+    const executable = await download(context, settings, version);
+    if (executable && (0, compiler_1.tracksNewestRelease)(settings)) {
+        // The version was just chosen from GitHub's list, so there is nothing newer to look for today.
+        await context.globalState.update(LAST_UPDATE_CHECK, Date.now());
+    }
+    return executable;
+}
+/**
+ * Looks for a compiler release newer than the downloaded copy in use, at most once a day, and offers
+ * to download it and restart the server. Being offline or rate limited just means no offer.
+ */
+async function checkForUpdate(context, settings, installed) {
+    if (declinedUpdate || Date.now() - context.globalState.get(LAST_UPDATE_CHECK, 0) < UPDATE_CHECK_INTERVAL) {
+        return;
+    }
+    await context.globalState.update(LAST_UPDATE_CHECK, Date.now());
+    let newest;
     try {
-        return await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Downloading nanyx ${settings.version}`, cancellable: true }, (progress, token) => (0, compiler_1.downloadCompiler)(context, settings, progress, token));
+        newest = await (0, compiler_1.newestRelease)();
     }
     catch (error) {
-        outputChannel.appendLine(`Download failed: ${messageOf(error)}`);
+        log(`Could not check for a newer compiler release: ${messageOf(error)}`);
+        return;
+    }
+    if (!newest || (0, compiler_1.compareVersions)(newest, installed) <= 0) {
+        return;
+    }
+    const update = "Update";
+    const choice = await vscode.window.showInformationMessage(`Nanyx compiler ${newest} is available (this is ${installed}). Download it and restart the language server?`, update, "Not now");
+    if (choice !== update) {
+        declinedUpdate = true;
+        return;
+    }
+    const executable = await download(context, settings, newest);
+    if (executable) {
+        await restartClient(context, executable);
+        (0, compiler_1.removeDownloadedExcept)(context, newest);
+    }
+}
+/** Downloads a compiler release with a progress notification; returns the executable, or `undefined` after reporting a failure. */
+async function download(context, settings, version) {
+    try {
+        return await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Downloading nanyx ${version}`, cancellable: true }, (progress, token) => (0, compiler_1.downloadCompiler)(context, settings, version, progress, token));
+    }
+    catch (error) {
+        log(`Download failed: ${messageOf(error)}`);
         void vscode.window.showErrorMessage(`Nanyx: ${messageOf(error)}`);
         return undefined;
     }
@@ -118,7 +176,7 @@ async function restartClient(context, executable) {
         documentSelector: [{ language: "nanyx" }],
         outputChannel
     };
-    outputChannel.appendLine(`Starting the Nanyx language server: ${executable} ${args.join(" ")}`);
+    log(`Starting the Nanyx language server: ${executable} ${args.join(" ")}`);
     client = new node_1.LanguageClient("nanyx", "Nanyx Language Server", serverOptions, clientOptions);
     try {
         await client.start();
@@ -135,6 +193,9 @@ async function stopClient() {
         await stopping.stop().catch(() => undefined);
         await stopping.dispose();
     }
+}
+function log(line) {
+    outputChannel.appendLine(line);
 }
 function messageOf(error) {
     return error instanceof Error ? error.message : String(error);

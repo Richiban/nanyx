@@ -33,12 +33,18 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_DOWNLOAD_URL = exports.DEFAULT_COMPILER_VERSION = void 0;
+exports.DEFAULT_DOWNLOAD_URL = exports.MINIMUM_COMPILER_VERSION = void 0;
 exports.readSettings = readSettings;
+exports.tracksNewestRelease = tracksNewestRelease;
 exports.locateCompiler = locateCompiler;
+exports.newestDownloaded = newestDownloaded;
+exports.versionToDownload = versionToDownload;
+exports.newestRelease = newestRelease;
+exports.compareVersions = compareVersions;
 exports.runtimeIdentifier = runtimeIdentifier;
 exports.downloadUrl = downloadUrl;
 exports.downloadCompiler = downloadCompiler;
+exports.removeDownloadedExcept = removeDownloadedExcept;
 const child_process_1 = require("child_process");
 const fs = __importStar(require("fs"));
 const https = __importStar(require("https"));
@@ -46,36 +52,110 @@ const os = __importStar(require("os"));
 const path = __importStar(require("path"));
 const vscode = __importStar(require("vscode"));
 /**
- * The compiler release the extension downloads when it finds no `nanyx` of its own. Bump it with each
- * compiler release the extension should use (the `<Version>` in NanyxCompiler.Cli.csproj at the time).
+ * The oldest compiler release the extension works with. The extension downloads the newest compiler
+ * release at or above it, so bump it only when the extension starts relying on something a compiler
+ * release added (0.5.2: `nanyx lsp --latin-type-vars`).
  */
-exports.DEFAULT_COMPILER_VERSION = "0.5.2";
+exports.MINIMUM_COMPILER_VERSION = "0.5.2";
 /**
  * Where a release lives. `${version}`, `${rid}` and `${ext}` are substituted; this is what the
  * `nanyx.downloadUrl` setting overrides.
  */
 exports.DEFAULT_DOWNLOAD_URL = "https://github.com/nanyx-lang/nanyx/releases/download/compiler/${version}/nanyx-${version}-${rid}.${ext}";
+/** Lists the repository's releases. Compiler and extension releases share it, so its single "latest release" is no use. */
+const RELEASES_API = "https://api.github.com/repos/nanyx-lang/nanyx/releases?per_page=100";
+const RELEASE_TAG_PREFIX = "compiler/";
 const EXECUTABLE = process.platform === "win32" ? "nanyx.exe" : "nanyx";
 function readSettings() {
     const config = vscode.workspace.getConfiguration("nanyx");
+    const downloadUrl = config.get("downloadUrl", "").trim();
     return {
         path: config.get("path", "").trim(),
-        version: config.get("compilerVersion", "").trim() || exports.DEFAULT_COMPILER_VERSION,
-        downloadUrl: config.get("downloadUrl", "").trim() || exports.DEFAULT_DOWNLOAD_URL
+        pinnedVersion: config.get("compilerVersion", "").trim(),
+        downloadUrl: downloadUrl || exports.DEFAULT_DOWNLOAD_URL,
+        customDownloadUrl: downloadUrl !== ""
     };
+}
+/** Whether the extension picks the compiler release itself, which is when it can look for newer ones. */
+function tracksNewestRelease(settings) {
+    return !settings.pinnedVersion && !settings.customDownloadUrl;
 }
 /**
  * Finds the `nanyx` executable to run the language server with, in this order: the `nanyx.path`
- * setting, PATH, then a copy this extension downloaded earlier. Returns `undefined` when none exists.
+ * setting, PATH, then a copy this extension downloaded earlier (the pinned release, or else the newest
+ * one at or above the minimum). Returns `undefined` when none exists.
  */
 function locateCompiler(context, settings) {
     if (settings.path) {
         if (fs.existsSync(settings.path)) {
-            return settings.path;
+            return { executable: settings.path };
         }
         throw new Error(`nanyx.path is set to "${settings.path}", but no file exists there.`);
     }
-    return findOnPath() ?? findDownloaded(context, settings);
+    const onPath = findOnPath();
+    if (onPath) {
+        return { executable: onPath };
+    }
+    const downloaded = settings.pinnedVersion
+        ? findDownloaded(context).find((copy) => copy.version === settings.pinnedVersion)
+        : newestDownloaded(context);
+    return downloaded && { executable: downloaded.executable, downloadedVersion: downloaded.version };
+}
+/** The newest downloaded copy at or above the minimum version. */
+function newestDownloaded(context) {
+    return findDownloaded(context).find((copy) => compareVersions(copy.version, exports.MINIMUM_COMPILER_VERSION) >= 0);
+}
+/**
+ * The release to download: the pinned one; the minimum when downloading from a custom URL; otherwise
+ * the newest compiler release on GitHub, falling back to the newest downloaded copy and then the
+ * minimum when GitHub cannot be asked.
+ */
+async function versionToDownload(context, settings, log) {
+    if (settings.pinnedVersion) {
+        return settings.pinnedVersion;
+    }
+    if (settings.customDownloadUrl) {
+        return exports.MINIMUM_COMPILER_VERSION;
+    }
+    try {
+        const newest = await newestRelease();
+        if (newest) {
+            return newest;
+        }
+        log(`No compiler release at or above ${exports.MINIMUM_COMPILER_VERSION} is published on GitHub.`);
+    }
+    catch (error) {
+        log(`Could not list the compiler releases: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return newestDownloaded(context)?.version ?? exports.MINIMUM_COMPILER_VERSION;
+}
+/**
+ * The newest published (not draft or prerelease) compiler release at or above the minimum, or
+ * `undefined` when there is none. Throws when GitHub cannot be reached or refuses (e.g. rate limiting).
+ */
+async function newestRelease() {
+    const releases = JSON.parse(await fetchText(RELEASES_API));
+    return releases
+        .filter((release) => !release.draft && !release.prerelease && release.tag_name?.startsWith(RELEASE_TAG_PREFIX))
+        .map((release) => release.tag_name.slice(RELEASE_TAG_PREFIX.length))
+        .filter((version) => parseVersion(version) && compareVersions(version, exports.MINIMUM_COMPILER_VERSION) >= 0)
+        .sort(compareVersions)
+        .pop();
+}
+/** Compares `major.minor.patch` versions; anything unparseable sorts first. */
+function compareVersions(a, b) {
+    const left = parseVersion(a) ?? [-1, -1, -1];
+    const right = parseVersion(b) ?? [-1, -1, -1];
+    for (let i = 0; i < 3; i++) {
+        if (left[i] !== right[i]) {
+            return left[i] - right[i];
+        }
+    }
+    return 0;
+}
+function parseVersion(version) {
+    const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+    return match ? match.slice(1).map(Number) : undefined;
 }
 /** The platform's runtime identifier as the compiler release names it, or `undefined` when there is no build for it. */
 function runtimeIdentifier() {
@@ -91,26 +171,26 @@ function runtimeIdentifier() {
             return undefined;
     }
 }
-function downloadUrl(settings, rid) {
+function downloadUrl(settings, version, rid) {
     const ext = rid.startsWith("win-") ? "zip" : "tar.gz";
     return settings.downloadUrl
-        .replace(/\$\{version\}/g, settings.version)
+        .replace(/\$\{version\}/g, version)
         .replace(/\$\{rid\}/g, rid)
         .replace(/\$\{ext\}/g, ext);
 }
 /**
- * Downloads the compiler release for this platform into the extension's global storage and returns
+ * Downloads a compiler release for this platform into the extension's global storage and returns
  * the path of the executable. Throws with a readable message when offline or when the release is missing.
  */
-async function downloadCompiler(context, settings, progress, token) {
+async function downloadCompiler(context, settings, version, progress, token) {
     const rid = runtimeIdentifier();
     if (!rid) {
         throw new Error(`There is no Nanyx compiler build for ${process.platform}/${process.arch}. ` +
             "Build it from source and point the nanyx.path setting at it.");
     }
-    const url = downloadUrl(settings, rid);
-    const targetDir = installDir(context, settings, rid);
-    const archive = path.join(os.tmpdir(), `nanyx-${settings.version}-${rid}-${process.pid}.${url.endsWith(".zip") ? "zip" : "tar.gz"}`);
+    const url = downloadUrl(settings, version, rid);
+    const targetDir = installDir(context, version, rid);
+    const archive = path.join(os.tmpdir(), `nanyx-${version}-${rid}-${process.pid}.${url.endsWith(".zip") ? "zip" : "tar.gz"}`);
     progress.report({ message: `downloading ${url}` });
     await fetchToFile(url, archive, token);
     try {
@@ -134,16 +214,44 @@ async function downloadCompiler(context, settings, progress, token) {
         fs.rmSync(archive, { force: true });
     }
 }
-function installDir(context, settings, rid) {
-    return path.join(context.globalStorageUri.fsPath, `nanyx-${settings.version}-${rid}`);
+/** Deletes the downloaded copies other than `keep`. One still in use (e.g. by another window on Windows) is left for next time. */
+function removeDownloadedExcept(context, keep) {
+    for (const copy of findDownloaded(context)) {
+        if (copy.version !== keep) {
+            try {
+                fs.rmSync(path.dirname(copy.executable), { recursive: true, force: true });
+            }
+            catch {
+                // In use; it goes on a later update.
+            }
+        }
+    }
 }
-function findDownloaded(context, settings) {
+function installDir(context, version, rid) {
+    return path.join(context.globalStorageUri.fsPath, `nanyx-${version}-${rid}`);
+}
+/** The copies this extension downloaded for this platform, newest first. */
+function findDownloaded(context) {
     const rid = runtimeIdentifier();
     if (!rid) {
-        return undefined;
+        return [];
     }
-    const executable = path.join(installDir(context, settings, rid), EXECUTABLE);
-    return fs.existsSync(executable) ? executable : undefined;
+    let entries;
+    try {
+        entries = fs.readdirSync(context.globalStorageUri.fsPath);
+    }
+    catch {
+        return [];
+    }
+    const suffix = `-${rid}`;
+    return entries
+        .filter((entry) => entry.startsWith("nanyx-") && entry.endsWith(suffix))
+        .map((entry) => ({
+        version: entry.slice("nanyx-".length, -suffix.length),
+        executable: path.join(context.globalStorageUri.fsPath, entry, EXECUTABLE)
+    }))
+        .filter((copy) => fs.existsSync(copy.executable))
+        .sort((a, b) => compareVersions(b.version, a.version));
 }
 function findOnPath() {
     const directories = (process.env.PATH ?? "").split(path.delimiter).filter(Boolean);
@@ -154,6 +262,25 @@ function findOnPath() {
         }
     }
     return undefined;
+}
+/** Fetches a small text response, such as a GitHub API listing. */
+function fetchText(url) {
+    return new Promise((resolve, reject) => {
+        const request = https.get(url, { headers: { "User-Agent": "nanyx-vscode", Accept: "application/vnd.github+json" }, timeout: 10000 }, (response) => {
+            const status = response.statusCode ?? 0;
+            if (status !== 200) {
+                response.resume();
+                reject(new Error(status === 403 || status === 429 ? `GitHub is rate limiting requests (HTTP ${status}).` : `${url} returned HTTP ${status}.`));
+                return;
+            }
+            const chunks = [];
+            response.on("data", (chunk) => chunks.push(chunk));
+            response.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+            response.on("error", reject);
+        });
+        request.on("timeout", () => request.destroy(new Error(`${new URL(url).host} did not answer in time.`)));
+        request.on("error", reject);
+    });
 }
 /** Downloads `url` to `file`, following the redirects GitHub release assets go through. */
 function fetchToFile(url, file, token, redirects = 0) {
