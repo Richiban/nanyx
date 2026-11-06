@@ -229,7 +229,7 @@ and private expressionsOfPattern (pattern: Pattern) =
     | TagPattern (_, payload) -> payload |> Option.toList |> List.collect expressionsOfPattern
 
 and private expressionsOfType (typeExpr: TypeExpr) =
-    match typeExpr with
+    match typeExpr.Kind with
     | TypeName _
     | TypeVar _
     | TypeUnit -> []
@@ -291,9 +291,69 @@ let private blockStatements (expr: Expression) =
     | Block statements -> statements
     | _ -> []
 
-/// Checks that every expression, pattern and statement parsed from `source` has a span within it that starts and
-/// ends on a non-whitespace character, whose line and column agree with its offset. Returns how many nodes it
-/// checked.
+/// The types annotating parameters.
+let private parameterTypes (parameters: (Identifier * TypeExpr option) list) = parameters |> List.collect (snd >> Option.toList)
+
+let private typesOfUse (binding: UseBinding) =
+    match binding with
+    | UseContextInstance (contextType, _) -> [ contextType ]
+    | UseValue _ -> []
+
+/// The type expressions an expression itself is written with (not those of the expressions in it).
+let private typesOfExpression (expr: Expression) =
+    match expr.Kind with
+    | Lambda (parameters, _) -> parameterTypes parameters
+    | ContextMemberAccess (contextType, _)
+    | ContextMemberCall (contextType, _, _) -> [ contextType ]
+    | UseIn (binding, _) -> typesOfUse binding
+    | _ -> []
+
+/// The type expressions a statement itself is written with.
+let private typesOfStatement (statement: Statement) =
+    match statement.Kind with
+    | DefStatement (_, _, typeOpt, _) -> Option.toList typeOpt
+    | TypeDefStatement (_, _, parameters, body) -> parameterTypes parameters @ [ body ]
+    | UseStatement binding -> typesOfUse binding
+    | ImportStatement _
+    | ExprStatement _ -> []
+
+/// The type expressions a top-level item is written with, and those of the items in a module block.
+let rec private typesOfItem (item: TopLevelItem) =
+    match item with
+    | Def (ValueDef (_, _, typeOpt, _)) -> Option.toList typeOpt
+    | Def (TypeDef (_, _, parameters, body)) -> parameterTypes parameters @ [ body ]
+    | ModuleBlock (_, items) -> items |> List.collect typesOfItem
+    | ModuleDecl _
+    | Import _
+    | Expr _
+    | Attribute _ -> []
+
+/// `typeExpr` and every type expression nested in it.
+let rec private typesWithin (typeExpr: TypeExpr) : TypeExpr list =
+    typeExpr ::
+        match typeExpr.Kind with
+        | TypeName _
+        | TypeVar _
+        | TypeUnit -> []
+        | TypeTuple types
+        | TypeUnion types
+        | TypeIntersection types
+        | TypeContext types
+        | TypeApply (_, types) -> types |> List.collect typesWithin
+        | TypeRecord fields ->
+            fields |> List.collect (function
+                | TypeField (_, _, _, fieldType, _)
+                | TypeMember (_, fieldType) -> fieldType |> Option.toList |> List.collect typesWithin)
+        | TypeFunc (input, output) -> typesWithin input @ typesWithin output
+        | TypeTag (_, payload) -> payload |> Option.toList |> List.collect typesWithin
+        | TypeOptional inner
+        | TypeConstraint (_, inner, _)
+        | TypeWhere (inner, _) -> typesWithin inner
+        | TypeWithContext (contexts, inner) -> (contexts |> List.collect typesWithin) @ typesWithin inner
+
+/// Checks that every expression, pattern, statement and type expression parsed from `source` has a span within it
+/// that starts and ends on a non-whitespace character, whose line and column agree with its offset. Returns how many
+/// nodes it checked.
 let private checkAllSpans (file: string) (rawSource: string) =
     // Spans are offsets into the source as the parser normalises it.
     let source = rawSource.Replace("\r\n", "\n").Replace("\r", "\n").TrimEnd()
@@ -304,6 +364,11 @@ let private checkAllSpans (file: string) (rawSource: string) =
     let expressions = module' |> List.collect expressionsOfItem
     let patterns = expressions |> List.collect armPatterns
     let statements = expressions |> List.collect blockStatements
+    let types =
+        (module' |> List.collect typesOfItem)
+        @ (expressions |> List.collect typesOfExpression)
+        @ (statements |> List.collect typesOfStatement)
+        |> List.collect typesWithin
     let check (span: SourceSpan) (describe: unit -> string) =
         if SourceSpan.isNone span then failwith $"No span: {describe ()}"
         if span.File <> file then failwith $"Wrong file: {describe ()}"
@@ -322,7 +387,9 @@ let private checkAllSpans (file: string) (rawSource: string) =
         check pattern.Span (fun () -> $"{file}: %A{pattern.Span} of pattern %A{pattern.Kind}")
     for statement in statements do
         check statement.Span (fun () -> $"{file}: %A{statement.Span} of statement %A{statement.Kind}")
-    expressions.Length + patterns.Length + statements.Length
+    for typeExpr in types do
+        check typeExpr.Span (fun () -> $"{file}: %A{typeExpr.Span} of type %A{typeExpr.Kind}")
+    expressions.Length + patterns.Length + statements.Length + types.Length
 
 [<Fact>]
 let ``an operator over parentheses or a lone spread spans the delimiters, and what is inside keeps its own span`` () =
@@ -546,6 +613,90 @@ let ``statements are equal wherever they were written`` () =
     let first = parse "def f = { x ->\n  def y = x\n  y\n}" |> lambdaStatements "f"
     let second = parse "def f = { x ->\n    def y =   x\n    y\n}" |> lambdaStatements "f"
     first.[0].Span |> should not' (equal second.[0].Span)
+    first |> should equal second
+    hash first |> should equal (hash second)
+    compare first second |> should equal 0
+
+/// The annotation of the top-level `def name` in `module'`.
+let private annotationOf name (module': Module) =
+    module'
+    |> List.tryPick (function
+        | Def (ValueDef (_, n, Some annotation, _)) when n = name -> Some annotation
+        | _ -> None)
+    |> Option.defaultWith (fun () -> failwith $"No annotated def {name} in %A{module'}")
+
+[<Fact>]
+let ``each type expression spans its text, and nested types span theirs`` () =
+    let source =
+        "def f: (int, string) -> list(a)? = f\n" +
+        "def g: int, int -> int = g\n" +
+        "def h: [Sum(int) + Console] int -> #some(n: int) | #none = h\n" +
+        "type Shape =\n  | #circle(r: float)\n  | #square(side: float)"
+    let module' = parse source
+    let f = annotationOf "f" module'
+    textOf source f.Span |> should equal "(int, string) -> list(a)?"
+    match f.Kind with
+    | TypeFunc (input, output) ->
+        // A bracketed tuple spans its brackets.
+        textOf source input.Span |> should equal "(int, string)"
+        match input.Kind with
+        | TypeTuple [ int; string ] ->
+            textOf source int.Span |> should equal "int"
+            textOf source string.Span |> should equal "string"
+        | other -> failwith $"Expected a tuple, got %A{other}"
+        textOf source output.Span |> should equal "list(a)?"
+        match output.Kind with
+        | TypeOptional list ->
+            textOf source list.Span |> should equal "list(a)"
+            match list.Kind with
+            | TypeApply ("list", [ a ]) -> textOf source a.Span |> should equal "a"
+            | other -> failwith $"Expected list(a), got %A{other}"
+        | other -> failwith $"Expected an optional, got %A{other}"
+    | other -> failwith $"Expected a function, got %A{other}"
+    // Bare parameters are a tuple from the first to the last.
+    let g = annotationOf "g" module'
+    textOf source g.Span |> should equal "int, int -> int"
+    match g.Kind with
+    | TypeFunc (input, _) -> textOf source input.Span |> should equal "int, int"
+    | other -> failwith $"Expected a function, got %A{other}"
+    let h = annotationOf "h" module'
+    textOf source h.Span |> should equal "[Sum(int) + Console] int -> #some(n: int) | #none"
+    match h.Kind with
+    | TypeWithContext ([ sum; console ], inner) ->
+        textOf source sum.Span |> should equal "Sum(int)"
+        textOf source console.Span |> should equal "Console"
+        textOf source inner.Span |> should equal "int -> #some(n: int) | #none"
+        match inner.Kind with
+        | TypeFunc (_, Kind (TypeUnion [ some; none ])) ->
+            textOf source some.Span |> should equal "#some(n: int)"
+            textOf source none.Span |> should equal "#none"
+        | other -> failwith $"Expected a function to a union, got %A{other}"
+    | other -> failwith $"Expected a type with contexts, got %A{other}"
+    // A union written with a leading bar starts at its first member.
+    match List.last module' with
+    | Def (TypeDef ("Shape", _, _, shape)) -> textOf source shape.Span |> should equal "#circle(r: float)\n  | #square(side: float)"
+    | other -> failwith $"Expected the Shape type, got %A{other}"
+
+[<Fact>]
+let ``the types of lambda parameters, context accesses and use bindings span their text`` () =
+    let source =
+        "def f = { x: int, y -> ToString(list(a)).toString(x) }\n" +
+        "def g = { z ->\n  use Sum(int) = (sum = add)\n  0\n}"
+    let module' = parse source
+    match (valueOf "f" module').Kind with
+    | Lambda ([ ("x", Some int); ("y", None) ], Kind (ContextMemberCall (context, "toString", _))) ->
+        textOf source int.Span |> should equal "int"
+        textOf source context.Span |> should equal "ToString(list(a))"
+    | other -> failwith $"Expected a lambda calling a context member, got %A{other}"
+    match lambdaStatements "g" module' with
+    | Kind (UseStatement (UseContextInstance (context, _))) :: _ -> textOf source context.Span |> should equal "Sum(int)"
+    | other -> failwith $"Expected a use of a context instance, got %A{other}"
+
+[<Fact>]
+let ``type expressions are equal wherever they were written`` () =
+    let first = parse "def f: (int, string) -> list(a)? = f" |> annotationOf "f"
+    let second = parse "def f:   ( int,  string ) ->  list( a )? = f" |> annotationOf "f"
+    first.Span |> should not' (equal second.Span)
     first |> should equal second
     hash first |> should equal (hash second)
     compare first second |> should equal 0

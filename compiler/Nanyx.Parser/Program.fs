@@ -61,7 +61,28 @@ type ImportItem =
       /// The import as written: its source and alias.
       Span: SourceSpan }
 
+/// A type expression and where it came from. Like `Expression`, equality and comparison look only at `Kind`, and
+/// it is printed (`%A`) as its kind alone. Like `Pattern`, it is declared before `Expression`.
+[<CustomEquality; CustomComparison; StructuredFormatDisplay("{Kind}")>]
 type TypeExpr =
+    { Kind: TypeExprKind
+      Span: SourceSpan
+      Id: NodeId }
+
+    override this.Equals(other) =
+        match other with
+        | :? TypeExpr as typeExpr -> this.Kind = typeExpr.Kind
+        | _ -> false
+
+    override this.GetHashCode() = hash this.Kind
+
+    interface IComparable with
+        member this.CompareTo(other) =
+            match other with
+            | :? TypeExpr as typeExpr -> compare this.Kind typeExpr.Kind
+            | _ -> invalidArg "other" "a TypeExpr can only be compared with another TypeExpr"
+
+and TypeExprKind =
     | TypeName of Identifier
     | TypeVar of Identifier
     | TypeUnit
@@ -233,7 +254,7 @@ type TopLevelItem =
 
 type Module = TopLevelItem list
 
-/// Matches a node (an expression, a pattern or a statement) by its kind inside a larger pattern:
+/// Matches a node (an expression, a pattern, a statement or a type expression) by its kind inside a larger pattern:
 /// `FunctionCall(_, _, [ Kind (IdentifierExpr name) ])`, `TagPattern(_, Some (Kind (IdentifierPattern name)))`.
 let inline (|Kind|) (node: ^Node) = (^Node: (member Kind: ^Kind) node)
 
@@ -247,6 +268,14 @@ module Expression =
 
     /// An expression the compiler made up that has no source of its own.
     let synthetic (kind: ExpressionKind) = at SourceSpan.none kind
+
+module TypeExpr =
+    /// A type expression written at `span`.
+    let at (span: SourceSpan) (kind: TypeExprKind) : TypeExpr =
+        { TypeExpr.Kind = kind; Span = span; Id = NodeId.next () }
+
+    /// A type expression the compiler made up that has no source of its own.
+    let synthetic (kind: TypeExprKind) = at SourceSpan.none kind
 
 module Pattern =
     /// A pattern written at `span`.
@@ -430,6 +459,18 @@ let spanned (p: Parser<ExpressionKind, ParseState>) : Parser<Expression, ParseSt
 let private spannedPattern (p: Parser<PatternKind, ParseState>) : Parser<Pattern, ParseState> =
     withSpan p |>> fun (kind, span) -> Pattern.at span kind
 
+/// Runs `p` and makes what it built a type expression spanning the text it consumed.
+let private spannedType (p: Parser<TypeExprKind, ParseState>) : Parser<TypeExpr, ParseState> =
+    withSpan p |>> fun (kind, span) -> TypeExpr.at span kind
+
+/// Runs `p`, which parses one type or several; one stays as it is, and several are made into the type `combine`
+/// builds from them, spanning the text `p` consumed.
+let private singleOrCombined (combine: TypeExpr list -> TypeExprKind) (p: Parser<TypeExpr list, ParseState>) : Parser<TypeExpr, ParseState> =
+    withSpan p |>> fun (items, span) ->
+        match items with
+        | [ single ] -> single
+        | multiple -> TypeExpr.at span (combine multiple)
+
 let identifierWithSpan: Parser<Identifier * SourceSpan option, ParseState> =
     withSpan identifierNoWs |>> fun (name, span) -> name, Some span
 
@@ -570,16 +611,18 @@ let statementItems, statementItemsRef = createParserForwardedToRef<Statement lis
 let typeExpr, typeExprRef = createParserForwardedToRef<TypeExpr, ParseState>()
 /// The type in a def's annotation: a type expression, or bare parameters `int, int -> int` (see `typeExpr`).
 let typeSignature, typeSignatureRef = createParserForwardedToRef<TypeExpr, ParseState>()
-/// Types separated by commas, and the result they go to when an arrow follows them.
-let typeList, typeListRef = createParserForwardedToRef<TypeExpr list * TypeExpr option, ParseState>()
+/// Types separated by commas, and the result they go to when an arrow follows them, with the span of the whole.
+let typeList, typeListRef = createParserForwardedToRef<(TypeExpr list * TypeExpr option) * SourceSpan, ParseState>()
 
-/// What a `typeList` means: `a, b -> c` is a function of two parameters, since `,` binds tighter than `->`.
-let private typeListToType (items: TypeExpr list, resultOpt: TypeExpr option) : TypeExpr =
+/// What a `typeList` means: `a, b -> c` is a function of two parameters, since `,` binds tighter than `->`. The
+/// parameters' tuple spans the parameters.
+let private typeListToType ((items: TypeExpr list, resultOpt: TypeExpr option), span: SourceSpan) : TypeExpr =
+    let tuple () = TypeExpr.at (SourceSpan.between (List.head items).Span (List.last items).Span) (TypeTuple items)
     match items, resultOpt with
     | [ single ], None -> single
-    | _, None -> TypeTuple items
-    | [ single ], Some result -> TypeFunc(single, result)
-    | _, Some result -> TypeFunc(TypeTuple items, result)
+    | _, None -> TypeExpr.at span (TypeTuple items)
+    | [ single ], Some result -> TypeExpr.at span (TypeFunc(single, result))
+    | _, Some result -> TypeExpr.at span (TypeFunc(tuple (), result))
 
 // Pattern parsers
 let pattern, patternRef = createParserForwardedToRef<Pattern, ParseState>()
@@ -818,9 +861,10 @@ do patternRef :=
 // Type expression parser
 do
     let typeIdentifier =
-        typeNameIdentifier |>> fun name ->
-            if name.Length = 1 && Char.IsLower name.[0] then TypeVar name
-            else TypeName name
+        spannedType (
+            typeNameIdentifier |>> fun name ->
+                if name.Length = 1 && Char.IsLower name.[0] then TypeVar name
+                else TypeName name)
 
     let typeParam =
         pipe2
@@ -850,21 +894,28 @@ do
         attempt (pstring "," >>. ws >>% ()) <|> (skipMany1 (skipAnyOf " \t\r\n") >>. ws)
 
     let typeRecord =
-        between
-            (pstring "(")
-            (ws >>. pstring ")")
-            (pipe2
-                (ws >>. (attempt typeMemberField <|> typeField))
-                (many (attempt (recordFieldSeparator >>. (attempt typeMemberField <|> typeField))))
-                (fun first rest -> TypeRecord(first :: rest)))
+        spannedType (
+            between
+                (pstring "(")
+                (ws >>. pstring ")")
+                (pipe2
+                    (ws >>. (attempt typeMemberField <|> typeField))
+                    (many (attempt (recordFieldSeparator >>. (attempt typeMemberField <|> typeField))))
+                    (fun first rest -> TypeRecord(first :: rest))))
 
     // Brackets group: `(int, a -> b)` is a function of two parameters, as it is without them, and `()` is unit.
+    // A bracketed tuple spans its brackets, as a tuple pattern does; any other type in brackets is just that type.
     let typeTupleOrParen =
-        between
-            (pstring "(")
-            (ws >>. pstring ")")
-            (ws >>. opt (attempt typeSignature))
-        |>> Option.defaultValue TypeUnit
+        withSpan (
+            between
+                (pstring "(")
+                (ws >>. pstring ")")
+                (ws >>. opt (attempt typeSignature)))
+        |>> fun (inner, span) ->
+            match inner with
+            | None -> TypeExpr.at span TypeUnit
+            | Some ({ TypeExpr.Kind = TypeTuple _ } as tuple) -> { tuple with Span = span }
+            | Some single -> single
 
     let typeTag =
         let namedField =
@@ -881,34 +932,42 @@ do
             between
                 (pstring "(")
                 (ws >>. pstring ")")
-                (attempt (sepBy1 (ws >>. namedField) (pstring "," .>> ws) |>> TypeRecord) <|> (ws >>. typeList |>> typeListToType))
-        pipe2 (pstring "#" >>. identifierNoWs) (opt payload) (fun tagName payloadOpt -> TypeTag(tagName, payloadOpt))
+                (attempt (ws >>. spannedType (sepBy1 namedField (pstring "," .>> ws) |>> TypeRecord)) <|> (ws >>. typeList |>> typeListToType))
+        spannedType (pipe2 (pstring "#" >>. identifierNoWs) (opt payload) (fun tagName payloadOpt -> TypeTag(tagName, payloadOpt)))
 
     // `map(string, int)` has two arguments; `map(string, a -> b)` has one, a function, as `,` binds tighter.
     let typeApply =
-        pipe2
-            identifierNoWs
-            (between (pstring "(") (ws >>. pstring ")") (ws >>. typeList))
-            (fun name (args, resultOpt) ->
-                match resultOpt with
-                | None -> TypeApply(name, args)
-                | Some _ -> TypeApply(name, [ typeListToType (args, resultOpt) ]))
+        spannedType (
+            pipe2
+                identifierNoWs
+                (between (pstring "(") (ws >>. pstring ")") (ws >>. typeList))
+                (fun name ((args, resultOpt), span) ->
+                    match resultOpt with
+                    | None -> TypeApply(name, args)
+                    | Some _ -> TypeApply(name, [ typeListToType ((args, resultOpt), span) ])))
 
     let contextSet =
-        between
-            (pstring "[")
-            (wsNoNl() >>. pstring "]")
-            (sepBy1
-                (wsNoNl() >>. (attempt typeApply <|> typeIdentifier))
-                (wsNoNl() >>. pstring "+" >>. wsNoNl()))
-        |>> TypeContext
+        spannedType (
+            between
+                (pstring "[")
+                (wsNoNl() >>. pstring "]")
+                (sepBy1
+                    (wsNoNl() >>. (attempt typeApply <|> typeIdentifier))
+                    (wsNoNl() >>. pstring "+" >>. wsNoNl()))
+            |>> TypeContext)
+
+    let contextsOf (contextSet: TypeExpr) =
+        match contextSet.Kind with
+        | TypeContext items -> items
+        | _ -> []
 
     let typeConstraint =
-        pipe3
-            identifierNoWs
-            (pstring "::" >>. ws >>. typeExpr)
-            (ws >>. pstring "where" >>. ws >>. expression)
-            (fun name baseType predicate -> TypeConstraint(name, baseType, predicate))
+        spannedType (
+            pipe3
+                identifierNoWs
+                (pstring "::" >>. ws >>. typeExpr)
+                (ws >>. pstring "where" >>. ws >>. expression)
+                (fun name baseType predicate -> TypeConstraint(name, baseType, predicate)))
 
     let typeAtom =
         choice [
@@ -922,41 +981,29 @@ do
         ]
 
     let typePostfix =
-        pipe2 typeAtom (opt (pchar '?')) (fun baseType optFlag ->
+        withSpan (typeAtom .>>. opt (pchar '?')) |>> fun ((baseType, optFlag), span) ->
             match optFlag with
-            | Some _ -> TypeOptional baseType
-            | None -> baseType)
+            | Some _ -> TypeExpr.at span (TypeOptional baseType)
+            | None -> baseType
 
     let typeIntersection =
-        sepBy1 typePostfix (attempt (ws >>. pstring "&" >>. ws)) |>> fun items ->
-            match items with
-            | [single] -> single
-            | multiple -> TypeIntersection multiple
+        singleOrCombined TypeIntersection (sepBy1 typePostfix (attempt (ws >>. pstring "&" >>. ws)))
 
     let typeUnion =
-        opt (pstring "|" >>. ws) >>. sepBy1 typeIntersection (attempt (ws >>. pstring "|" >>. ws)) |>> fun items ->
-            match items with
-            | [single] -> single
-            | multiple -> TypeUnion multiple
+        opt (pstring "|" >>. ws) >>. singleOrCombined TypeUnion (sepBy1 typeIntersection (attempt (ws >>. pstring "|" >>. ws)))
 
     let typeArrow =
-        pipe2 typeUnion (opt (attempt (ws >>. pstring "->" >>. ws >>. typeExpr))) (fun left rightOpt ->
+        withSpan (typeUnion .>>. opt (attempt (ws >>. pstring "->" >>. ws >>. typeExpr))) |>> fun ((left, rightOpt), span) ->
             match rightOpt with
             | None -> left
-            | Some right ->
-                match left with
-                | TypeTuple _ -> TypeFunc(left, right)
-                | _ -> TypeFunc(left, right))
+            | Some right -> TypeExpr.at span (TypeFunc(left, right))
 
     let typeWithContext =
         (attempt (
-            pipe2
-                (contextSet .>> ws)
-                (opt (attempt typeArrow))
-                (fun ctx typeOpt ->
-                    match typeOpt with
-                    | Some t -> TypeWithContext(ctx |> (function TypeContext items -> items | _ -> []), t)
-                    | None -> ctx)))
+            withSpan ((contextSet .>> ws) .>>. opt (attempt typeArrow)) |>> fun ((ctx, typeOpt), span) ->
+                match typeOpt with
+                | Some t -> TypeExpr.at span (TypeWithContext(contextsOf ctx, t))
+                | None -> ctx))
         <|> typeArrow
 
     typeExprRef := typeWithContext
@@ -966,14 +1013,15 @@ do
     // function that is one of the items has brackets of its own. A record's fields and a lambda's parameters
     // are separated by commas themselves, so a type there is a `typeExpr`, which takes no bare list.
     typeListRef :=
-        sepBy1 typeUnion (attempt (wsInline >>. pstring "," >>. ws))
-        .>>. opt (attempt (ws >>. pstring "->" >>. ws >>. typeExpr))
+        withSpan (
+            sepBy1 typeUnion (attempt (wsInline >>. pstring "," >>. ws))
+            .>>. opt (attempt (ws >>. pstring "->" >>. ws >>. typeExpr)))
 
     // A def's annotation: a type list, possibly after the contexts it needs.
     typeSignatureRef :=
         attempt (
-            pipe2 (contextSet .>> ws) typeList (fun ctx list ->
-                TypeWithContext((match ctx with TypeContext items -> items | _ -> []), typeListToType list)))
+            withSpan ((contextSet .>> ws) .>>. typeList) |>> fun ((ctx, list), span) ->
+                TypeExpr.at span (TypeWithContext(contextsOf ctx, typeListToType list)))
         <|> (typeList |>> typeListToType)
     ()
 
@@ -1053,10 +1101,10 @@ let typeDefCore: Parser<Definition, ParseState> =
         between (pstring "(") (pstring ")") (sepBy1 (wsNoNl() >>. typeParam) (pstring "," .>> wsNoNl()))
 
     let typeExprWithWhere =
-        pipe2 typeExpr (opt (attempt (ws >>. pstring "where" >>. ws >>. expression))) (fun baseType whereOpt ->
+        withSpan (typeExpr .>>. opt (attempt (ws >>. pstring "where" >>. ws >>. expression))) |>> fun ((baseType, whereOpt), span) ->
             match whereOpt with
-            | Some predicate -> TypeWhere(baseType, predicate)
-            | None -> baseType)
+            | Some predicate -> TypeExpr.at (endingAt predicate.Span span) (TypeWhere(baseType, predicate))
+            | None -> baseType
 
     let applyPrivate modifiers privateOpt =
         match privateOpt with
@@ -1414,14 +1462,14 @@ let useBinding =
     // First try context instance: C(T) = expr or C = expr
     let contextInstance =
         pipe2
-            (attempt (identifierNoWs .>>. opt (between (pstring "(") (pstring ")") (sepBy1 (ws >>. typeExpr) (pstring "," .>> ws)))))
+            (attempt (withSpan (identifierNoWs .>>. opt (between (pstring "(") (pstring ")") (sepBy1 (ws >>. typeExpr) (pstring "," .>> ws))))))
             (ws >>. pstring "=" >>. ws >>. expression)
-            (fun (name, typeArgsOpt) expr ->
-                let contextType = 
+            (fun ((name, typeArgsOpt), span) expr ->
+                let contextType =
                     match typeArgsOpt with
                     | Some args -> TypeApply(name, args)
                     | None -> TypeName name
-                UseContextInstance(contextType, expr))
+                UseContextInstance(TypeExpr.at span contextType, expr))
     attempt contextInstance <|> (expression |>> UseValue)
 
 // Use-in expression: use X in expr
@@ -1445,10 +1493,11 @@ let contextMemberAccess =
             if Char.IsUpper name.[0] then preturn name else fail "context name (capitalised)"
     // Parse a context type application with required type args: C(T)
     let contextTypeApply =
-        pipe2
-            contextName
-            (between (pstring "(") (pstring ")") (sepBy1 (ws >>. typeExpr) (pstring "," .>> ws)))
-            (fun name args -> TypeApply(name, args))
+        spannedType (
+            pipe2
+                contextName
+                (between (pstring "(") (pstring ")") (sepBy1 (ws >>. typeExpr) (pstring "," .>> ws)))
+                (fun name args -> TypeApply(name, args)))
     // Parse args as tuple-like: (expr, expr, ...)
     let callArgs =
         between (pstring "(") (pstring ")") 
@@ -1986,14 +2035,15 @@ let private qualifyModuleName (prefix: string) (name: string) =
     if String.IsNullOrWhiteSpace prefix then name else $"{prefix}.{name}"
 
 let private rewriteTypeExprInModule (typeMap: Map<string, string>) (typeExpr: TypeExpr) : TypeExpr =
-    let rec rewrite t =
-        match t with
+    let rec rewrite (t: TypeExpr) = { t with Kind = rewriteKind t.Kind }
+    and rewriteKind kind =
+        match kind with
         | TypeName name ->
             match typeMap |> Map.tryFind name with
             | Some qualified -> TypeName qualified
             | None -> TypeName name
         | TypeVar _
-        | TypeUnit -> t
+        | TypeUnit -> kind
         | TypeTuple items -> TypeTuple (items |> List.map rewrite)
         | TypeRecord fields ->
             TypeRecord (

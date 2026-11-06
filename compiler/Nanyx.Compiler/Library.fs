@@ -250,7 +250,7 @@ module Compiler =
         let contextMembers =
             inlined @ own
             |> List.collect (function
-                | Def (TypeDef(_, modifiers, _, TypeRecord fields)) when modifiers |> List.contains Context ->
+                | Def (TypeDef(_, modifiers, _, Kind (TypeRecord fields))) when modifiers |> List.contains Context ->
                     fields |> List.map (function TypeField(fieldName, _, _, _, _) | TypeMember(fieldName, _) -> fieldName)
                 | _ -> [])
             |> Set.ofList

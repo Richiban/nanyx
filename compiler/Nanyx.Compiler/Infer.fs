@@ -331,7 +331,7 @@ let private isPrivateType modifiers =
 
 
 let rec private typeExprToTy (state: InferState) (typeExpr: TypeExpr) : Ty * InferState =
-    match typeExpr with
+    match typeExpr.Kind with
     | TypeName name ->
         match lookupPrimitive name with
         | Some prim -> prim, state
@@ -451,8 +451,8 @@ let rec private typeExprToTy (state: InferState) (typeExpr: TypeExpr) : Ty * Inf
 
 let private extractContextFromTypeExpr (typeExpr: TypeExpr option) : TypeExpr list option * TypeExpr option =
     match typeExpr with
-    | Some (TypeWithContext(contexts, inner)) -> Some contexts, Some inner
-    | Some (TypeContext contexts) -> Some contexts, None
+    | Some (Kind (TypeWithContext(contexts, inner))) -> Some contexts, Some inner
+    | Some (Kind (TypeContext contexts)) -> Some contexts, None
     | Some other -> None, Some other
     | None -> None, None
 
@@ -469,7 +469,7 @@ let private extendEnvWithRecordFields (env: TypeEnv) (ty: Ty) =
     | _ -> env
 
 let rec private collectContextMembers (state: InferState) (ctxExpr: TypeExpr) : (Identifier * Ty) list * InferState =
-    match ctxExpr with
+    match ctxExpr.Kind with
     | TypeRecord fields ->
         let mutable current = state
         let members =
@@ -519,7 +519,7 @@ let private extendEnvWithContexts (env: TypeEnv) (state: InferState) (contexts: 
     env', current
 
 let rec private unknownContextNames (state: InferState) (ctxExpr: TypeExpr) : Identifier list =
-    match ctxExpr with
+    match ctxExpr.Kind with
     | TypeContext contexts -> contexts |> List.collect (unknownContextNames state)
     | TypeName name
     | TypeApply(name, _) ->
@@ -1852,7 +1852,7 @@ and inferBlock (env: TypeEnv) (state: InferState) (block: Expression) (statement
 let rec private annotationVarNames (typeExpr: TypeExpr) : string list =
     let ofList items = items |> List.collect annotationVarNames
     let names =
-        match typeExpr with
+        match typeExpr.Kind with
         | TypeVar name -> [ name ]
         | TypeName _ | TypeUnit | TypeContext _ -> []
         | TypeTuple items | TypeUnion items | TypeIntersection items -> ofList items
