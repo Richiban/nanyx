@@ -105,24 +105,22 @@ module Compiler =
             | ModuleDecl name -> Some name
             | _ -> None)
 
-    /// Renames every reference to a name in `renames` throughout an expression. Used when a module is
-    /// inlined into its importer, so that its definitions keep pointing at each other under their new names.
-    /// (Lambda parameters and local definitions that shadow a renamed name are not accounted for.)
-    let private renameReferencesInExpr (renames: Map<string, string>) (expr: Expression) : Expression =
-        let rename (name: string) = renames |> Map.tryFind name |> Option.defaultValue name
+    /// An expression with `visit` applied to every node, inner nodes first: `visit` is given the node as it was
+    /// (for its id) and its kind with the children already visited, and returns the node's new kind.
+    let private mapExpressionKinds (visit: Expression -> ExpressionKind -> ExpressionKind) (expr: Expression) : Expression =
         let rec mapExpr (current: Expression) : Expression =
-            { current with Kind = mapKind current }
+            { current with Kind = visit current (mapKind current) }
         and mapKind current =
             match current.Kind with
-            | IdentifierExpr name -> IdentifierExpr(rename name)
+            | IdentifierExpr _ -> current.Kind
             | FunctionCall(name, rangeOpt, args) ->
-                FunctionCall(rename name, rangeOpt, args |> List.map mapExpr)
+                FunctionCall(name, rangeOpt, args |> List.map mapExpr)
             | Lambda(parameters, body) ->
                 Lambda(parameters, mapExpr body)
             | BinaryOp(op, left, right) ->
                 BinaryOp(op, mapExpr left, mapExpr right)
             | Pipe(value, name, rangeOpt, args) ->
-                Pipe(mapExpr value, rename name, rangeOpt, args |> List.map mapExpr)
+                Pipe(mapExpr value, name, rangeOpt, args |> List.map mapExpr)
             | Block statements ->
                 Block(statements |> List.map mapStatement)
             | Match(values, arms) ->
@@ -170,6 +168,31 @@ module Compiler =
             | ImportStatement _
             | TypeDefStatement _ -> kind
         mapExpr expr
+
+    /// Renames every reference to a name in `renames` throughout an expression. Used when a module is
+    /// inlined into its importer, so that its definitions keep pointing at each other under their new names.
+    /// (Lambda parameters and local definitions that shadow a renamed name are not accounted for.)
+    let private renameReferencesInExpr (renames: Map<string, string>) (expr: Expression) : Expression =
+        let rename (name: string) = renames |> Map.tryFind name |> Option.defaultValue name
+        expr
+        |> mapExpressionKinds (fun _ kind ->
+            match kind with
+            | IdentifierExpr name -> IdentifierExpr(rename name)
+            | FunctionCall(name, rangeOpt, args) -> FunctionCall(rename name, rangeOpt, args)
+            | Pipe(value, name, rangeOpt, args) -> Pipe(value, rename name, rangeOpt, args)
+            | other -> other)
+
+    /// Every pipe in an expression that inference resolved to an attached definition (`targets`, by the pipe's
+    /// node) written with that definition's name, so the backend calls it: `x \trim` becomes `x \String.trim`.
+    let private retargetPipes (targets: Map<NodeId, Identifier>) (expr: Expression) : Expression =
+        if targets.IsEmpty then
+            expr
+        else
+            expr
+            |> mapExpressionKinds (fun current kind ->
+                match kind, targets |> Map.tryFind current.Id with
+                | Pipe(value, _, rangeOpt, args), Some target -> Pipe(value, target, rangeOpt, args)
+                | other, _ -> other)
 
     /// Every name an expression may refer to: identifiers, callees and pipe targets, and for a member access
     /// `a.b.c` both the dotted name and the member as `.c`, since the backend may call a definition named either
@@ -742,18 +765,18 @@ module Compiler =
                 | TypedModuleDecl _ -> item)
         resolvedTypes, resolvedTypeDefs, resolvedItems
 
-    /// The module as the backend will see it: the typed items turned back into syntax (so that, for
-    /// example, pipes to attached functions carry their resolved names), without import statements.
-    let private moduleFromTypedItems (items: TypedTopLevelItem list) : Module =
+    /// The module as the backend will see it: the typed items turned back into syntax, with each pipe to an
+    /// attached function written with the name it resolved to (`pipeTargets`), without import statements.
+    let private moduleFromTypedItems (pipeTargets: Map<NodeId, Identifier>) (items: TypedTopLevelItem list) : Module =
         items
         |> List.choose (function
             | TypedModuleDecl name -> Some (ModuleDecl name)
             | TypedImport _ -> None
             | TypedDef (TypedValueDef(isExport, name, typeOpt, expr)) ->
-                Some (Def (ValueDef(isExport, name, typeOpt, expr.Expr)))
+                Some (Def (ValueDef(isExport, name, typeOpt, retargetPipes pipeTargets expr.Expr)))
             | TypedDef (TypedTypeDef(name, modifiers, parameters, body)) ->
                 Some (Def (TypeDef(name, modifiers, parameters, body)))
-            | TypedExprItem expr -> Some (Expr expr.Expr))
+            | TypedExprItem expr -> Some (Expr (retargetPipes pipeTargets expr.Expr)))
 
     let private originKey (origin: ModuleOrigin) =
         match origin with
@@ -786,7 +809,14 @@ module Compiler =
         match resolved with
         | Result.Error failure -> Error failure
         | Result.Ok (ast, declared, moduleBlocks, desugared) ->
-            let imports = collectImports desugared
+            let preludeKey = originKey (StandardLibraryModule StandardLibrary.preludeModuleName)
+            // Every module but the prelude imports it first, so that anything it imports or defines itself wins.
+            let imports =
+                if key = preludeKey then
+                    collectImports desugared
+                else
+                    { Source = ModuleImport (StandardLibrary.importPrefix + StandardLibrary.preludeModuleName); Alias = None; Span = SourceSpan.none }
+                    :: collectImports desugared
             let mutable env =
                 match origin with
                 | StandardLibraryModule _ -> Intrinsics.typeEnv
@@ -795,13 +825,17 @@ module Compiler =
             let mutable state = { NyxCompiler.Infer.emptyState with Declared = declared; ModuleBlocks = moduleBlocks }
             let mutable errors: Diagnostic list = []
             let mutable inlined: TopLevelItem list = []
+            // Kept apart and inlined last, so that where an explicit import defines the same name, its definition is kept.
+            let mutable preludeInlined: TopLevelItem list = []
+            let mutable preludeTypeNames: Set<string> = Set.empty
             let mutable inlinedTypes: Map<string, Ty> = Map.empty
             // The modules that bring each name in unqualified, by the module's key, with the name of the module.
+            // The prelude is not one of them: a name it shares with an import is the import's, not ambiguous.
             let mutable unqualifiedSources: Map<string, (string * string) list> = Map.empty
             let mergeImport (importedKey: string) (item: ImportItem) (imported: CheckedModule) =
                 let qualifier = importQualifier item
                 let exportedValues = exportedValueNames imported.Own
-                if qualifier.IsNone then
+                if qualifier.IsNone && importedKey <> preludeKey then
                     let moduleName =
                         match imported.Name, item.Source with
                         | Some name, _ -> name
@@ -837,12 +871,22 @@ module Compiler =
                         let import = { Id = SymbolId.next (); Name = name; Kind = ImportedModule; Declaration = item.Span; IsExported = false }
                         Map.ofList [ import.Id, import ],
                         exportedSymbols |> Map.fold (fun acc id _ -> acc |> Map.add id import.Id) state.ImportedThrough
+                // A type an explicit import exports replaces the prelude's type of the same name.
+                let typeDefs =
+                    if importedKey = preludeKey then
+                        preludeTypeNames <- Set.ofSeq exportedTypeDefs.Keys
+                        state.TypeDefs
+                    else
+                        state.TypeDefs |> Map.filter (fun name _ -> not (preludeTypeNames.Contains name && exportedTypeDefs.ContainsKey name))
                 state <-
                     { state with
-                        TypeDefs = mergeTypeDefs state.TypeDefs exportedTypeDefs
+                        TypeDefs = mergeTypeDefs typeDefs exportedTypeDefs
                         Symbols = Seq.fold (fun acc (KeyValue(id, symbol)) -> acc |> Map.add id symbol) state.Symbols (Seq.append exportedSymbols importSymbols)
                         ImportedThrough = importedThrough }
-                inlined <- inlined @ inlinedItemsForImport item imported
+                if importedKey = preludeKey then
+                    preludeInlined <- inlinedItemsForImport item imported
+                else
+                    inlined <- inlined @ inlinedItemsForImport item imported
                 inlinedTypes <- inlinedTypesForImport item imported |> Map.fold (fun acc name ty -> acc |> Map.add name ty) inlinedTypes
             for item in imports do
                 // An import of a module that is still being checked, because it imports this one, is a cycle.
@@ -903,11 +947,11 @@ module Compiler =
                     | Error (message, span) -> Error (Typed, [ Diagnostics.at DiagnosticCodes.TypeMismatch span message ])
                     | Ok subst ->
                         let resolvedTypes, resolvedTypeDefs, resolvedItems = resolveTypes subst types state.TypeDefs items
-                        let own = moduleFromTypedItems resolvedItems
+                        let own = moduleFromTypedItems state.PipeTargets resolvedItems
                         // The module's own definitions win over imported ones of the same name.
                         let ownNames = exportedValueNames own |> Set.union (own |> List.choose (function Def (ValueDef(false, name, _, _)) -> Some name | _ -> None) |> Set.ofList)
                         let inlined =
-                            inlined
+                            inlined @ preludeInlined
                             |> List.filter (function
                                 | Def (ValueDef(_, name, _, _)) -> not (ownNames.Contains name)
                                 | _ -> true)

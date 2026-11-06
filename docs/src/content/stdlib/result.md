@@ -4,7 +4,7 @@ description: "Composing success/error values"
 order: 6
 ---
 
-The `result` module provides helpers for values represented as `#some(a) | #error(e)`.
+The `Result` helpers work on values represented as `#some(a) | #error(e)`, the `Result(a, e)` type. They are in the [prelude](../tour/modules#modules-in-the-standard-library), so no import is needed.
 
 # map
 
@@ -24,7 +24,7 @@ Transforms successful values and leaves errors unchanged.
 # mapError
 
 ```nanyx
-Result.mapError: (#some(a) | #error(e1), (e1 -> e2)) -> #some(a) | #error(e2)
+Result.mapError: (#some(a) | #error(e), (e -> f)) -> #some(a) | #error(f)
 ```
 
 Transforms error values.

@@ -45,6 +45,9 @@ type InferState =
             /// and each candidate written as `module.name`. A reference that still resolves to that symbol is
             /// ambiguous; one to a definition of the module's own, or to a local, is not.
             AmbiguousImports: Map<string, SymbolId * string list>;
+            /// The attached definition each pipe calls, by the pipe's node, where that is not the name written:
+            /// `x \trim` on a string calls `String.trim`.
+            PipeTargets: Map<NodeId, Identifier>;
             /// Where a constraint added now is reported if it cannot be satisfied: the expression being inferred.
             Origin: SourceSpan }
 
@@ -69,6 +72,7 @@ let emptyState =
             ImportedThrough = Map.empty;
             ImportReferences = Map.empty;
             AmbiguousImports = Map.empty;
+            PipeTargets = Map.empty;
             Origin = SourceSpan.none }
 
 let private freshVar (state: InferState) =
@@ -176,10 +180,12 @@ let private lookupPrimitive (name: string) =
     | _ -> None
 
 /// Whether `name` is a type the compiler provides, such as `Int` or `List`, rather than one the program defines.
+/// `Option` is one too, though only as a name to attach the helpers for option-like unions to: there is no type.
 let private isBuiltInTypeName (name: string) =
     (lookupPrimitive name).IsSome
     || name.Equals("list", StringComparison.OrdinalIgnoreCase)
     || name.Equals("seq", StringComparison.OrdinalIgnoreCase)
+    || name = "Option"
 
 /// Whether the type `name` is attached to exists; `span` is where the definition's name is written.
 let private ensureAttachedTypeExists (state: InferState) (currentModuleOpt: string option) (name: Identifier) (span: SourceSpan) : Result<unit, Diagnostic list> =
@@ -1042,6 +1048,9 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
             let resolvedName =
                 tryResolveAttachedFunction env (resolveSoFar nextState typedValue.Type) name
                 |> Option.defaultValue name
+            let nextState =
+                if resolvedName = name then nextState
+                else { nextState with PipeTargets = nextState.PipeTargets |> Map.add expr.Id resolvedName }
             let callArgs = value :: args
             match inferExpr env nextState { expr with Kind = FunctionCall(resolvedName, spanOpt, callArgs) } with
             | Ok (typedCall, finalState) ->

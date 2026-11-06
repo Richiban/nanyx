@@ -156,10 +156,15 @@ and reads nothing from disk. `import nanyx/<module>` reads that resource (`Stand
 definitions into the program the backend sees; importing a module the library does not have is a
 compile error that lists the ones it does.
 
+One module, `nanyx/prelude`, is never imported by name: the compiler imports it, unqualified, into every
+other module, so its definitions are what a file sees with no imports at all. A module's own definitions
+and its explicit imports take precedence over the prelude's, so a module can define its own `proc`.
+
 | Module          | What it holds                                                                                     |
 | --------------- | ------------------------------------------------------------------------------------------------- |
+| `nanyx/prelude` | Imported automatically. `proc`, the result workflow: in `proc { ... }`, `try x` continues with the payload of `#some` or gives back any other tag (the block's type collects them), and `return x` is `#some(x)`. The `Result(a, e)` type (`#some(a) \| #error(e)`) with `Result.map`, `mapError`, `bind`, `defaultValue`, `isOk`, `isError`. The helpers for option-like unions, attached to the name `Option`: `Option.map`, `bind`, `defaultValue`, `isSome`, `isNone`, `toResult`, `mapOr` |
 | `nanyx/console` | The `Console` context (`print`, `println`) and the instance the runtime supplies to the entry point |
-| `nanyx/result`  | `proc`, the result workflow: in `proc { ... }`, `try x` continues with the payload of `#some` or gives back any other tag (the block's type collects them), and `return x` is `#some(x)` |
+| `nanyx/result`  | Nothing: kept so that `import nanyx/result` still compiles now that `proc` is in the prelude      |
 | `nanyx/text`    | `length`, `substring`, `startsWith`, `endsWith`, `indexOf`, `lastIndexOf`, `contains`, `count`, `removePrefix`, `removeSuffix`, `toUpper`, `toLower`, `trim`, `trimStart`, `trimEnd`, `isEmpty`, `isBlank`, `repeat`, `padStart`, `padEnd`, `split`, `join`, `concat`, `replace`, `lines`, `words` |
 
 The library is written over a handful of **compiler intrinsics**: operations that cannot be expressed in
