@@ -698,9 +698,8 @@ let ``Typecheck supports tag union rest parameter`` () =
     let result = Compiler.compile source
     Assert.True(result.Diagnostics.IsEmpty)
     let typed = result.Typed.Value
-    match typed.Types.["result"] with
-    | TyUnion [ TyTag("some", Some (TyPrimitive "int")); TyVar _ ] -> Assert.True(true)
-    | other -> Assert.True(false, $"Unexpected rest union result type: %A{other}")
+    // `#some(1)` has no other tags, so the rest is empty.
+    Assert.Equal(TyTag("some", Some (TyPrimitive "int")), typed.Types.["result"])
 
 [<Fact>]
 let ``Typecheck rejects an annotation more general than its body`` () =
@@ -735,9 +734,7 @@ let ``Typecheck accepts annotations the body proves`` () =
     let result = Compiler.compile source
     Assert.True(result.Diagnostics.IsEmpty, $"%A{result.Diagnostics}")
     let typed = result.Typed.Value
-    match typed.Types.["result"] with
-    | TyUnion [ TyTag("some", Some (TyPrimitive "int")); TyVar _ ] -> Assert.True(true)
-    | other -> Assert.True(false, $"Unexpected result type: %A{other}")
+    Assert.Equal(TyTag("some", Some (TyPrimitive "int")), typed.Types.["result"])
 
 [<Fact>]
 let ``Typecheck requires catch-all for tag union rest`` () =
@@ -1521,6 +1518,32 @@ let ``A shorthand match lambda shows its own type, not that of the parameters it
     Assert.Equal(Some "#some(α) | ω, (α -> β) -> #some(β) | ω", hoverType source (offsetOf source "mapOption" 1 0))
 
 [<Fact>]
+let ``A rest variable nothing can add tags to is empty`` () =
+    // `#some(5)` has no other tags, so neither has what `mapOption` gives back.
+    let source =
+        "def mapOption = { | #some(a), f -> #some(f(a)) | other, _ -> other }\n" +
+        "def main = {\n" +
+        "  def a = #some(5) \\mapOption { n -> \"{n}\" }\n" +
+        "  a\n" +
+        "}\n"
+    Assert.Equal(Some "#some(string)", hoverType source (offsetOf source "a\n}" 0 0))
+    Assert.Equal(Some "#some(int), (int -> string) -> #some(string)", hoverType source (offsetOf source "mapOption {" 0 0))
+    // A rest variable that the input still shares stays: what the function is given more of, it gives back.
+    Assert.Equal(Some "#some(α) | ω, (α -> β) -> #some(β) | ω", hoverType source (offsetOf source "{" 0 0))
+    // So does one shared with a parameter in scope, which a later use could still give tags to.
+    let inLambda =
+        "def mapOption = { | #some(a), f -> #some(f(a)) | other, _ -> other }\n" +
+        "def g = { o ->\n" +
+        "  def a = o \\mapOption { n -> n }\n" +
+        "  a\n" +
+        "}\n"
+    Assert.Equal(Some "#some(α) | ω -> #some(α) | ω", hoverType inLambda (offsetOf inLambda "{ o" 0 0))
+
+[<Fact>]
+let ``The empty union is the bottom type`` () =
+    Assert.Equal("undefined", Unifier.tyToString (TyUnion []))
+
+[<Fact>]
 let ``Where the two ends of the alphabet meet, each goes round its own part again`` () =
     let var id = TyVar { Id = id; Name = None }
     let open' id = TyUnion [ TyTag("x", None); var id ]
@@ -1591,7 +1614,7 @@ let ``Hover shows tags with their hash`` () =
         "def mapOption: (#some(a) | r), (a -> b) -> (#some(b) | r) = { | #some(a), f -> #some(f(a)) | other, _ -> other }\n" +
         "def result = mapOption(#some(1), { n -> \"Mapped: {n}\" })"
     Assert.Equal(
-        Some "#some(int) | ω, (int -> string) -> #some(string) | ω",
+        Some "#some(int), (int -> string) -> #some(string)",
         hoverType union (offsetOf union "mapOption(" 0 0))
 
 [<Fact>]
