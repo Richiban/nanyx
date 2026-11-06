@@ -222,10 +222,15 @@ type ParseState =
     { Declared: DeclaredNames
       /// Names parsed for a construct that has not been built yet (a lambda's parameters, a pattern's
       /// variables), most recent first. The construct takes them with `collectingNames`.
-      PendingNames: (Identifier * SourceSpan) list }
+      PendingNames: (Identifier * SourceSpan) list
+      /// How many lambdas the parser is inside.
+      LambdaDepth: int
+      /// The furthest workflow keyword applied to a value, where it is and what to say about it. It is a cell
+      /// shared by every copy of the state, so backtracking does not forget it (see `workflowKeywordApplication`).
+      WorkflowKeyword: (Position * string) option ref }
 
 module ParseState =
-    let empty = { Declared = Map.empty; PendingNames = [] }
+    let empty () = { Declared = Map.empty; PendingNames = []; LambdaDepth = 0; WorkflowKeyword = ref None }
 
 // Helper: whitespace and comment handling
 let comment () = pstring "--" >>. skipRestOfLine true
@@ -1356,6 +1361,36 @@ let contextMemberAccess =
                 | Some None -> ContextMemberCall(ctxType, field, [])  // empty parens like f()
                 | None -> ContextMemberAccess(ctxType, field)))
 
+// A name applied to a value without parentheses, as in `try parseNumber(s)`, is how a workflow keyword is used
+// (see the workflows page of the docs). Workflows are not implemented yet, and without this the name parses as
+// an identifier and the failure surfaces far from here. So it fails at the name, and notes the failure in the
+// state, which `parseModuleFileWithNames` reports in place of FParsec's error when the parse fails. Workflow
+// blocks are lambdas, so only a name inside a lambda is taken for a keyword: outside one, a line such as
+// `pattern string -> ...` is some other mistake.
+let private workflowKeywordApplication =
+    let reservedWords =
+        set [ "and"; "as"; "context"; "def"; "else"; "export"; "for"; "if"; "import"; "in"; "is"; "match"; "module"
+              "mut"; "not"; "or"; "private"; "rec"; "return"; "then"; "type"; "use"; "where"; "with" ]
+    let operandStart c = isLetter c || isDigit c || c = '_' || c = '"' || c = '#' || c = '(' || c = '['
+    let keyword =
+        identifierNoWs >>= fun name ->
+            if Char.IsLower name.[0] && not (reservedWords.Contains name) then preturn name else pzero
+    // What follows `x` in `x then` or `x and y` is the rest of an enclosing construct, not a value.
+    let operand = followedBy (satisfy operandStart) >>. notFollowedBy (identifierNoWs >>= fun word ->
+        if reservedWords.Contains word then preturn () else pzero)
+    userStateSatisfies (fun state -> state.LambdaDepth > 0)
+    >>. getPosition .>>. lookAhead (keyword .>> skipMany1 (anyOf " \t") .>> operand)
+    .>>. getUserState
+    >>= fun ((position, name), state) ->
+        let message =
+            $"`{name}` is applied to a value without parentheses, which is how a workflow keyword such as `try` "
+            + $"is used. Workflows (such as `proc {{ ... }}`) are not supported yet. To call a function, write "
+            + $"`{name}(...)`."
+        match state.WorkflowKeyword.Value with
+        | Some (furthest, _) when furthest.Index >= position.Index -> ()
+        | _ -> state.WorkflowKeyword.Value <- Some (position, message)
+        failFatally message
+
 let primaryExprNoWs =
     choice [
         attempt interpolatedStringExprNoWs
@@ -1373,6 +1408,7 @@ let primaryExprNoWs =
         spanned (literalNoWs |>> LiteralExpr)
         listExpr
         tupleOrParenExpr
+        workflowKeywordApplication
         spanned (identifierNoWs |>> IdentifierExpr)
     ]
 
@@ -1624,7 +1660,9 @@ do
     lambdaRef :=
         collectingNames (
             withSpan (
-                between (pstring "{") (pstring "}") (
+                between
+                    (pstring "{" .>> updateUserState (fun state -> { state with LambdaDepth = state.LambdaDepth + 1 }))
+                    (pstring "}" .>> updateUserState (fun state -> { state with LambdaDepth = state.LambdaDepth - 1 })) (
                     skipMany (skipAnyOf " \t") >>. choice [
                         attempt emptyLambda
                         attempt shorthandUnaryOp
@@ -2026,9 +2064,19 @@ let private expandMidFileModules (items: TopLevelItem list) : TopLevelItem list 
 let parseModuleFileWithNames (filePath: string) (input: string) : Result<Module * DeclaredNames, string> =
     let normalized =
         input.Replace("\r\n", "\n").Replace("\r", "\n").TrimEnd()
-    match runParserOnString moduleParser ParseState.empty filePath normalized with
+    let initialState = ParseState.empty ()
+    match runParserOnString moduleParser initialState filePath normalized with
     | ParserResult.Success(result, state, _) -> Result.Ok (expandMidFileModules result, state.Declared)
-    | ParserResult.Failure(errorMsg, _, _) -> Result.Error errorMsg
+    | ParserResult.Failure(errorMsg, _, _) ->
+        // The failure of a workflow keyword is backtracked over, and FParsec reports some enclosing construct
+        // instead (often the whole def), so it is reported where it happened.
+        match initialState.WorkflowKeyword.Value with
+        | Some (position, message) ->
+            use stream = new CharStream<unit>(normalized, 0, normalized.Length)
+            stream.Name <- filePath
+            let focused = ParserError(position, null, ErrorMessageList(ErrorMessage.Message message))
+            Result.Error (focused.ToString stream)
+        | None -> Result.Error errorMsg
 
 /// Parses the source of the file at `filePath`, which is what the spans of the module's nodes refer to. Line
 /// endings are normalised to `\n` first, so span offsets are into the normalised source (lines and columns are
