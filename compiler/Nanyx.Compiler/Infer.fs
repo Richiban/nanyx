@@ -24,6 +24,9 @@ type InferState =
             CalleeTypes: Map<NodeId, Ty>;
             /// Where the module's declarations are written, as the parser found them.
             Declared: DeclaredNames;
+            /// The text of each `module name =` block in the module, with the block's name: what a block does not
+            /// export can only be named inside it.
+            ModuleBlocks: (ModuleName * SourceSpan) list;
             /// The symbol made for each declaration, by its declaring node, how that node declares it and its
             /// name, so that a declaration inferred more than once keeps one symbol.
             DeclarationSymbols: Map<NodeId * Declarer * string, SymbolId>;
@@ -51,6 +54,7 @@ let emptyState =
             ExprTypes = Map.empty;
             CalleeTypes = Map.empty;
             Declared = Map.empty;
+            ModuleBlocks = [];
             DeclarationSymbols = Map.empty;
             Symbols = Map.empty;
             SymbolTypes = Map.empty;
@@ -199,6 +203,24 @@ let private spanPosition (span: SourceSpan) : (int * int) option =
 
 let private spanOptPosition (spanOpt: SourceSpan option) : (int * int) option =
     spanOpt |> Option.bind spanPosition
+
+/// The error for `expr` naming what `scheme` is bound for, if that is a definition a `module name =` block does
+/// not export and `expr` is outside the block.
+let private privateReference (expr: Expression) (scheme: TypeScheme) (state: InferState) : Diagnostic list =
+    match scheme.Symbol |> Option.bind (fun id -> state.Symbols |> Map.tryFind id) with
+    | Some symbol when symbol.Kind = TopLevelValue && not symbol.IsExported ->
+        let outside =
+            state.ModuleBlocks
+            |> List.tryFind (fun (_, block) ->
+                SourceSpan.contains block symbol.Declaration && not (SourceSpan.isNone expr.Span) && not (SourceSpan.contains block expr.Span))
+        match outside with
+        | Some (blockName, _) ->
+            let message = $"'{symbol.Name}' is not exported from module '{blockName}'"
+            match spanPosition expr.Span with
+            | Some position -> [ Diagnostics.errorAt message position ]
+            | None -> [ Diagnostics.error message ]
+        | None -> []
+    | _ -> []
 
 let private tryResolveAttachedFunction (env: TypeEnv) (lhsType: Ty) (funcName: string) (rangeOpt: (int * int) option): Result<string option, Diagnostic list> =
     if funcName.Contains(".") then
@@ -717,6 +739,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
         Ok (mkTypedExpr expr (TyPrimitive "unit") None None None, state)
     | IdentifierExpr name ->
         match TypeEnv.tryFind name env with
+        | Some scheme when not (privateReference expr scheme state).IsEmpty -> Error (privateReference expr scheme state)
         | Some scheme ->
             let ty, next = instantiate (recordReference expr scheme state) scheme
             Ok (mkTypedExpr expr ty None None None, next)
@@ -816,6 +839,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
         | Error err -> Error err
         | Ok () ->
             match TypeEnv.tryFind name env with
+            | Some scheme when not (privateReference expr scheme state).IsEmpty -> Error (privateReference expr scheme state)
             | Some scheme ->
                 let mutable current = state
                 let funcTy, nextState = instantiate (recordReference expr scheme current) scheme
@@ -1556,6 +1580,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
         | IdentifierExpr baseName ->
             let qualifiedName = $"{baseName}.{memberName}"
             match TypeEnv.tryFind qualifiedName env with
+            | Some scheme when not (privateReference expr scheme state).IsEmpty -> Error (privateReference expr scheme state)
             | Some scheme ->
                 let ty, next = instantiate (recordReference expr scheme state) scheme
                 Ok (mkTypedExpr expr ty None None None, next)

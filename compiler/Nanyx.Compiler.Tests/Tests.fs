@@ -76,6 +76,60 @@ let ``Import with alias does not bring unqualified names`` () =
         let message = result.Diagnostics |> List.head |> fun diag -> diag.Message
         Assert.Contains("Unknown identifier", message))
 
+let private compileImporting (moduleSource: string) (mainSource: string) =
+    let mutable result = Unchecked.defaultof<CompileResult>
+    withTempDir (fun dir ->
+        File.WriteAllText(Path.Combine(dir, "mod.nyx"), moduleSource)
+        let mainPath = Path.Combine(dir, "main.nyx")
+        File.WriteAllText(mainPath, mainSource)
+        result <- Compiler.compileFile mainPath)
+    result
+
+[<Fact>]
+let ``Import does not bring private definitions into scope`` () =
+    let result = compileImporting "module mod\nexport def foo = 1\ndef bar = 2" "module main\nimport \"mod.nyx\"\ndef value = bar"
+    Assert.False(result.Diagnostics.IsEmpty)
+    Assert.Contains("Unknown identifier", (result.Diagnostics |> List.head).Message)
+
+[<Fact>]
+let ``Import with alias does not expose private definitions`` () =
+    let result = compileImporting "module mod\nexport def foo = 1\ndef bar = 2" "module main\nimport \"mod.nyx\" as m1\ndef value = m1.bar"
+    Assert.False(result.Diagnostics.IsEmpty)
+
+[<Fact>]
+let ``Private definitions of an import cannot be reached by the module's name`` () =
+    let result = compileImporting "module mod\nexport def foo = 1\ndef bar = 2" "module main\nimport \"mod.nyx\"\ndef value = mod.bar"
+    Assert.False(result.Diagnostics.IsEmpty)
+
+[<Fact>]
+let ``Exported definitions of an import can use its private ones`` () =
+    let result = compileImporting "module mod\nexport def foo = { bar + 1 }\ndef bar = 2" "module main\nimport \"mod.nyx\"\ndef value = foo()"
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    Assert.Equal(TyPrimitive "int", result.Typed.Value.Types.["value"])
+
+[<Fact>]
+let ``Import does not bring private types into scope`` () =
+    let result = compileImporting "module mod\ntype Secret = int\nexport def foo = 1" "module main\nimport \"mod.nyx\"\ndef value: Secret = 1"
+    Assert.False(result.Diagnostics.IsEmpty)
+
+[<Fact>]
+let ``Private definitions of a nested module are not visible outside it`` () =
+    let result = Compiler.compile "module inner =\n  def secret = 1\n  export def open = secret + 1\ndef value = inner.secret"
+    Assert.False(result.Diagnostics.IsEmpty)
+    Assert.Contains("'inner.secret' is not exported from module 'inner'", (result.Diagnostics |> List.head).Message)
+
+[<Fact>]
+let ``Private functions of a nested module cannot be called outside it`` () =
+    let result = Compiler.compile "module inner =\n  def secret = { x -> x + 1 }\n  export def open = { x -> secret(x) }\ndef value = inner.secret(1)"
+    Assert.False(result.Diagnostics.IsEmpty)
+    Assert.Contains("is not exported from module 'inner'", (result.Diagnostics |> List.head).Message)
+
+[<Fact>]
+let ``Exported definitions of a nested module are visible outside it`` () =
+    let result = Compiler.compile "module inner =\n  def secret = 1\n  export def open = secret + 1\ndef value = inner.open"
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    Assert.Equal(TyPrimitive "int", result.Typed.Value.Types.["value"])
+
 [<Fact>]
 let ``Match rejects non-exhaustive tag unions`` () =
     let source =

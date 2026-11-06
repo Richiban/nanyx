@@ -28,6 +28,10 @@ module SourceSpan =
         elif isNone last then first
         else { first with End = last.End }
 
+    /// Whether `inner` is written within `outer`. A made-up span is within nothing.
+    let contains (outer: SourceSpan) (inner: SourceSpan) =
+        not (isNone outer) && not (isNone inner) && outer.File = inner.File && outer.Start <= inner.Start && inner.End <= outer.End
+
 /// Identifies a syntax node, so that analysis results can be kept in tables keyed by node rather than in a copy
 /// of the tree. Ids are unique within a process, so nodes from different modules of a compilation never clash.
 type NodeId = int64
@@ -225,12 +229,14 @@ type ParseState =
       PendingNames: (Identifier * SourceSpan) list
       /// How many lambdas the parser is inside.
       LambdaDepth: int
+      /// The text of each `module name =` block parsed so far, with the block's name.
+      ModuleBlocks: (ModuleName * SourceSpan) list
       /// The furthest workflow keyword applied to a value, where it is and what to say about it. It is a cell
       /// shared by every copy of the state, so backtracking does not forget it (see `workflowKeywordApplication`).
       WorkflowKeyword: (Position * string) option ref }
 
 module ParseState =
-    let empty () = { Declared = Map.empty; PendingNames = []; LambdaDepth = 0; WorkflowKeyword = ref None }
+    let empty () = { Declared = Map.empty; PendingNames = []; LambdaDepth = 0; ModuleBlocks = []; WorkflowKeyword = ref None }
 
 // Helper: whitespace and comment handling
 let comment () = pstring "--" >>. skipRestOfLine true
@@ -1847,7 +1853,8 @@ let moduleBlockDecl: Parser<TopLevelItem, ParseState> =
     let lineAtIndent indent =
         attempt (manyMinMaxSatisfy indent indent (fun c -> c = ' ' || c = '\t') >>. linePayload)
 
-    attempt (
+    // The block's text is noted, since what it does not export can only be named inside it.
+    withSpan (attempt (
         (pstring "module" >>. ws >>. identifierNoWs .>> wsNoNl() .>> pstring "=") >>= fun name ->
             skipMany (skipAnyOf " \t") >>. newline >>.
             many (pchar ' ' <|> pchar '\t') >>= fun indentChars ->
@@ -1867,7 +1874,12 @@ let moduleBlockDecl: Parser<TopLevelItem, ParseState> =
                         | _ -> preturn block
                 else
                     pzero
-    )
+    ))
+    >>= fun (block, span) ->
+        match block with
+        | ModuleBlock(name, _) ->
+            updateUserState (fun state -> { state with ModuleBlocks = state.ModuleBlocks @ [ name, span ] }) >>% block
+        | _ -> preturn block
     <?> "module block declaration"
 
 // Parser for top-level items
@@ -2070,13 +2082,13 @@ let private expandMidFileModules (items: TopLevelItem list) : TopLevelItem list 
 // Public API for parsing
 
 /// Parses the source of the file at `filePath`, as `parseModuleFile` does, together with the names its nodes
-/// declare.
-let parseModuleFileWithNames (filePath: string) (input: string) : Result<Module * DeclaredNames, string> =
+/// declare and the text of each `module name =` block in it.
+let parseModuleFileWithNames (filePath: string) (input: string) : Result<Module * DeclaredNames * (ModuleName * SourceSpan) list, string> =
     let normalized =
         input.Replace("\r\n", "\n").Replace("\r", "\n").TrimEnd()
     let initialState = ParseState.empty ()
     match runParserOnString moduleParser initialState filePath normalized with
-    | ParserResult.Success(result, state, _) -> Result.Ok (expandMidFileModules result, state.Declared)
+    | ParserResult.Success(result, state, _) -> Result.Ok (expandMidFileModules result, state.Declared, state.ModuleBlocks)
     | ParserResult.Failure(errorMsg, _, _) ->
         // The failure of a workflow keyword is backtracked over, and FParsec reports some enclosing construct
         // instead (often the whole def), so it is reported where it happened.
@@ -2092,7 +2104,7 @@ let parseModuleFileWithNames (filePath: string) (input: string) : Result<Module 
 /// endings are normalised to `\n` first, so span offsets are into the normalised source (lines and columns are
 /// unaffected).
 let parseModuleFile (filePath: string) (input: string) : Result<Module, string> =
-    parseModuleFileWithNames filePath input |> Result.map fst
+    parseModuleFileWithNames filePath input |> Result.map (fun (module', _, _) -> module')
 
 
 /// Parses source that has no file of its own.
