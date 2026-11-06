@@ -237,6 +237,83 @@ let ``Run - text startsWith, endsWith and contains`` () =
     runSource source |> assertRan "yes\nno\nno\nyes\nno\nyes\nno\nyes\n"
 
 [<Fact>]
+let ``Run - text indexOf, lastIndexOf and count`` () =
+    // `show` matches on the result: `dbg` of a tag returned from a call prints its raw encoding.
+    let source =
+        "import nanyx/console\n" +
+        "import nanyx/text\n" +
+        "\n" +
+        "def show: (#some(int) | #notFound) -> () = {\n" +
+        "  | #some(i) -> println(\"#some({i})\")\n" +
+        "  | #notFound -> println(\"#notFound\")\n" +
+        "}\n" +
+        "\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  show(indexOf(\"hello\", \"ll\"))\n" +
+        "  show(indexOf(\"abcabc\", \"c\"))\n" +
+        "  show(indexOf(\"hello\", \"xyz\"))\n" +
+        "  show(indexOf(\"lo\", \"hello\"))\n" +
+        "  show(indexOf(\"hello\", \"\"))\n" +
+        "  show(lastIndexOf(\"abcabc\", \"bc\"))\n" +
+        "  show(lastIndexOf(\"abc\", \"\"))\n" +
+        "  show(lastIndexOf(\"ab\", \"abc\"))\n" +
+        "  dbg(count(\"banana\", \"an\"))\n" +
+        "  dbg(count(\"aaaa\", \"aa\"))\n" +
+        "  dbg(count(\"abc\", \"\"))\n" +
+        "}\n"
+    runSource source
+    |> assertRan (
+        "#some(2)\n#some(2)\n#notFound\n#notFound\n#some(0)\n" +
+        "#some(4)\n#some(3)\n#notFound\n" +
+        "dbg: 2\ndbg: 2\ndbg: 0\n")
+
+[<Fact>]
+let ``Run - text replace, removePrefix, removeSuffix, padStart and padEnd`` () =
+    let source =
+        "import nanyx/console\n" +
+        "import nanyx/text\n" +
+        "\n" +
+        "println(replace(\"hello world\", \"o\", \"0\"))\n" +
+        "println(replace(\"a-b-c\", \"-\", \" - \"))\n" +
+        "println(replace(\"abc\", \"\", \"x\"))\n" +
+        "println(removePrefix(\"nanyx\", \"nan\"))\n" +
+        "println(removePrefix(\"nanyx\", \"nyx\"))\n" +
+        "println(removeSuffix(\"nanyx\", \"nyx\"))\n" +
+        "println(padStart(\"7\", 3, \"0\"))\n" +
+        "println(padEnd(\"ab\", 5, \"xy\"))\n" +
+        "println(padStart(\"long\", 2, \"0\"))\n"
+    runSource source |> assertRan "hell0 w0rld\na - b - c\nabc\nyx\nnanyx\nna\n007\nabxyx\nlong\n"
+
+[<Fact>]
+let ``Run - text trimStart, trimEnd, isEmpty and isBlank`` () =
+    let source =
+        "import nanyx/console\n" +
+        "import nanyx/text\n" +
+        "\n" +
+        "def show: bool -> () = { b -> println(if b then \"yes\" else \"no\") }\n" +
+        "println(\"[\" ++ trimStart(\" \t x \") ++ \"]\")\n" +
+        "println(\"[\" ++ trimEnd(\" x \r\n\") ++ \"]\")\n" +
+        "show(isEmpty(\"\"))\n" +
+        "show(isEmpty(\" \"))\n" +
+        "show(isBlank(\" \t\n\"))\n" +
+        "show(isBlank(\" x \"))\n"
+    runSource source |> assertRan "[x ]\n[ x]\nyes\nno\nyes\nno\n"
+
+[<Fact>]
+let ``Run - text lines and words`` () =
+    let source =
+        "import nanyx/console\n" +
+        "import nanyx/text\n" +
+        "\n" +
+        "println(join(lines(\"a\nb\r\nc\n\"), \"|\"))\n" +
+        "println(join(lines(\"a\n\nb\"), \"|\"))\n" +
+        "dbg(length(concat(lines(\"\"))))\n" +
+        "println(join(words(\"  one two\tthree\n\"), \"|\"))\n" +
+        "dbg(length(concat(words(\"   \"))))\n"
+    runSource source |> assertRan "a|b|c\na||b\ndbg: 0\none|two|three\ndbg: 0\n"
+
+[<Fact>]
 let ``Run - text split, join and concat`` () =
     let source =
         "import nanyx/console\n" +

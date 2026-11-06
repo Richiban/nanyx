@@ -464,15 +464,32 @@ let ``nanyx/text exports string functions with their types`` () =
         "def n = length(\"hi\")\n" +
         "def parts = split(\"a,b\", \",\")\n" +
         "def joined = join(parts, \"-\")\n" +
-        "def yes = startsWith(\"nanyx\", \"nan\")"
+        "def yes = startsWith(\"nanyx\", \"nan\")\n" +
+        "def found = indexOf(\"nanyx\", \"yx\")\n" +
+        "def lastFound = lastIndexOf(\"nanyx\", \"n\")\n" +
+        "def times = count(\"nanyx\", \"n\")\n" +
+        "def replaced = replace(\"nanyx\", \"n\", \"N\")\n" +
+        "def padded = padStart(\"7\", 3, \"0\")\n" +
+        "def blank = isBlank(\" \")\n" +
+        "def allLines = lines(\"a\")\n" +
+        "def allWords = words(\"a b\")"
     let result = Compiler.compile source
     Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
     let types = result.Typed.Value.Types
+    let indexResult = TyUnion [ TyTag("some", Some (TyPrimitive "int")); TyTag("notFound", None) ]
     Assert.Equal(TyPrimitive "string", types.["shout"])
     Assert.Equal(TyPrimitive "int", types.["n"])
     Assert.Equal(TyApply("list", [ TyPrimitive "string" ]), types.["parts"])
     Assert.Equal(TyPrimitive "string", types.["joined"])
     Assert.Equal(TyPrimitive "bool", types.["yes"])
+    Assert.Equal(indexResult, types.["found"])
+    Assert.Equal(indexResult, types.["lastFound"])
+    Assert.Equal(TyPrimitive "int", types.["times"])
+    Assert.Equal(TyPrimitive "string", types.["replaced"])
+    Assert.Equal(TyPrimitive "string", types.["padded"])
+    Assert.Equal(TyPrimitive "bool", types.["blank"])
+    Assert.Equal(TyApply("list", [ TyPrimitive "string" ]), types.["allLines"])
+    Assert.Equal(TyApply("list", [ TyPrimitive "string" ]), types.["allWords"])
 
 [<Fact>]
 let ``nanyx/text rejects a wrongly typed argument`` () =
