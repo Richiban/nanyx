@@ -1027,7 +1027,9 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
         match inferExpr env state value with
         | Error err -> Error err
         | Ok (typedValue, nextState) ->
-            match tryResolveAttachedFunction env typedValue.Type name (spanOptPosition spanOpt) with
+            // A pipe resolves left to right: the value's type as the code before the pipe settles it picks the
+            // attached function, even where that type is still a variable waiting on the module's constraints.
+            match tryResolveAttachedFunction env (resolveSoFar nextState typedValue.Type) name (spanOptPosition spanOpt) with
             | Error err -> Error err
             | Ok resolvedOpt ->
                 let resolvedName = resolvedOpt |> Option.defaultValue name

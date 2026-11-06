@@ -392,6 +392,34 @@ let ``Typecheck pipe resolves attached functions on built-in types`` () =
     Assert.Equal(TyPrimitive "int", typed.Types.["n"])
 
 [<Fact>]
+let ``Typecheck pipe resolves attached functions on a type known only from earlier constraints`` () =
+    let source =
+        "def Int.double: int -> int = { n -> n * 2 }\n" +
+        "def String.double: string -> string = { s -> s ++ s }\n" +
+        "def id = { x -> x }\n" +
+        "def n = id(3) \\ double\n" +
+        "def s = id(\"a\") \\ double"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    let typed = result.Typed.Value
+    Assert.Equal(TyPrimitive "int", typed.Types.["n"])
+    Assert.Equal(TyPrimitive "string", typed.Types.["s"])
+
+[<Fact>]
+let ``Typecheck pipe resolves attached functions on a lambda parameter pinned earlier in the body`` () =
+    let source =
+        "def Int.double: int -> int = { n -> n * 2 }\n" +
+        "def String.double: string -> string = { s -> s ++ s }\n" +
+        "def f = { x ->\n" +
+        "  def y: int = x\n" +
+        "  x \\ double\n" +
+        "}"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    let typed = result.Typed.Value
+    Assert.Equal(TyFunc(TyPrimitive "int", TyPrimitive "int"), typed.Types.["f"])
+
+[<Fact>]
 let ``Typecheck pipe resolves attached functions`` () =
     let source =
         "type Person = (firstName: string surname: string)\n" +
