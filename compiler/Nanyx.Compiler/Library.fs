@@ -727,9 +727,21 @@ module Compiler =
                 let mutable errors: Diagnostic list = []
                 let mutable inlined: TopLevelItem list = []
                 let mutable inlinedTypes: Map<string, Ty> = Map.empty
-                let mergeImport (item: ImportItem) (imported: CheckedModule) =
+                // The modules that bring each name in unqualified, by the module's key, with the name of the module.
+                let mutable unqualifiedSources: Map<string, (string * string) list> = Map.empty
+                let mergeImport (importedKey: string) (item: ImportItem) (imported: CheckedModule) =
                     let qualifier = importQualifier item
                     let exportedValues = exportedValueNames imported.Own
+                    if qualifier.IsNone then
+                        let moduleName =
+                            match imported.Name, item.Source with
+                            | Some name, _ -> name
+                            | None, ModuleImport name -> name
+                            | None, PathImport path -> path
+                        for name in exportedValues do
+                            let sources = unqualifiedSources |> Map.tryFind name |> Option.defaultValue []
+                            if not (sources |> List.exists (fun (key, _) -> key = importedKey)) then
+                                unqualifiedSources <- unqualifiedSources |> Map.add name (sources @ [ importedKey, moduleName ])
                     let exportedTypes = exportedTypeNames imported.Own
                     let exportedValueTypes =
                         imported.Typed.Types |> Map.filter (fun name _ -> exportedValues.Contains name)
@@ -776,7 +788,7 @@ module Compiler =
                             | Ok imported when imported.Name <> Some moduleName ->
                                 let declared = imported.Name |> Option.defaultValue "(none)"
                                 errors <- errors @ [ Diagnostics.error ($"Standard library module '{StandardLibrary.importPrefix}{moduleName}' declares the module name '{declared}'") ]
-                            | Ok imported -> mergeImport item imported
+                            | Ok imported -> mergeImport (originKey (StandardLibraryModule moduleName)) item imported
                     | None ->
                         match origin with
                         | SourceFile fullPath ->
@@ -785,7 +797,7 @@ module Compiler =
                             | Ok importPath ->
                                 match typecheckModule (SourceFile importPath) (File.ReadAllText importPath) (visited.Add key) with
                                 | Error (_, diags) -> errors <- errors @ diags
-                                | Ok imported -> mergeImport item imported
+                                | Ok imported -> mergeImport (originKey (SourceFile importPath)) item imported
                         | StandardLibraryModule name ->
                             errors <- errors @ [ Diagnostics.error ($"Standard library module '{name}' may only import other standard library modules") ]
                         | InMemory ->
@@ -794,6 +806,16 @@ module Compiler =
                                 | PathImport path -> path
                                 | ModuleImport name -> name
                             errors <- errors @ [ Diagnostics.error ($"Import not found: {shown} (only standard library modules can be imported here)") ]
+                // A name two imports bring in is an error only where it is used, and only if nothing nearer binds it.
+                let ambiguousImports =
+                    unqualifiedSources
+                    |> Map.toSeq
+                    |> Seq.choose (fun (name, sources) ->
+                        match sources, TypeEnv.tryFind name env |> Option.bind (fun scheme -> scheme.Symbol) with
+                        | _ :: _ :: _, Some symbol -> Some (name, (symbol, sources |> List.map (fun (_, moduleName) -> $"{moduleName}.{name}")))
+                        | _ -> None)
+                    |> Map.ofSeq
+                state <- { state with AmbiguousImports = ambiguousImports }
                 if not errors.IsEmpty then
                     Error (Typed, errors)
                 else
