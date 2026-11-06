@@ -34,17 +34,17 @@ only then design the public contract that Nanyx-authored analyzers will be writt
 
 ## Where the compiler is today
 
-- **Positions are partial and mostly recovered after the fact.** `SourceRange` is `int * int` (a start position
-  only), and only `IdentifierExpr`, `FunctionCall`, `Pipe` and `MemberAccess` carry one. Most diagnostics are
-  positioned by `annotateDiagnosticsWithSource` (`Library.fs`), which searches the source for the first
-  identifier quoted in the message, or by `tryParseLineColumn`, which parses `line:col` out of message text. A
-  diagnostic about the second `x` in a file lands on the first.
-- **Diagnostics from imported modules are positioned in the wrong file.** They are annotated against the root
-  module's source, because a diagnostic carries no file.
-- **Diagnostics have no identity.** `Diagnostic` is severity, message and an optional position. There is no code
-  to configure or suppress, no end position, no related locations, and nowhere to put a fix.
-- **The compiler has a warning severity it never uses.** `WarningSeverity` exists in `Diagnostics.fs` and the
-  language server maps it, but nothing emits it.
+- **Spans cover expressions only** ([#109](https://github.com/nanyx-lang/nanyx/issues/109), part of
+  [#96](https://github.com/nanyx-lang/nanyx/issues/96)). Every expression and import has a `SourceSpan`, and
+  declarations' names are kept beside the tree (below). Patterns, statements, type expressions and top-level
+  items have none yet.
+- **Diagnostics are structured** ([#97](https://github.com/nanyx-lang/nanyx/issues/97)). `Diagnostic` is the
+  record in [section 2](#2-structured-diagnostics), every compiler error has a code from the table in
+  `Diagnostics.fs`, and each is created with the span of the node it is about, in that node's file, so a
+  diagnostic in an imported module is reported there. Type constraints carry the span of the expression that
+  made them, which is where unification reports a failure. A diagnostic about a node without a span (a pattern,
+  a field name, an annotation, an attribute) is reported at the nearest node with one until #96 gives it its own.
+  The compiler emits only `Critical` and `Error`.
 - **The type checker sees desugared code.** `desugar` turns workflow binds and `return` into calls to the
   keyword function and `pure` before inference, and `applyAttributes` replaces `@entry` with a synthesized call.
   The synthesized nodes have no position and no link back to the syntax they came from.
@@ -96,10 +96,14 @@ is where most diagnostics land). The `SourceRange option` fields on individual c
 `NodeId` is an integer, unique within the process, assigned when a node is created. It is what side tables (types, resolved symbols)
 are keyed by, so analysis results do not need a parallel copy of the tree.
 
-Once every node has a span, `annotateDiagnosticsWithSource` and `tryParseLineColumn` are deleted: a diagnostic
-is created with the span of the node it is about.
+A diagnostic is created with the span of the node it is about (done in
+[#97](https://github.com/nanyx-lang/nanyx/issues/97), which removed the positioning of diagnostics after the fact).
+Once every node has a span, the diagnostics that are now reported at the nearest enclosing node move to their own.
 
 ### 2. Structured diagnostics
+
+> **Done** in [#97](https://github.com/nanyx-lang/nanyx/issues/97), except that no compiler error offers
+> suggestions or fixes yet, and the language server does not yet turn fixes into code actions.
 
 The diagnostic follows the error anatomy in [Principles](../../docs/src/content/foundations/principles.md#human-readable-errors):
 a code, a short title, a detailed message, suggestions and fixes.
@@ -130,9 +134,13 @@ type Diagnostic =
 Rules:
 
 - The compiler emits only `Critical` and `Error`. `Warning`, `Info` and `Hint` exist for analyzers.
-- Compiler codes are `NYX` plus four digits, allocated in a single table in `Diagnostics.fs` so they are stable
-  and documentable. Analyzer codes are `<analyzer>/<rule>` (`default/unusedBindings`), matching the manifest
-  keys in the docs.
+- Compiler codes are `NYX` plus four digits, allocated in a single table in `Diagnostics.fs`
+  (`DiagnosticCodes`) so they are stable and documentable. They are numbered by phase: `NYX00xx` for reading a
+  module and its imports (syntax, imports, attributes), `NYX01xx` for resolving names, `NYX02xx` for types. Each
+  entry gives the code its title and severity. Analyzer codes are `<analyzer>/<rule>` (`default/unusedBindings`),
+  matching the manifest keys in the docs.
+- `Critical` is for a compilation that has nothing to check (the file does not exist); every other compiler
+  diagnostic is an `Error`.
 - The language server maps `Span` to the LSP range, `Code` to `code`, `Related` to `relatedInformation` and
   `Fixes` to code actions.
 
@@ -269,7 +277,8 @@ go-to-definition regardless of analyzers.
 
 - **Suppression in source.** An attribute (`@allow(default/unusedBindings)`) on a definition, a comment form, or
   only the convention that a `_`-prefixed name is intentionally unused? The docs already use `_` patterns.
-- **Compiler error codes.** One flat `NYX0001` sequence, or ranges per phase (parse, resolve, type)?
+- ~~**Compiler error codes.** One flat `NYX0001` sequence, or ranges per phase?~~ Ranges per phase (see
+  [section 2](#2-structured-diagnostics)).
 - **Where analyzers run in the CLI.** Always, or only for `check` and build, with `run` skipping them for speed?
 - **Analyzers across modules.** "Exported but never used anywhere in the project" needs every module's semantic
   model at once; per-module analysis is enough for the first rules.

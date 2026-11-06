@@ -200,8 +200,10 @@ What it does today:
 
 - `initialize`/`shutdown`/`exit`, full text document sync, and `textDocument/publishDiagnostics` on
   open and change (cleared on close).
-- A diagnostic the compiler positions is reported from that position to the end of the identifier
-  there; one the compiler cannot position is shown at the start of the file.
+- Each diagnostic is published over the whole span of the node it is about, with its code (`NYX0201`)
+  as `code` and its related locations as `relatedInformation`. One in a module the document imports
+  is shown at the start of the document, naming that file and linking to the place in it; one about the
+  whole compilation is shown at the start of the file.
 - A file that fails to parse gets one diagnostic for the parse error, and a compiler exception is
   reported as a diagnostic rather than taking the server down.
 - `textDocument/hover` shows the inferred type of the narrowest expression under the pointer, with
@@ -231,7 +233,7 @@ Find-references and completion are not implemented yet: each is one handler clas
 [#113](https://github.com/nanyx-lang/nanyx/issues/113)).
 Hover shows only types, not a name's declared signature or docs. Two compiler improvements
 the server makes visible: a parse error currently drops the whole file (so one error hides
-everything after it), and only some diagnostics carry a range.
+everything after it), and inference stops at a module's first error, so only one shows at a time.
 
 The tests in `Nanyx.LanguageServer.Tests` start the server in-process and talk to it through
 OmniSharp's LSP client over a pair of pipes, so they exercise the real wire protocol.

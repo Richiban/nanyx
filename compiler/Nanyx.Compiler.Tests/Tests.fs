@@ -1560,43 +1560,43 @@ let ``Compile reports diagnostics on parse error`` () =
 [<Fact>]
 let ``Unifier binds type variables`` () =
     let tvar = TyVar { Id = 1; Name = None }
-    let constraints: ConstraintSet = [ (tvar, TyPrimitive "string", Equal) ]
+    let constraints: ConstraintSet = [ (tvar, TyPrimitive "string", Equal, SourceSpan.none) ]
     let result = Unifier.unify constraints
     match result with
     | Ok subst -> Assert.Equal(Some (TyPrimitive "string"), subst |> Map.tryFind 1)
-    | Error message -> Assert.True(false, message)
+    | Error (message, _) -> Assert.True(false, message)
 
 [<Fact>]
 let ``Unifier rejects occurs check`` () =
     let tvar = TyVar { Id = 2; Name = None }
-    let constraintSet: ConstraintSet = [ (tvar, TyFunc(tvar, TyPrimitive "int"), Equal) ]
+    let constraintSet: ConstraintSet = [ (tvar, TyFunc(tvar, TyPrimitive "int"), Equal, SourceSpan.none) ]
     let result = Unifier.unify constraintSet
     match result with
     | Ok _ -> Assert.True(false, "Expected occurs check failure")
-    | Error message -> Assert.Contains("Occurs", message)
+    | Error (message, _) -> Assert.Contains("Occurs", message)
 
 [<Fact>]
 let ``Unifier allows record width subtyping`` () =
     let narrow = TyRecord (Map.ofList [ ("a", TyPrimitive "int") ])
     let wide = TyRecord (Map.ofList [ ("a", TyPrimitive "int"); ("b", TyPrimitive "string") ])
-    let result = Unifier.unify [ (narrow, wide, Equal) ]
+    let result = Unifier.unify [ (narrow, wide, Equal, SourceSpan.none) ]
     match result with
     | Ok _ -> Assert.True(true)
-    | Error message -> Assert.True(false, message)
+    | Error (message, _) -> Assert.True(false, message)
 
 [<Fact>]
 let ``Unifier matches unions by set and width`` () =
     let unionA = TyUnion [ TyTag("some", Some (TyPrimitive "int")); TyTag("notFound", None) ]
     let unionB = TyUnion [ TyTag("notFound", None); TyTag("some", Some (TyPrimitive "int")) ]
     let unionWide = TyUnion [ TyTag("some", Some (TyPrimitive "int")); TyTag("notFound", None); TyTag("error", Some (TyPrimitive "string")) ]
-    let resultOrder = Unifier.unify [ (unionA, unionB, Equal) ]
-    let resultWidth = Unifier.unify [ (unionA, unionWide, Equal) ]
+    let resultOrder = Unifier.unify [ (unionA, unionB, Equal, SourceSpan.none) ]
+    let resultWidth = Unifier.unify [ (unionA, unionWide, Equal, SourceSpan.none) ]
     match resultOrder with
     | Ok _ -> Assert.True(true)
-    | Error message -> Assert.True(false, message)
+    | Error (message, _) -> Assert.True(false, message)
     match resultWidth with
     | Ok _ -> Assert.True(true)
-    | Error message -> Assert.True(false, message)
+    | Error (message, _) -> Assert.True(false, message)
 
 [<Fact>]
 let ``Typecheck allows mutual recursion between annotated top-level defs`` () =

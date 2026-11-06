@@ -20,9 +20,14 @@ what the compiler keeps: exact spans, resolved names and types.
 
 ## Where it is today
 
-- **Diagnostics.** The server does full text sync and publishes diagnostics on open and change. A
-  diagnostic with a position is shown from there to the end of the identifier; one without is shown at the start
-  of the file. See [The language server](../README.md#the-language-server).
+- **Diagnostics** ([#97](https://github.com/nanyx-lang/nanyx/issues/97)). The server does full text sync and
+  publishes diagnostics on open and change. Each compiler diagnostic has a code (`NYX0201`), published as `code`,
+  and the span of the node it is about, published as the full range (UTF-16 columns, through `SourcePositions`).
+  Related locations ("declared here") are published as `relatedInformation`. A diagnostic in an imported module
+  carries that module's file: it is published on the document being edited, at its start, naming the file and
+  linking to the place there; publishing it on the imported file itself is Plan item 7. A diagnostic about the
+  whole compilation is shown at the start of the file. Inference still stops at the first error in a module, so
+  only one type error shows at a time. See [The language server](../README.md#the-language-server).
 - **Hover shows inferred types** ([#120](https://github.com/nanyx-lang/nanyx/issues/120)). Inference records the
   resolved type of every expression by `NodeId` (`TypedModule.ExprTypes`, the `Types` table of the planned
   [semantic model](analyzers.md#3-the-semantic-model)), and the callee's type at each call (`CalleeTypes`), for
@@ -62,8 +67,11 @@ what the compiler keeps: exact spans, resolved names and types.
 
 _To do._ Candidate items, not yet filed, in rough dependency order:
 
-1. **Exact ranges.** Map diagnostic spans to LSP ranges once [#96](https://github.com/nanyx-lang/nanyx/issues/96) and [#97](https://github.com/nanyx-lang/nanyx/issues/97) land; report `code` and
-   `relatedInformation`.
+1. **Exact ranges.** Done ([#97](https://github.com/nanyx-lang/nanyx/issues/97)): diagnostics carry spans, codes
+   and related locations, and are published as LSP ranges, `code` and `relatedInformation`. What is left waits on
+   [#96](https://github.com/nanyx-lang/nanyx/issues/96): a diagnostic about a pattern, a field name, a type
+   annotation or an attribute is reported at the nearest node that has a span (the match, the field's value, the
+   definition's name, the item after the attribute).
 2. **Hover.** Inferred types are done ([#120](https://github.com/nanyx-lang/nanyx/issues/120)); declared
    signatures and docs follow from name resolution ([#98](https://github.com/nanyx-lang/nanyx/issues/98)).
 3. **Go-to-definition and find-references.** From the recorded symbols and references ([#98](https://github.com/nanyx-lang/nanyx/issues/98)).

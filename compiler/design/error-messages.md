@@ -25,14 +25,16 @@ need it first. This workstream fills it with content.
 
 ## Where the compiler is today
 
-- **A diagnostic is a severity, a message and an optional `line, column`** (`Diagnostics.fs`). There is no code,
-  no title, no end position and no file.
-- **Positions are often guessed.** Many errors are created without a position and placed afterwards by searching
-  the source for the first identifier quoted in the message, so they can land on the wrong occurrence or in the
-  wrong file.
+- **Diagnostics are structured** ([#97](https://github.com/nanyx-lang/nanyx/issues/97)): every compiler error has
+  a code and title from the table in `Diagnostics.fs` (`DiagnosticCodes`), and the span, in its own file, of the
+  node it is about. Few use related locations yet, and none has suggestions or fixes.
+- **Some spans are approximate.** Patterns, field names, type annotations and attributes have no spans yet
+  ([#96](https://github.com/nanyx-lang/nanyx/issues/96)), so errors about them are reported at the nearest node
+  that has one. A type mismatch is reported where the constraint that failed was made, which is not always where
+  the conflicting types came from.
 - **Wording is inconsistent.** Messages range from `Unknown identifier 'x'` to `dbg expects a single argument`
   and `` `with` updates fields by name``; quoting, capitalisation and voice vary.
-- **The CLI prints one line per diagnostic**, `[error] line:col message`, with no file name and no source excerpt.
+- **The CLI prints one line per diagnostic**, `file:line:col: error NYX0201: message`, with no source excerpt.
 - **There are no suggestions or fixes.**
 
 ## Goals

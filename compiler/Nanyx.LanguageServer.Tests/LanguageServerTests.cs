@@ -84,16 +84,69 @@ public sealed class LanguageServerTests : IAsyncLifetime
     {
         var uri = DocumentUri.FromFileSystemPath(Path.Combine(Path.GetTempPath(), "type-error.nyx"));
 
-        // An unknown identifier is the type error the compiler currently gives a position to
-        // (a plain type mismatch has no range yet, and lands at the start of the file).
         Open(uri, "import nanyx/console\n\nprintln(missing)\n");
 
         var diagnostics = await NextPublished(uri);
         var diagnostic = Assert.Single(diagnostics.Diagnostics!);
         Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
         Assert.Equal("nanyx", diagnostic.Source);
+        Assert.Equal("NYX0101", diagnostic.Code?.String);
         Assert.Contains("missing", diagnostic.Message.String);
         Assert.Equal(new Range(2, 8, 2, 15), diagnostic.Range);
+    }
+
+    [Fact]
+    public async Task Type_mismatch_is_published_over_the_whole_expression()
+    {
+        var uri = DocumentUri.FromFileSystemPath(Path.Combine(Path.GetTempPath(), "mismatch.nyx"));
+
+        // The `a` in the string is where searching the message's names used to put it.
+        Open(uri, "def label = \"a\"\ndef a = 1\ndef b = a + \"x\"\n");
+
+        var diagnostic = Assert.Single((await NextPublished(uri)).Diagnostics!);
+        Assert.Equal("NYX0201", diagnostic.Code?.String);
+        Assert.Equal(new Range(2, 8, 2, 15), diagnostic.Range);
+    }
+
+    [Fact]
+    public async Task Related_locations_are_published_as_related_information()
+    {
+        var uri = DocumentUri.FromFileSystemPath(Path.Combine(Path.GetTempPath(), "private.nyx"));
+
+        Open(uri, "module inner =\n  def secret = 1\n  export def open = secret + 1\ndef value = inner.secret\n");
+
+        var diagnostic = Assert.Single((await NextPublished(uri)).Diagnostics!);
+        Assert.Equal(new Range(3, 12, 3, 24), diagnostic.Range);
+        var related = Assert.Single(diagnostic.RelatedInformation!);
+        Assert.Equal(uri, related.Location.Uri);
+        Assert.Equal(new Range(1, 6, 1, 12), related.Location.Range);
+    }
+
+    [Fact]
+    public async Task Diagnostic_in_an_imported_file_links_to_its_place_there()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var imported = Path.Combine(directory, "mod.nyx");
+            File.WriteAllText(imported, "module mod\nexport def value = missing\n");
+            var uri = DocumentUri.FromFileSystemPath(Path.Combine(directory, "main.nyx"));
+
+            Open(uri, "module main\nimport \"mod.nyx\"\ndef copy = value\n");
+
+            var diagnostic = Assert.Single((await NextPublished(uri)).Diagnostics!);
+            Assert.Equal("NYX0101", diagnostic.Code?.String);
+            Assert.Contains("mod.nyx", diagnostic.Message.String);
+            Assert.Equal(new Range(0, 0, 0, 0), diagnostic.Range);
+            var related = Assert.Single(diagnostic.RelatedInformation!);
+            Assert.Equal(DocumentUri.FromFileSystemPath(imported), related.Location.Uri);
+            Assert.Equal(new Range(1, 19, 1, 26), related.Location.Range);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
     }
 
     [Fact]

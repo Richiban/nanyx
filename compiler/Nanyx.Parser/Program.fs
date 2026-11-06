@@ -2081,15 +2081,22 @@ let private expandMidFileModules (items: TopLevelItem list) : TopLevelItem list 
 
 // Public API for parsing
 
+/// Why a module could not be parsed, and where.
+type ParseError = { Message: string; Span: SourceSpan }
+
 /// Parses the source of the file at `filePath`, as `parseModuleFile` does, together with the names its nodes
 /// declare and the text of each `module name =` block in it.
-let parseModuleFileWithNames (filePath: string) (input: string) : Result<Module * DeclaredNames * (ModuleName * SourceSpan) list, string> =
+let parseModuleFileWithNames (filePath: string) (input: string) : Result<Module * DeclaredNames * (ModuleName * SourceSpan) list, ParseError> =
     let normalized =
         input.Replace("\r\n", "\n").Replace("\r", "\n").TrimEnd()
     let initialState = ParseState.empty ()
+    // A parse fails at a point: its span is the character there, or nothing at the end of the input.
+    let errorAt (position: Position) message =
+        { Message = message
+          Span = spanOf position (min normalized.Length (int position.Index + 1)) }
     match runParserOnString moduleParser initialState filePath normalized with
     | ParserResult.Success(result, state, _) -> Result.Ok (expandMidFileModules result, state.Declared, state.ModuleBlocks)
-    | ParserResult.Failure(errorMsg, _, _) ->
+    | ParserResult.Failure(errorMsg, error, _) ->
         // The failure of a workflow keyword is backtracked over, and FParsec reports some enclosing construct
         // instead (often the whole def), so it is reported where it happened.
         match initialState.WorkflowKeyword.Value with
@@ -2097,14 +2104,16 @@ let parseModuleFileWithNames (filePath: string) (input: string) : Result<Module 
             use stream = new CharStream<unit>(normalized, 0, normalized.Length)
             stream.Name <- filePath
             let focused = ParserError(position, null, ErrorMessageList(ErrorMessage.Message message))
-            Result.Error (focused.ToString stream)
-        | None -> Result.Error errorMsg
+            Result.Error (errorAt position (focused.ToString stream))
+        | None -> Result.Error (errorAt error.Position errorMsg)
 
 /// Parses the source of the file at `filePath`, which is what the spans of the module's nodes refer to. Line
 /// endings are normalised to `\n` first, so span offsets are into the normalised source (lines and columns are
 /// unaffected).
 let parseModuleFile (filePath: string) (input: string) : Result<Module, string> =
-    parseModuleFileWithNames filePath input |> Result.map (fun (module', _, _) -> module')
+    parseModuleFileWithNames filePath input
+    |> Result.map (fun (module', _, _) -> module')
+    |> Result.mapError (fun error -> error.Message)
 
 
 /// Parses source that has no file of its own.
