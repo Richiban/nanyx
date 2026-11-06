@@ -27,7 +27,8 @@ what the compiler keeps: exact spans, resolved names and types.
   resolved type of every expression by `NodeId` (`TypedModule.ExprTypes`, the `Types` table of the planned
   [semantic model](analyzers.md#3-the-semantic-model)), and the callee's type at each call (`CalleeTypes`), for
   the root module of a compile. Hover shows the narrowest typed expression under the pointer, or a call's
-  function at that call site. A desugared workflow bind or return gets a node id of its own, so the bind as
+  function at that call site. On a declaration's own name (a def, a parameter, a pattern variable) it shows the
+  type of what that declares, recorded by symbol (`SymbolTypes`). A desugared workflow bind or return gets a node id of its own, so the bind as
   written has no type rather than that of the rest of the workflow. Each document
   is compiled once per change and the result cached in `DocumentStore`, shared by diagnostics and hover. A
   declared signature or doc comment needs name resolution ([#98](https://github.com/nanyx-lang/nanyx/issues/98)),

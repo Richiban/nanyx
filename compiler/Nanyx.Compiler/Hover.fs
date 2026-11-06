@@ -94,16 +94,24 @@ let private calleeSpan (expr: Expression) =
 
 /// The hover for the expression at `offset` in the compiled root module: the type of the narrowest expression
 /// there that has one, or of the function itself on a call's function name, where it is instantiated at that
-/// call, with made-up type variables named by `names`. `None` when the module did not type-check or no typed
-/// expression is at `offset`.
+/// call, or of what a declaration's own name declares (a def, a parameter, a pattern variable), with made-up
+/// type variables named by `names`. `None` when the module did not type-check or nothing typed is at `offset`.
 ///
 /// The narrowest span wins rather than the deepest node, because a made-up node can sit inside the syntax it
 /// stands for: a `for` loop's element is an identifier spanning all of the loop's arms.
 let typeAt (names: TypeVarNames) (result: CompileResult) (offset: int) : HoverInfo option =
     match result.Syntax, result.Typed with
     | Some syntax, Some typed ->
+        // Only the module's own declarations have types recorded, so no imported one is found here.
+        let declarations =
+            typed.SymbolTypes
+            |> Map.toList
+            |> List.choose (fun (id, ty) ->
+                let declaration = typed.Symbols.[id].Declaration
+                if contains offset declaration then Some (ty, declaration) else None)
         let candidates =
-            expressionsAt offset syntax
+            declarations @
+            (expressionsAt offset syntax
             |> List.collect (fun expr ->
                 let callee =
                     match calleeSpan expr with
@@ -112,7 +120,7 @@ let typeAt (names: TypeVarNames) (result: CompileResult) (offset: int) : HoverIn
                     | _ -> None
                 let own = typed.ExprTypes |> Map.tryFind expr.Id |> Option.map (fun ty -> ty, expr.Span)
                 // A callee's name is inside its call, so it comes first among equals.
-                Option.toList callee @ Option.toList own)
+                Option.toList callee @ Option.toList own))
         match candidates with
         | [] -> None
         | _ ->

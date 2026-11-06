@@ -173,6 +173,26 @@ public sealed class LanguageServerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Hover_on_a_declarations_name_shows_its_type()
+    {
+        var uri = DocumentUri.FromFileSystemPath(Path.Combine(Path.GetTempPath(), "hover-declaration.nyx"));
+
+        Open(uri, "def id = { x -> x }\ndef total = id(40) + 2\n");
+        Assert.Empty((await NextPublished(uri)).Diagnostics!);
+
+        var id = await HoverAt(uri, 0, 5);
+        Assert.Equal("```nanyx\nα -> α\n```", id?.Contents.MarkupContent?.Value);
+        Assert.Equal(new Range(0, 4, 0, 6), id?.Range);
+
+        var total = await HoverAt(uri, 1, 6);
+        Assert.Equal("```nanyx\nint\n```", total?.Contents.MarkupContent?.Value);
+
+        var parameter = await HoverAt(uri, 0, 11);
+        Assert.Equal("```nanyx\nα\n```", parameter?.Contents.MarkupContent?.Value);
+        Assert.Equal(new Range(0, 11, 0, 12), parameter?.Range);
+    }
+
+    [Fact]
     public async Task Hover_outside_any_expression_returns_nothing()
     {
         var uri = DocumentUri.FromFileSystemPath(Path.Combine(Path.GetTempPath(), "hover-nothing.nyx"));
