@@ -160,7 +160,7 @@ compile error that lists the ones it does.
 | --------------- | ------------------------------------------------------------------------------------------------- |
 | `nanyx/console` | The `Console` context (`print`, `println`) and the instance the runtime supplies to the entry point |
 | `nanyx/result`  | `proc`, the result workflow: in `proc { ... }`, `try x` continues with the payload of `#some` or gives back any other tag (the block's type collects them), and `return x` is `#some(x)` |
-| `nanyx/text`    | `length`, `substring`, `startsWith`, `endsWith`, `contains`, `toUpper`, `toLower`, `trim`, `repeat`, `split`, `join`, `concat` |
+| `nanyx/text`    | `length`, `substring`, `startsWith`, `endsWith`, `indexOf`, `lastIndexOf`, `contains`, `count`, `removePrefix`, `removeSuffix`, `toUpper`, `toLower`, `trim`, `trimStart`, `trimEnd`, `isEmpty`, `isBlank`, `repeat`, `padStart`, `padEnd`, `split`, `join`, `concat`, `replace`, `lines`, `words` |
 
 The library is written over a handful of **compiler intrinsics**: operations that cannot be expressed in
 Nanyx itself, such as writing to standard output or reading a byte of a string. They are listed with
@@ -170,7 +170,10 @@ onto helper functions it emits with the module (`runtimeHelpers` in `Nanyx.Compi
 Their names all start with `__nanyx_`.
 
 Strings are UTF-8 and this first slice of `nanyx/text` works byte by byte: `length` counts bytes,
-`toUpper`/`toLower` only change ASCII letters and `trim` only strips ASCII whitespace. `++` (concatenation) and `==`
+indices and widths are byte offsets, `toUpper`/`toLower` only change ASCII letters and the trimming
+functions and `words` only treat ASCII whitespace as whitespace. `indexOf` and `lastIndexOf` return
+`#some(index)` or `#notFound`, as the language docs specify; `replace` takes its pattern and
+replacement positionally, where the docs name them. `++` (concatenation) and `==`
 on strings are language operators, lowered by the backend. (The language docs describe this module as
 `string` with `uppercase`/`lowercase`; the module is called `text` and the functions `toUpper`/`toLower`.)
 
