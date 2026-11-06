@@ -44,6 +44,10 @@ type Ty =
     | TyTag of string * Ty option
     | TyApply of string * Ty list
     | TyUnion of Ty list
+    /// A type alias by name, with its arguments, and the type it stands for. It is that type in every way but how it
+    /// is written: inference, unification and codegen look straight through it, and a type shown to a reader keeps
+    /// the name the user gave it (`Customer`, not `(name: string)`).
+    | TyAlias of string * Ty list * Ty
 
 /// A simple typed expression placeholder for future expansion. `Arguments` are a call's arguments (a pipe's
 /// include the piped value first), so a lambda passed to a call keeps its inferred type.

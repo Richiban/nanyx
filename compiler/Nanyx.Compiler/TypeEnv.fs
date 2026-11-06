@@ -32,6 +32,7 @@ module TypeEnv =
         | TyVar v -> Set.singleton v.Id
         | TyPrimitive _ -> Set.empty
         | TyNominal(_, underlying, _) -> freeTyVars underlying
+        | TyAlias(_, _, underlying) -> freeTyVars underlying
         | TyFunc(arg, ret) ->
             Set.union (freeTyVars arg) (freeTyVars ret)
         | TyRecord fields ->

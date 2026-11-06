@@ -13,6 +13,13 @@ type TypeVarNames =
     | Latin
 
 module Unifier =
+    /// The type an alias stands for, looking through any number of aliases; any other type as it is. Only the
+    /// outermost type is unwrapped, so aliases inside it keep their names.
+    let rec unalias (ty: Ty) : Ty =
+        match ty with
+        | TyAlias(_, _, underlying) -> unalias underlying
+        | _ -> ty
+
     let private tryTupleLikeRecord (fields: Map<string, Ty>) : Ty list option * (string * Ty) list =
         let tupleFields, namedFields =
             fields
@@ -64,6 +71,9 @@ module Unifier =
             | Some name -> name
             | None -> $"t{v.Id}"
         | TyNominal(name, _, _) -> name
+        // An alias is written by name, as the user wrote it: `Customer`, `Validator(int)`.
+        | TyAlias(name, [], _) -> name
+        | TyAlias(name, args, _) -> $"{name}({items args})"
         | TyFunc(arg, ret) ->
             let argText =
                 match bareTuple arg with
@@ -90,11 +100,14 @@ module Unifier =
                 |> Map.toList
                 |> List.map (fun (name, fieldTy) -> $"{name}: {grouped fieldTy}")
                 |> String.concat ", "
-                |> fun inner -> $"{{ {inner} }}"
-        // Tags are written with their `#`, as in source: `#some(int) | #notFound`. A tuple payload's items are the
-        // payload's own brackets' items: `#pair(int, string)`.
+                |> fun inner -> $"({inner})"
+        // Tags are written with their `#`, as in source: `#some(int) | #notFound`. A record payload's fields are
+        // in the tag's own brackets: `#pair(int, string)`, `#authenticated(username: string)`.
         | TyTag(name, payloadOpt) ->
             match payloadOpt with
+            | Some (TyRecord fields as payload) when not fields.IsEmpty ->
+                let written = printTy false payload
+                $"#{name}{written}"
             | Some payload -> $"#{name}({bareTuple payload |> Option.defaultWith (fun () -> printTy false payload)})"
             | None -> $"#{name}"
         | TyApply(name, [ arg ]) -> $"{name}({printTy false arg})"
@@ -109,14 +122,15 @@ module Unifier =
     /// `ty` as it would be written in a def's annotation: see `printTy`.
     let tyToString (ty: Ty) : string = printTy true ty
 
-    /// The type variables of `ty` in the order `tyToString` prints them, each once. A nominal's underlying type
-    /// is not printed, so its variables are not included.
+    /// The type variables of `ty` in the order `tyToString` prints them, each once. A nominal's or alias's
+    /// underlying type is not printed, so its variables are not included (an alias's arguments' are).
     let private varsInPrintOrder (ty: Ty) : TyVar list =
         let rec collect ty =
             match ty with
             | TyVar v -> [ v ]
             | TyPrimitive _
             | TyNominal _ -> []
+            | TyAlias(_, args, _) -> args |> List.collect collect
             | TyFunc(arg, ret) -> collect arg @ collect ret
             | TyRecord fields ->
                 match tryTupleLikeRecord fields with
@@ -199,20 +213,24 @@ module Unifier =
             | Some replacement -> apply subst replacement
             | None -> ty
         | TyNominal(name, underlying, isPrivate) -> TyNominal(name, apply subst underlying, isPrivate)
+        | TyAlias(name, args, underlying) -> TyAlias(name, args |> List.map (apply subst), apply subst underlying)
         | TyFunc(arg, ret) -> TyFunc(apply subst arg, apply subst ret)
         | TyRecord fields ->
             fields |> Map.map (fun _ v -> apply subst v) |> TyRecord
         | TyTag(name, payload) -> TyTag(name, payload |> Option.map (apply subst))
         | TyApply(name, args) -> TyApply(name, args |> List.map (apply subst))
         // A rest variable solved to a union (`r` := `#notFound`) is spliced into the union it is the rest of. One
-        // solved to the empty union leaves the others; when that is just one, the union is that one.
+        // solved to the empty union leaves the others; when that is just one, the union is that one. A member that
+        // is an alias of a tag or union is spliced in as what it stands for, as a union's members are tags.
         | TyUnion items ->
             let spliced =
                 items
                 |> List.collect (fun item ->
-                    match apply subst item with
+                    let applied = apply subst item
+                    match unalias applied with
                     | TyUnion inner -> inner
-                    | applied -> [ applied ])
+                    | TyTag _ as tag -> [ tag ]
+                    | _ -> [ applied ])
             match spliced with
             | [ single ] when items.Length > 1 -> single
             | _ -> TyUnion spliced
@@ -233,6 +251,7 @@ module Unifier =
             | TyVar _
             | TyPrimitive _
             | TyNominal _ -> Set.empty
+            | TyAlias(_, args, _) -> args |> List.map collect |> Set.unionMany
             | TyFunc(arg, ret) -> Set.union (collect arg) (collect ret)
             | TyRecord fields -> fields |> Map.toList |> List.map (snd >> collect) |> Set.unionMany
             | TyTag(_, payload) -> payload |> Option.map collect |> Option.defaultValue Set.empty
@@ -311,6 +330,7 @@ module Unifier =
             | TyVar v -> [ v, false, input ]
             | TyPrimitive _ -> []
             | TyNominal(_, underlying, _) -> collect true underlying
+            | TyAlias(_, _, underlying) -> collect input underlying
             | TyFunc(arg, ret) -> collect (not input) arg @ collect input ret
             | TyRecord fields -> fields |> Map.toList |> List.collect (snd >> collect input)
             | TyTag(_, payload) -> payload |> Option.map (collect input) |> Option.defaultValue []
@@ -330,6 +350,7 @@ module Unifier =
         match ty with
         | TyVar v -> v.Id = varId
         | TyNominal(_, underlying, _) -> occurs varId underlying
+        | TyAlias(_, _, underlying) -> occurs varId underlying
         | TyFunc(arg, ret) -> occurs varId arg || occurs varId ret
         | TyRecord fields -> fields |> Map.exists (fun _ v -> occurs varId v)
         | TyTag(_, payload) -> payload |> Option.exists (occurs varId)
@@ -361,6 +382,11 @@ module Unifier =
                     else
                         let newSubst = subst |> Map.add v.Id ty
                         loop newSubst rest
+                // An alias is the type it stands for.
+                | TyAlias(_, _, underlying), _ ->
+                    loop subst ((underlying, r, Equal) :: rest)
+                | _, TyAlias(_, _, underlying) ->
+                    loop subst ((l, underlying, Equal) :: rest)
                 | TyPrimitive lName, TyPrimitive rName when lName = rName ->
                     loop subst rest
                 | TyApply(lName, lArgs), TyApply(rName, rArgs) when lName = rName && lArgs.Length = rArgs.Length ->
@@ -479,6 +505,10 @@ module Unifier =
                         | TyVar _, _
                         | _, TyVar _ ->
                             unifyEqual l r rest
+                        | TyAlias(_, _, underlying), _ ->
+                            loop subst ((underlying, r, Assignable) :: rest)
+                        | _, TyAlias(_, _, underlying) ->
+                            loop subst ((l, underlying, Assignable) :: rest)
                         | _ ->
                         match l, r with
                         | TyNominal(lName, _, _), TyNominal(rName, _, _) when lName = rName ->

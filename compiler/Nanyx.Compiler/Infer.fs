@@ -139,6 +139,8 @@ let private tupleFieldName index =
 let rec private isAssignableType (expected: Ty) (actual: Ty) =
     match expected, actual with
     | TyVar _, _ -> true
+    | TyAlias(_, _, underlying), _ -> isAssignableType underlying actual
+    | _, TyAlias(_, _, underlying) -> isAssignableType expected underlying
     | TyPrimitive left, TyPrimitive right -> left = right
     | TyApply(leftName, leftArgs), TyApply(rightName, rightArgs) ->
         leftName = rightName
@@ -175,19 +177,19 @@ let private ensureAttachedTypeExists (state: InferState) (currentModuleOpt: stri
 
 let private matchesAttachedInput (inputTy: Ty) (lhsType: Ty) : bool =
     let rec containsNominal name ty =
-        match ty with
+        match Unifier.unalias ty with
         | TyNominal(nominalName, _, _) -> nominalName = name
         | TyUnion options -> options |> List.exists (containsNominal name)
         | _ -> false
-    match inputTy with
+    match Unifier.unalias inputTy with
     | TyNominal(name, _, _) ->
-        match lhsType with
+        match Unifier.unalias lhsType with
         | TyNominal(lhsName, _, _) -> lhsName = name
         | TyUnion options -> options |> List.exists (containsNominal name)
         | TyVar _ -> true
         | _ -> false
     | _ ->
-        match lhsType with
+        match Unifier.unalias lhsType with
         | TyNominal _ -> false
         | _ -> isAssignableType inputTy lhsType
 
@@ -208,7 +210,7 @@ let private tryResolveAttachedFunction (env: TypeEnv) (lhsType: Ty) (funcName: s
             |> Map.toList
             |> List.choose (fun (name, scheme) ->
                 if name.EndsWith(suffix) then
-                    match scheme.Type with
+                    match Unifier.unalias scheme.Type with
                     | TyFunc(inputTy, _) when matchesAttachedInput inputTy lhsType -> Some name
                     | _ -> None
                 else
@@ -222,6 +224,10 @@ let private tryResolveAttachedFunction (env: TypeEnv) (lhsType: Ty) (funcName: s
             | Some (line, col) -> Error [ Diagnostics.errorAt ($"Ambiguous attached function '{funcName}': {names}") (line, col) ]
             | None -> Error [ Diagnostics.error ($"Ambiguous attached function '{funcName}': {names}") ]
 
+/// The alias `name`, defined by `info`, written without arguments: a generic one is applied to its own parameters.
+let private aliasType (name: string) (info: TypeDefInfo) : Ty =
+    TyAlias(name, info.Parameters |> List.map TyVar, info.Underlying)
+
 let private tryInferAttachedLambdaInput (state: InferState) (name: Identifier) (expr: Expression) : Ty option =
     match expr.Kind with
     | Lambda(args, _) when name.Contains(".") && args.Length = 1 ->
@@ -229,7 +235,7 @@ let private tryInferAttachedLambdaInput (state: InferState) (name: Identifier) (
         let typeName = name.Substring(0, dotIndex)
         match state.TypeDefs |> Map.tryFind typeName with
         | Some info when typeName.StartsWith("$") -> Some (TyNominal(typeName, info.Underlying, info.IsPrivate))
-        | Some info -> Some info.Underlying
+        | Some info -> Some (aliasType typeName info)
         | None -> None
     | _ -> None
 
@@ -269,7 +275,7 @@ let rec private typeExprToTy (state: InferState) (typeExpr: TypeExpr) : Ty * Inf
         | None ->
             match state.TypeDefs |> Map.tryFind name with
             | Some info when name.StartsWith("$") -> TyNominal(name, info.Underlying, info.IsPrivate), state
-            | Some info -> info.Underlying, state
+            | Some info -> aliasType name info, state
             | None -> TyPrimitive name, state
     | TypeVar name ->
         match state.TypeVars |> Map.tryFind name with
@@ -327,7 +333,7 @@ let rec private typeExprToTy (state: InferState) (typeExpr: TypeExpr) : Ty * Inf
                         (info.Parameters, argTys)
                         ||> List.zip
                         |> List.fold (fun acc (paramVar, argTy) -> acc |> Map.add paramVar.Id argTy) Map.empty
-                    Unifier.apply substitutions info.Underlying, current
+                    TyAlias(name, argTys, Unifier.apply substitutions info.Underlying), current
                 else
                     TyApply(name, argTys), current
             | _ -> TyApply(name, argTys), current
@@ -349,7 +355,15 @@ let rec private typeExprToTy (state: InferState) (typeExpr: TypeExpr) : Ty * Inf
                 let ty, next = typeExprToTy current item
                 current <- next
                 ty)
-        TyUnion tys, current
+        // A union's members are tags: an alias of a tag or of a union is spliced in as what it stands for.
+        let members =
+            tys
+            |> List.collect (fun ty ->
+                match Unifier.unalias ty with
+                | TyUnion inner -> inner
+                | TyTag _ as tag -> [ tag ]
+                | _ -> [ ty ])
+        TyUnion members, current
     | TypeIntersection items ->
         let mutable current = state
         let tys =
@@ -383,10 +397,10 @@ let private extendEnvWithRecordFields (env: TypeEnv) (ty: Ty) =
     let addFields fields =
         fields
         |> Map.fold (fun acc name fieldTy -> TypeEnv.extend name (TypeEnv.mono fieldTy) acc) env
-    match ty with
+    match Unifier.unalias ty with
     | TyRecord fields -> addFields fields
     | TyNominal(_, underlying, _) ->
-        match underlying with
+        match Unifier.unalias underlying with
         | TyRecord fields -> addFields fields
         | _ -> env
     | _ -> env
@@ -425,8 +439,8 @@ let rec private collectContextMembers (state: InferState) (ctxExpr: TypeExpr) : 
             // Also check TypeDefs for non-context types used as contexts
             match state.TypeDefs |> Map.tryFind name with
             | Some info ->
-                match info.Underlying with
-                | TyRecord fields -> 
+                match Unifier.unalias info.Underlying with
+                | TyRecord fields ->
                     fields |> Map.toList, state
                 | _ -> [], state
             | None -> [], state
@@ -535,15 +549,15 @@ let private instantiate (state: InferState) (scheme: TypeScheme) : Ty * InferSta
 /// `| #some(a), f -> #some(f(a)) | other, _ -> other` is `#some(b) | r`.
 let private joinBranchTypes (rowVars: Set<int>) (state: InferState) (branchTypes: Ty list) : Ty * InferState =
     let isUnionItem ty =
-        match ty with
+        match Unifier.unalias ty with
         | TyTag _ -> true
         | TyVar v -> rowVars.Contains v.Id
         | _ -> false
     let tagsOf ty =
-        match ty with
-        | TyTag _ -> Some [ ty ]
-        | TyVar v when rowVars.Contains v.Id -> Some [ ty ]
-        | TyUnion items when items |> List.forall isUnionItem -> Some items
+        match Unifier.unalias ty with
+        | TyTag _ as tag -> Some [ tag ]
+        | TyVar v as var when rowVars.Contains v.Id -> Some [ var ]
+        | TyUnion items when items |> List.forall isUnionItem -> Some (items |> List.map Unifier.unalias)
         | _ -> None
     match branchTypes with
     | [] -> TyPrimitive "unit", state
@@ -575,6 +589,16 @@ let private joinBranchTypes (rowVars: Set<int>) (state: InferState) (branchTypes
 let private mkTypedExpr expr ty body statements matchArms : TypedExpr =
     { Expr = expr; Type = ty; Body = body; Statements = statements; MatchArms = matchArms; Arguments = None }
 
+/// The fields of a record type, looking through aliases and a nominal wrapper.
+let private recordFieldsOf (ty: Ty) : Map<string, Ty> option =
+    match Unifier.unalias ty with
+    | TyRecord fields -> Some fields
+    | TyNominal(_, underlying, _) ->
+        match Unifier.unalias underlying with
+        | TyRecord fields -> Some fields
+        | _ -> None
+    | _ -> None
+
 /// The fields of a record type, looking through a nominal wrapper. Member access and `with` need a record's
 /// fields while inference is still running, so a type that is still a variable here (a call's result, or a
 /// local bound to one) is first resolved against the constraints gathered so far.
@@ -586,10 +610,7 @@ let private recordFieldsSoFar (state: InferState) (ty: Ty) : Map<string, Ty> opt
             | Ok subst -> Unifier.apply subst ty
             | Error _ -> ty
         | _ -> ty
-    match resolved with
-    | TyRecord fields
-    | TyNominal(_, TyRecord fields, _) -> Some fields
-    | _ -> None
+    recordFieldsOf resolved
 /// `ty` as far as the constraints gathered so far determine it; a type variable stays one when nothing does.
 /// Variables inside it are resolved too: a call's `#some(b) | r` may already be `#some(string) | #notFound`.
 let private resolveSoFar (state: InferState) (ty: Ty) : Ty =
@@ -633,14 +654,14 @@ let private generalizeDef (env: TypeEnv) (state: InferState) (ty: Ty) : TypeSche
 /// floats when either operand is already known to be one, and defaults to `int` otherwise.
 let private numericOperandType (state: InferState) (leftTy: Ty) (rightTy: Ty) =
     let isFloat ty =
-        match resolveSoFar state ty with
+        match Unifier.unalias (resolveSoFar state ty) with
         | TyPrimitive "float" -> true
         | _ -> false
     if isFloat leftTy || isFloat rightTy then TyPrimitive "float" else numericType
 let private argTypesFromExpected (state: InferState) (args: (Identifier * TypeExpr option) list) (expectedInput: Ty) =
     let mutable current = state
     let argTys =
-        match expectedInput with
+        match Unifier.unalias expectedInput with
         | TyRecord _ when args.Length = 1 -> [ expectedInput ]
         | TyRecord fields ->
             args
@@ -734,12 +755,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                 match inferExpr env state baseExpr with
                 | Error err -> Error err
                 | Ok (typedBase, afterBase) ->
-                    let fieldsOpt =
-                        match typedBase.Type with
-                        | TyRecord fields
-                        | TyNominal(_, TyRecord fields, _) -> Some fields
-                        | _ -> None
-                    match fieldsOpt with
+                    match recordFieldsOf typedBase.Type with
                     | None -> Error [ Diagnostics.error "`with` needs a record whose fields are known here" ]
                     | Some fields ->
                         let mutable current = afterBase
@@ -782,7 +798,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                 | Error err -> Error err
                 | Ok (typedIterable, afterIterable) ->
                     let elementTy, constrained =
-                        match resolveSoFar afterIterable typedIterable.Type with
+                        match Unifier.unalias (resolveSoFar afterIterable typedIterable.Type) with
                         | TyApply(("seq" | "list"), [ elementTy ]) -> elementTy, afterIterable
                         | _ ->
                             let elementTy, next = freshVar afterIterable
@@ -805,14 +821,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                 let funcTy, nextState = instantiate (recordReference expr scheme current) scheme
                 current <- { nextState with CalleeTypes = nextState.CalleeTypes |> Map.add expr.Id funcTy }
 
-                let recordFieldsOpt =
-                    match funcTy with
-                    | TyRecord fields -> Some fields
-                    | TyNominal(_, underlying, _) ->
-                        match underlying with
-                        | TyRecord fields -> Some fields
-                        | _ -> None
-                    | _ -> None
+                let recordFieldsOpt = recordFieldsOf funcTy
 
                 let isWorkflowCall =
                     match args with
@@ -836,7 +845,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                             match inferLambdaWithExpected envWithCtx current lambdaExpr lambdaArgs lambdaBody (Some (TyPrimitive "unit")) None with
                             | Ok (typedLambda, next) ->
                                 let returnTy =
-                                    match typedLambda.Type with
+                                    match Unifier.unalias typedLambda.Type with
                                     | TyFunc(_, ret) -> ret
                                     | other -> other
                                 Ok (mkTypedExpr expr returnTy None None None, next)
@@ -851,21 +860,24 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                     // arguments before it: in `customer \map { c -> c.name }`, `c` is already a record when
                     // `c.name` is checked.
                     let paramTys =
-                        match funcTy, args with
+                        match Unifier.unalias funcTy, args with
                         | TyFunc(declaredInput, _), [ _ ] -> Some [ declaredInput ]
-                        | TyFunc(TyRecord fields, _), _ when fields.Count = args.Length ->
-                            let tys = args |> List.mapi (fun index _ -> fields |> Map.tryFind (tupleFieldName index))
-                            if tys |> List.forall Option.isSome then Some (tys |> List.choose id) else None
+                        | TyFunc(declaredInput, _), _ ->
+                            match Unifier.unalias declaredInput with
+                            | TyRecord fields when fields.Count = args.Length ->
+                                let tys = args |> List.mapi (fun index _ -> fields |> Map.tryFind (tupleFieldName index))
+                                if tys |> List.forall Option.isSome then Some (tys |> List.choose id) else None
+                            | _ -> None
                         | _ -> None
                     let expectedLambdaInput index lambdaArgs =
                         let unannotated = lambdaArgs |> List.forall (fun (_, typeOpt: TypeExpr option) -> typeOpt.IsNone)
-                        match paramTys |> Option.bind (List.tryItem index) with
+                        match paramTys |> Option.bind (List.tryItem index) |> Option.map Unifier.unalias with
                         | Some (TyFunc(lambdaInput, _)) when unannotated && not (List.isEmpty lambdaArgs) ->
                             match Unifier.unify current.Constraints with
                             | Ok subst ->
                                 // A lambda of several parameters needs the input's fields to split between them.
                                 match Unifier.apply subst lambdaInput with
-                                | TyRecord _ as resolved -> Some resolved
+                                | resolved when (match Unifier.unalias resolved with TyRecord _ -> true | _ -> false) -> Some resolved
                                 | resolved when lambdaArgs.Length = 1 -> Some resolved
                                 | _ -> None
                             | Error _ -> None
@@ -896,7 +908,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                         // def), its return type is the call's type directly, so a member access or match on
                         // the result can see it without waiting for the constraint below to be solved.
                         let retTy, nextState =
-                            match funcTy with
+                            match Unifier.unalias funcTy with
                             | TyFunc(_, declaredRet) -> declaredRet, current
                             | _ -> freshVar current
                         let expectedInput, nextState2 = freshVar nextState
@@ -926,7 +938,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                         let inputTy = inputTypeFromArgs argTys
                         let constrained = addAssignableConstraint inputTy info.Underlying current
                         let resultTy =
-                            if name.StartsWith("$") then TyNominal(name, info.Underlying, info.IsPrivate) else info.Underlying
+                            if name.StartsWith("$") then TyNominal(name, info.Underlying, info.IsPrivate) else aliasType name info
                         Ok (mkTypedExpr expr resultTy None None None, constrained)
                     else
                         Error errors
@@ -951,7 +963,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
                     let concatenable =
                         [ leftExpr.Type; rightExpr.Type ]
                         |> List.tryPick (fun ty ->
-                            match ty with
+                            match Unifier.unalias ty with
                             | TyPrimitive "string" -> Some ty
                             | TyApply("list", _) -> Some ty
                             | _ -> None)
@@ -1130,7 +1142,8 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
             let rec tryRecordFields ty =
                 match ty with
                 | TyRecord fields -> Some fields
-                | TyNominal(_, underlying, _) -> tryRecordFields underlying
+                | TyNominal(_, underlying, _)
+                | TyAlias(_, _, underlying) -> tryRecordFields underlying
                 | _ -> None
             // The variables a pattern binds are declared by the body of its arm, `armBody`.
             let rec inferPattern (armBody: NodeId) (env': TypeEnv) (state': InferState) (scrutineeTy: Ty) (pattern: Pattern) =
@@ -1306,7 +1319,8 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
             let tryGetTagUnion ty =
                 let rec unwrap ty =
                     match ty with
-                    | TyNominal(_, underlying, _) -> unwrap underlying
+                    | TyNominal(_, underlying, _)
+                    | TyAlias(_, _, underlying) -> unwrap underlying
                     | TyUnion items ->
                         if items |> List.forall (function TyTag _ -> true | _ -> false) then
                             items
@@ -1320,7 +1334,8 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
             let isListType ty =
                 let rec unwrap ty =
                     match ty with
-                    | TyNominal(_, underlying, _) -> unwrap underlying
+                    | TyNominal(_, underlying, _)
+                    | TyAlias(_, _, underlying) -> unwrap underlying
                     | TyApply("list", _) -> true
                     | _ -> false
                 unwrap ty
@@ -1339,7 +1354,8 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
             let isRecordType ty =
                 let rec unwrap ty =
                     match ty with
-                    | TyNominal(_, underlying, _) -> unwrap underlying
+                    | TyNominal(_, underlying, _)
+                    | TyAlias(_, _, underlying) -> unwrap underlying
                     | TyRecord _ -> true
                     | _ -> false
                 unwrap ty
@@ -1351,7 +1367,7 @@ and private inferExprKind (env: TypeEnv) (state: InferState) (expr: Expression) 
             // exhaustiveness check it is resolved against the constraints gathered so far, and before the arms
             // add theirs: a lone `#some(_)` arm would otherwise narrow the variable to that tag first and the
             // check would pass silently (#61).
-            let resolvedScrutineeTypes = scrutineeTypes |> List.map (resolveSoFar current)
+            let resolvedScrutineeTypes = scrutineeTypes |> List.map (resolveSoFar current >> Unifier.unalias)
             let mutable scrutineeOverrides: Map<int, Ty> = Map.empty
             for (index, scrutineeTy) in scrutineeTypes |> List.indexed do
                 let patternsAtPos = patternsForIndex index
@@ -1612,9 +1628,9 @@ and inferLambdaWithExpected (env: TypeEnv) (state: InferState) (lambda: Expressi
         let withReturnConstraint =
             match expectedReturnOpt with
             | Some expectedReturn ->
-                match expectedReturn with
+                match Unifier.unalias expectedReturn with
                 | TyNominal(name, underlying, _) when state.LocalNominals.Contains name ->
-                    match bodyExpr.Type with
+                    match Unifier.unalias bodyExpr.Type with
                     | TyNominal _ -> addAssignableConstraint bodyExpr.Type expectedReturn next
                     | _ -> addAssignableConstraint bodyExpr.Type underlying next
                 | _ -> addAssignableConstraint bodyExpr.Type expectedReturn next
@@ -1657,7 +1673,7 @@ and inferBlock (env: TypeEnv) (state: InferState) (block: Expression) (statement
                             match declaredTypeExprOpt with
                             | Some declaredExpr ->
                                 let ty, st = typeExprToTy nextState declaredExpr
-                                match ty with
+                                match Unifier.unalias ty with
                                 | TyFunc(inputTy, returnTy) -> Some inputTy, Some returnTy, Some ty, st
                                 | _ -> None, None, Some ty, st
                             | None -> None, None, None, nextState
@@ -1691,9 +1707,9 @@ and inferBlock (env: TypeEnv) (state: InferState) (block: Expression) (statement
                                     | Lambda _ -> declaredTy, next
                                     | _ ->
                                         let updatedState =
-                                            match declaredTy with
+                                            match Unifier.unalias declaredTy with
                                             | TyNominal(name, underlying, _) when current.LocalNominals.Contains name ->
-                                                match typedExpr.Type with
+                                                match Unifier.unalias typedExpr.Type with
                                                 | TyNominal _ -> addAssignableConstraint typedExpr.Type declaredTy next
                                                 | _ -> addAssignableConstraint typedExpr.Type underlying next
                                             | _ -> addAssignableConstraint typedExpr.Type declaredTy next
@@ -1852,7 +1868,7 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
                     match declaredTypeExprOpt with
                     | Some declaredExpr ->
                         let ty, st = typeExprToTy nextState declaredExpr
-                        match ty with
+                        match Unifier.unalias ty with
                         | TyFunc(inputTy, returnTy) -> Some inputTy, Some returnTy, Some ty, st
                         | _ -> None, None, Some ty, st
                     | None -> None, None, None, nextState
@@ -1888,9 +1904,9 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
                             | Lambda _ -> declaredTy, next
                             | _ ->
                                 let updatedState =
-                                    match declaredTy with
+                                    match Unifier.unalias declaredTy with
                                     | TyNominal(name, underlying, _) when state.LocalNominals.Contains name ->
-                                        match typedExpr.Type with
+                                        match Unifier.unalias typedExpr.Type with
                                         | TyNominal _ -> addAssignableConstraint typedExpr.Type declaredTy next
                                         | _ -> addAssignableConstraint typedExpr.Type underlying next
                                     | _ -> addAssignableConstraint typedExpr.Type declaredTy next
