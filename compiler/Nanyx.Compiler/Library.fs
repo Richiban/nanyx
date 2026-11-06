@@ -656,6 +656,7 @@ module Compiler =
                                       CalleeTypes = Map.empty
                                       SymbolTypes = Map.empty
                                       Symbols = state.Symbols
+                                      AnnotatedSymbols = state.AnnotatedSymbols
                                       References = state.References
                                       ImportReferences = state.ImportReferences }
                                  Own = own

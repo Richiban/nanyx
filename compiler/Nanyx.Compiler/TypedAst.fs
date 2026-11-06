@@ -82,7 +82,8 @@ type TypeDefInfo = { Parameters: TyVar list; Underlying: Ty; IsPrivate: bool }
 ///
 /// `Symbols` holds what the module declares and the imported definitions it refers to. `References` says which
 /// symbol each name resolved to, by the node of the identifier, call, pipe or qualified name; `ImportReferences`
-/// says which import a name brought in by an import came through.
+/// says which import a name brought in by an import came through. `AnnotatedSymbols` are the declarations that
+/// write their own type: an annotated def or lambda parameter.
 type TypedModule =
     { Module: Module
       Types: Map<string, Ty>
@@ -92,5 +93,6 @@ type TypedModule =
       CalleeTypes: Map<NodeId, Ty>
       SymbolTypes: Map<SymbolId, Ty>
       Symbols: Map<SymbolId, Symbol>
+      AnnotatedSymbols: Set<SymbolId>
       References: Map<NodeId, SymbolId>
       ImportReferences: Map<NodeId, SymbolId> }
