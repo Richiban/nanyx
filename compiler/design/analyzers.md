@@ -48,9 +48,13 @@ only then design the public contract that Nanyx-authored analyzers will be writt
 - **The type checker sees desugared code.** `desugar` turns workflow binds and `return` into calls to the
   keyword function and `pure` before inference, and `applyAttributes` replaces `@entry` with a synthesized call.
   The synthesized nodes have no position and no link back to the syntax they came from.
-- **There is no symbol table.** Names are resolved through `TypeEnv` lookups during inference and the result is
-  not recorded. Nothing says "this identifier refers to that `def`", which is the question behind every
-  "unused ..." rule, as well as hover and go-to-definition in the language server.
+- **Name resolution is recorded** ([#98](https://github.com/nanyx-lang/nanyx/issues/98)). Each binding in
+  `TypeEnv` carries the symbol it declares, so inference records which symbol every identifier, call, pipe target
+  and qualified name resolved to (`TypedModule.Symbols`, `References`, and `ImportReferences` for the import a
+  name came through). Values, parameters, pattern variables and imports are symbols; type names and context
+  members are not yet, because type expressions have no nodes. Declarations have no nodes either, so the parser
+  keeps their spans beside the tree (`DeclaredNames`) until [#96](https://github.com/nanyx-lang/nanyx/issues/96)
+  gives them their own.
 - **The typed tree is a placeholder.** `TypedExpr` wraps the untyped `Expression` with a type and some optional
   children, and is turned back into syntax (`moduleFromTypedItems`) for the backend.
 

@@ -46,7 +46,7 @@ module Intrinsics =
           stringByteAt, TypeEnv.mono (TyFunc(tuple [ stringTy; intTy ], intTy))
           stringSlice, TypeEnv.mono (TyFunc(tuple [ stringTy; intTy; intTy ], stringTy))
           stringFromByte, TypeEnv.mono (TyFunc(intTy, stringTy))
-          listCons, { Quantified = set [ elementVar.Id ]; Type = TyFunc(tuple [ element; listOf element ], listOf element) } ]
+          listCons, { Quantified = set [ elementVar.Id ]; Type = TyFunc(tuple [ element; listOf element ], listOf element); Symbol = None } ]
 
     let names : Set<string> = all |> List.map fst |> Set.ofList
 
