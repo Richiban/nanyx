@@ -160,13 +160,15 @@ module Compiler =
             match binding with
             | UseValue valueExpr -> UseValue(mapExpr valueExpr)
             | UseContextInstance(ctxType, valueExpr) -> UseContextInstance(ctxType, mapExpr valueExpr)
-        and mapStatement statement =
-            match statement with
+        and mapStatement (statement: Statement) =
+            { statement with Kind = mapStatementKind statement.Kind }
+        and mapStatementKind kind =
+            match kind with
             | DefStatement(isExport, name, typeOpt, value) -> DefStatement(isExport, name, typeOpt, mapExpr value)
             | ExprStatement value -> ExprStatement(mapExpr value)
             | UseStatement binding -> UseStatement(mapBinding binding)
             | ImportStatement _
-            | TypeDefStatement _ -> statement
+            | TypeDefStatement _ -> kind
         mapExpr expr
 
     /// Every name an expression may refer to: identifiers, callees and pipe targets, and for a member access
@@ -207,7 +209,7 @@ module Compiler =
         | LiteralExpr _ -> []
 
     and private referencedNamesInStatement (statement: Statement) : string list =
-        match statement with
+        match statement.Kind with
         | DefStatement(_, _, _, value) -> referencedNames value
         | ExprStatement value -> referencedNames value
         | UseStatement binding -> referencedNamesInBinding binding
@@ -399,8 +401,8 @@ module Compiler =
                 let memberAccess = Expression.from source (MemberAccess(Expression.from source (IdentifierExpr builderName), keyword, None))
                 Expression.from source (
                     Block [
-                        DefStatement(false, memberLocal, None, memberAccess)
-                        ExprStatement (Expression.from source (FunctionCall(memberLocal, None, args)))
+                        Statement.from source (DefStatement(false, memberLocal, None, memberAccess))
+                        Statement.from source (ExprStatement (Expression.from source (FunctionCall(memberLocal, None, args))))
                     ])
             | None -> Expression.from source (FunctionCall(keyword, None, args))
 
@@ -417,7 +419,7 @@ module Compiler =
             | WorkflowBindExpr(keyword, value) when not (isReturnKeyword keyword) ->
                 let prefix, value' = liftBinds value
                 let name = freshName keyword
-                prefix @ [ DefStatement(false, name, None, { expr with Kind = WorkflowBindExpr(keyword, value') }) ],
+                prefix @ [ Statement.from expr (DefStatement(false, name, None, { expr with Kind = WorkflowBindExpr(keyword, value') })) ],
                 Expression.from expr (IdentifierExpr name)
             | WorkflowBindExpr(keyword, value) ->
                 let prefix, value' = liftBinds value
@@ -498,13 +500,13 @@ module Compiler =
                     let prefix, bound' = liftBinds bound
                     prefix, { value with Kind = WorkflowBindExpr(keyword, bound') }
                 | _ -> liftBinds value
-            match statement with
+            match statement.Kind with
             | DefStatement(isExport, name, typeOpt, value) ->
                 let prefix, value' = liftValue value
-                prefix @ [ DefStatement(isExport, name, typeOpt, value') ]
+                prefix @ [ { statement with Kind = DefStatement(isExport, name, typeOpt, value') } ]
             | ExprStatement value ->
                 let prefix, value' = liftValue value
-                prefix @ [ ExprStatement value' ]
+                prefix @ [ { statement with Kind = ExprStatement value' } ]
             | UseStatement _
             | ImportStatement _
             | TypeDefStatement _ -> [ statement ]
@@ -580,71 +582,66 @@ module Compiler =
             match binding with
             | UseValue expr -> UseValue (desugarExpr expr)
             | UseContextInstance(ctxType, expr) -> UseContextInstance(ctxType, desugarExpr expr)
-        and desugarStatement stmt =
-            match stmt with
+        and desugarStatement (stmt: Statement) =
+            match stmt.Kind with
             | DefStatement(isExport, name, typeOpt, expr) ->
                 let expr' =
                     match expr.Kind with
                     | WorkflowBindExpr(keyword, value) when isReturnKeyword keyword ->
                         workflowCall expr "return" [desugarExpr value]
                     | _ -> desugarExpr expr
-                DefStatement(isExport, name, typeOpt, expr')
-            | ExprStatement expr -> ExprStatement (desugarExpr expr)
-            | UseStatement binding -> UseStatement (desugarUseBinding binding)
+                { stmt with Kind = DefStatement(isExport, name, typeOpt, expr') }
+            | ExprStatement expr -> { stmt with Kind = ExprStatement (desugarExpr expr) }
+            | UseStatement binding -> { stmt with Kind = UseStatement (desugarUseBinding binding) }
             | ImportStatement _
             | TypeDefStatement _ -> stmt
-        and desugarWorkflowChain statements =
+        and desugarWorkflowChain (statements: Statement list) =
             match statements with
             | [] -> Expression.synthetic UnitExpr
-            | DefStatement(isExport, name, typeOpt, expr) :: rest ->
-                match expr.Kind with
-                | WorkflowBindExpr(keyword, bindExpr) when isReturnKeyword keyword ->
-                    workflowCall expr "return" [desugarExpr bindExpr]
-                | WorkflowBindExpr(keyword, bindExpr) ->
-                    let nextExpr = desugarWorkflowChain rest
-                    workflowCall expr keyword [desugarExpr bindExpr; Expression.from expr (Lambda([name, None], nextExpr))]
-                | _ ->
-                    let expr' = desugarExpr expr
-                    let nextExpr = desugarWorkflowChain rest
-                    chainBlock expr.Span nextExpr [DefStatement(isExport, name, typeOpt, expr'); ExprStatement nextExpr]
-            | ExprStatement expr :: rest ->
-                match expr.Kind with
-                | WorkflowReturnExpr value -> workflowCall expr "return" [desugarExpr value]
-                | WorkflowBindExpr(keyword, bindExpr) when isReturnKeyword keyword ->
-                    workflowCall expr "return" [desugarExpr bindExpr]
-                | WorkflowBindExpr(keyword, bindExpr) ->
-                    let nextExpr = desugarWorkflowChain rest
-                    workflowCall expr keyword [desugarExpr bindExpr; Expression.from expr (Lambda([("_", None)], nextExpr))]
-                | _ ->
-                    let expr' = desugarExpr expr
-                    let nextExpr = desugarWorkflowChain rest
-                    chainBlock expr.Span nextExpr [ExprStatement expr'; ExprStatement nextExpr]
-            | UseStatement binding :: rest ->
-                let binding' = desugarUseBinding binding
-                let nextExpr = desugarWorkflowChain rest
-                let bound = match binding with UseValue expr | UseContextInstance(_, expr) -> expr
-                chainBlock bound.Span nextExpr [UseStatement binding'; ExprStatement nextExpr]
             | statement :: rest ->
-                let nextExpr = desugarWorkflowChain rest
-                chainBlock SourceSpan.none nextExpr [desugarStatement statement; ExprStatement nextExpr]
-        // A block made up for a statement and the rest of the chain spans from the statement to the end of the
-        // rest. The rest is a made-up `()` with no span when the statement is the last one, and a statement
-        // without an expression (an import, a type) has no span yet.
-        and chainBlock (statementSpan: SourceSpan) (nextExpr: Expression) statements =
+                match statement.Kind with
+                | DefStatement(isExport, name, typeOpt, expr) ->
+                    match expr.Kind with
+                    | WorkflowBindExpr(keyword, bindExpr) when isReturnKeyword keyword ->
+                        workflowCall expr "return" [desugarExpr bindExpr]
+                    | WorkflowBindExpr(keyword, bindExpr) ->
+                        let nextExpr = desugarWorkflowChain rest
+                        workflowCall expr keyword [desugarExpr bindExpr; Expression.from expr (Lambda([name, None], nextExpr))]
+                    | _ ->
+                        let nextExpr = desugarWorkflowChain rest
+                        chainBlock statement nextExpr { statement with Kind = DefStatement(isExport, name, typeOpt, desugarExpr expr) }
+                | ExprStatement expr ->
+                    match expr.Kind with
+                    | WorkflowReturnExpr value -> workflowCall expr "return" [desugarExpr value]
+                    | WorkflowBindExpr(keyword, bindExpr) when isReturnKeyword keyword ->
+                        workflowCall expr "return" [desugarExpr bindExpr]
+                    | WorkflowBindExpr(keyword, bindExpr) ->
+                        let nextExpr = desugarWorkflowChain rest
+                        workflowCall expr keyword [desugarExpr bindExpr; Expression.from expr (Lambda([("_", None)], nextExpr))]
+                    | _ ->
+                        let nextExpr = desugarWorkflowChain rest
+                        chainBlock statement nextExpr { statement with Kind = ExprStatement (desugarExpr expr) }
+                | UseStatement _
+                | ImportStatement _
+                | TypeDefStatement _ ->
+                    let nextExpr = desugarWorkflowChain rest
+                    chainBlock statement nextExpr (desugarStatement statement)
+        // A statement followed by the rest of the chain, as a block made up for them that spans from the statement
+        // to the end of the rest. The rest is a made-up `()` with no span when the statement is the last one.
+        and chainBlock (statement: Statement) (nextExpr: Expression) (desugared: Statement) =
             let span =
-                if SourceSpan.isNone statementSpan then nextExpr.Span
-                elif SourceSpan.isNone nextExpr.Span then statementSpan
-                else SourceSpan.between statementSpan nextExpr.Span
-            Expression.at span (Block statements)
+                if SourceSpan.isNone nextExpr.Span then statement.Span
+                else SourceSpan.between statement.Span nextExpr.Span
+            Expression.at span (Block [ desugared; Statement.from nextExpr (ExprStatement nextExpr) ])
         and desugarBlock statements =
             let rec split prefix remaining =
                 match remaining with
                 | [] -> List.rev prefix
-                | (DefStatement(_, _, _, Kind (WorkflowBindExpr _))) :: _
-                | (ExprStatement (Kind (WorkflowBindExpr _))) :: _
-                | (ExprStatement (Kind (WorkflowReturnExpr _))) :: _ ->
+                | Kind (DefStatement(_, _, _, Kind (WorkflowBindExpr _))) :: _
+                | Kind (ExprStatement (Kind (WorkflowBindExpr _))) :: _
+                | Kind (ExprStatement (Kind (WorkflowReturnExpr _))) :: _ ->
                     let chainExpr = desugarWorkflowChain remaining
-                    List.rev prefix @ [ExprStatement chainExpr]
+                    List.rev prefix @ [ Statement.from chainExpr (ExprStatement chainExpr) ]
                 | stmt :: rest ->
                     split (desugarStatement stmt :: prefix) rest
             split [] (statements |> List.collect liftStatementBinds)

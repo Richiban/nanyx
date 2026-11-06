@@ -25,7 +25,7 @@ let ``for with arms is a call to __for with a pattern lambda, and -> without an 
 [<Fact>]
 let ``rec is a def whose value is wrapped in __rec`` () =
     match parseModule "def f = {\n  rec loop = { i -> loop(i) }\n  loop(1)\n}" with
-    | Result.Ok [ Def (ValueDef (_, "f", _, Kind (Lambda ([], Kind (Block [ DefStatement (false, "loop", None, Kind (FunctionCall ("__rec", None, [ Kind (Lambda _) ]))); ExprStatement _ ]))))) ] -> ()
+    | Result.Ok [ Def (ValueDef (_, "f", _, Kind (Lambda ([], Kind (Block [ Kind (DefStatement (false, "loop", None, Kind (FunctionCall ("__rec", None, [ Kind (Lambda _) ])))); Kind (ExprStatement _) ]))))) ] -> ()
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
     | Result.Error err -> failwith $"Parse failed: {err}"
 

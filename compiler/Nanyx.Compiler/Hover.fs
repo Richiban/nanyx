@@ -38,7 +38,7 @@ let rec private children (expr: Expression) : Expression list =
     | InterpolatedString parts -> parts |> List.choose (function StringExpr value -> Some value | StringText _ -> None)
 
 and private statementExpressions (statement: Statement) : Expression list =
-    match statement with
+    match statement.Kind with
     | DefStatement(_, _, _, value)
     | ExprStatement value -> [ value ]
     | UseStatement binding -> [ bindingExpression binding ]

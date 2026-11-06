@@ -1729,7 +1729,7 @@ and inferBlock (env: TypeEnv) (state: InferState) (block: Expression) (statement
         let mutable typedStatements: TypedStatement list = []
         let mutable errors: Diagnostic list = []
         for statement in statements do
-            match statement with
+            match statement.Kind with
             | DefStatement(isExport, name, typeOpt, expr) ->
                 if errors.IsEmpty then
                     let contextsExist =
