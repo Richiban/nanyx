@@ -68,6 +68,8 @@ module private Helpers =
     let floatBox = "__nanyx_float_box"
     let floatToString = "__nanyx_float_to_string"
     let writeStdout = NyxCompiler.Intrinsics.writeStdout
+    let writeStderr = NyxCompiler.Intrinsics.writeStderr
+    let readStdinByte = NyxCompiler.Intrinsics.readStdinByte
     let stringLength = NyxCompiler.Intrinsics.stringLength
     let stringByteAt = NyxCompiler.Intrinsics.stringByteAt
     let stringSlice = NyxCompiler.Intrinsics.stringSlice
@@ -343,6 +345,54 @@ let private runtimeHelpers : Map<string, string> =
             "  i32.const 8"
             "  call $fd_write"
             "  drop"
+            ")" ]
+      // The same as writing to stdout, on stderr (fd 2).
+      Helpers.writeStderr,
+      lines
+          [ $"(func ${Helpers.writeStderr} (param $s i32)"
+            "  i32.const 0"
+            "  local.get $s"
+            "  i32.store"
+            "  i32.const 4"
+            "  local.get $s"
+            $"  call ${Helpers.stringLength}"
+            "  i32.store"
+            "  i32.const 2"
+            "  i32.const 0"
+            "  i32.const 1"
+            "  i32.const 8"
+            "  call $fd_write"
+            "  drop"
+            ")" ]
+      // Reads one byte of stdin (fd 0) into offset 12 through the iovec at 0, with the count read at 8. Gives
+      // back -1 when nothing was read (the end of the input) or the read failed. A call `f()` to an intrinsic
+      // passes no argument for the unit, so it takes none.
+      Helpers.readStdinByte,
+      lines
+          [ $"(func ${Helpers.readStdinByte} (result i32)"
+            "  i32.const 0"
+            "  i32.const 12"
+            "  i32.store"
+            "  i32.const 4"
+            "  i32.const 1"
+            "  i32.store"
+            "  i32.const 0"
+            "  i32.const 0"
+            "  i32.const 1"
+            "  i32.const 8"
+            "  call $fd_read"
+            "  if (result i32)"
+            "    i32.const -1"
+            "  else"
+            "    i32.const 8"
+            "    i32.load"
+            "    if (result i32)"
+            "      i32.const 12"
+            "      i32.load8_u"
+            "    else"
+            "      i32.const -1"
+            "    end"
+            "  end"
             ")" ]
       // Stores one field of a freshly allocated record and hands the record pointer back, so a record
       // literal is built entirely on the operand stack: `base value offset -> base`. That keeps nested
@@ -3358,6 +3408,7 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
             |> Map.ofList
         let fromIntrinsics =
             [ Helpers.stringLength, "int"
+              Helpers.readStdinByte, "int"
               Helpers.stringByteAt, "int"
               Helpers.stringSlice, "string"
               Helpers.stringFromByte, "string" ]
@@ -3772,6 +3823,8 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
           Helpers.stringConcat, [ Helpers.stringLength; Helpers.stringAlloc; Helpers.copyBytes ]
           Helpers.stringEquals, [ Helpers.stringLength ]
           Helpers.writeStdout, [ Helpers.stringLength ]
+          Helpers.writeStderr, [ Helpers.stringLength ]
+          Helpers.readStdinByte, []
           Helpers.listCons, [ Helpers.alloc ]
           Helpers.recordSet, []
           Helpers.recordCopy, [ Helpers.alloc; Helpers.copyBytes ]
@@ -3791,9 +3844,12 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                 |> Option.defaultValue []
             closeHelpers (acc.Add name) (deps @ rest)
     let usedHelperSet = closeHelpers Set.empty (usedHelpers |> Seq.toList)
-    let moduleUsesWriteStdout = usedHelperSet.Contains Helpers.writeStdout
-    // Anything that writes to stdout shares the WASI import, the memory and the newline byte.
-    let moduleUsesIoHelpers = moduleUsesDbgHelpers || moduleUsesWriteStdout
+    let moduleUsesStandardStreams =
+        [ Helpers.writeStdout; Helpers.writeStderr; Helpers.readStdinByte ] |> List.exists usedHelperSet.Contains
+    let moduleReadsStdin = usedHelperSet.Contains Helpers.readStdinByte
+    // Anything that writes to stdout or stderr, or reads stdin, shares the WASI import, the memory and the
+    // newline byte.
+    let moduleUsesIoHelpers = moduleUsesDbgHelpers || moduleUsesStandardStreams
     let moduleUsesHeap = moduleUsesHeap || usedHelperSet.Contains Helpers.alloc
     let renderedHelpers =
         helperDependencies
@@ -3976,6 +4032,8 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
     let dbgPrelude =
         if moduleUsesIoHelpers then
             [ "  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))"
+              if moduleReadsStdin then
+                  "  (import \"wasi_snapshot_preview1\" \"fd_read\" (func $fd_read (param i32 i32 i32 i32) (result i32)))"
               "  (memory 1)"
               "  (export \"memory\" (memory 0))"
               if moduleUsesDbgHelpers then

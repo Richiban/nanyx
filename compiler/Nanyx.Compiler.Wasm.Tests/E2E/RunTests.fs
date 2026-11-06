@@ -13,29 +13,37 @@ type private RunOutcome =
 
 /// Runs the real CLI (built next to the tests through the project reference) in a child process, so the
 /// program's stdout, the diagnostics on stderr and the exit code are all observed exactly as a user would.
-let private nanyxRun (inputPath: string) : RunOutcome =
+/// `standardInput` is written to the program's stdin, which is then closed.
+let private nanyxRunWithInput (standardInput: string) (inputPath: string) : RunOutcome =
     let cliPath = Path.Combine(AppContext.BaseDirectory, "nanyx.dll")
     if not (File.Exists cliPath) then
         failwith $"The nanyx CLI was not found at {cliPath}"
-    let startInfo = ProcessStartInfo("dotnet", RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false)
+    let startInfo =
+        ProcessStartInfo("dotnet", RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false)
     for argument in [ cliPath; "run"; inputPath ] do
         startInfo.ArgumentList.Add argument
     use proc = Process.Start startInfo
     let stdout = proc.StandardOutput.ReadToEndAsync()
     let stderr = proc.StandardError.ReadToEndAsync()
+    proc.StandardInput.Write standardInput
+    proc.StandardInput.Close()
     proc.WaitForExit()
     { ExitCode = proc.ExitCode
       StandardOutput = stdout.Result
       StandardError = stderr.Result }
 
+let private nanyxRun (inputPath: string) : RunOutcome = nanyxRunWithInput "" inputPath
+
 let private runE2E testName =
     nanyxRun (Path.Combine(__SOURCE_DIRECTORY__, testName, "input.nyx"))
 
-let private runSource (source: string) : RunOutcome =
+let private runSourceWithInput (standardInput: string) (source: string) : RunOutcome =
     let inputPath = Path.Combine(Path.GetTempPath(), $"nanyx-run-{Guid.NewGuid():N}.nyx")
     File.WriteAllText(inputPath, source)
-    try nanyxRun inputPath
+    try nanyxRunWithInput standardInput inputPath
     finally File.Delete inputPath
+
+let private runSource (source: string) : RunOutcome = runSourceWithInput "" source
 
 let private assertRan (expectedOutput: string) (outcome: RunOutcome) =
     Assert.True((outcome.ExitCode = 0), $"Expected exit code 0, got {outcome.ExitCode}. stderr:\n{outcome.StandardError}")
@@ -1148,6 +1156,45 @@ let ``Run - Int.parse reads decimal integers and rejects anything else`` () =
         "show(Int.parse(\" 1\"))\n" +
         "show(\"12\" \\ Int.parse)\n"
     runSource source |> assertRan "#some(42)\n#some(5)\n#some(7)\n#some(0)\n#invalidInt\n#invalidInt\n#invalidInt\n#invalidInt\n#some(12)\n"
+
+[<Fact>]
+let ``Run - eprint and eprintln write to stderr`` () =
+    let source =
+        "def warn: [Console] string -> () = { message -> eprintln(\"warning: \" ++ message) }\n" +
+        "\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  print(\"out \")\n" +
+        "  eprint(\"err \")\n" +
+        "  flush()\n" +
+        "  warn(\"careful\")\n" +
+        "  println(\"done\")\n" +
+        "}\n"
+    let outcome = runSource source
+    Assert.True((outcome.ExitCode = 0), $"Expected exit code 0, got {outcome.ExitCode}. stderr:\n{outcome.StandardError}")
+    Assert.Equal("out done\n", outcome.StandardOutput)
+    Assert.Equal("err warning: careful\n", outcome.StandardError)
+
+[<Fact>]
+let ``Run - readLine and readToEnd read stdin`` () =
+    let source =
+        "@entry\n" +
+        "def main = {\n" +
+        "  match readLine()\n" +
+        "    | #some(line) -> println(\"first [\" ++ line ++ \"]\")\n" +
+        "    | #error(_) -> println(\"no first\")\n" +
+        "  match readLine()\n" +
+        "    | #some(line) -> println(\"second [\" ++ line ++ \"]\")\n" +
+        "    | #error(_) -> println(\"no second\")\n" +
+        "  match readToEnd()\n" +
+        "    | #some(rest) -> println(\"rest [\" ++ rest ++ \"]\")\n" +
+        "    | #error(_) -> println(\"failed\")\n" +
+        "  match readLine()\n" +
+        "    | #some(line) -> println(\"more [\" ++ line ++ \"]\")\n" +
+        "    | #error(_) -> println(\"end of input\")\n" +
+        "}\n"
+    runSourceWithInput "hello\r\nworld\nthe\nrest" source
+    |> assertRan "first [hello]\nsecond [world]\nrest [the\nrest]\nend of input\n"
 
 [<Fact>]
 let ``Run - the prelude's List functions`` () =
