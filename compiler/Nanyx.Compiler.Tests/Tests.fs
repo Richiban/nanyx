@@ -1821,3 +1821,16 @@ let ``Hints name type variables as their top-level def's type does`` () =
     Assert.Equal<(string * string * int) list>(
         [ "pair", "α, β -> (α, β)", 4; "second", "α, β -> β", offsetOf source "second" 0 0 ],
         typeHints TypeHints.typeLenses source)
+
+[<Fact>]
+let ``A call to a def that matches on a tag union keeps the argument's payload type`` () =
+    // Regression: the def's type was generalized before its constraints were solved, so its input came out
+    // as a fresh variable unrelated to its result, and `y` had a payload of no particular type.
+    let source =
+        "def mapId = { | #some(a) -> #some(a) | other -> other }\n" +
+        "def y = mapId(#some(5))"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    match result.Typed.Value.Types.["y"] with
+    | TyUnion (TyTag("some", Some payloadTy) :: _) -> Assert.Equal(TyPrimitive "int", payloadTy)
+    | other -> failwith $"Unexpected type: %A{other}"
