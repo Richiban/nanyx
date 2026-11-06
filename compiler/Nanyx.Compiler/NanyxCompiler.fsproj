@@ -16,6 +16,7 @@
     <Compile Include="Builtins.fs" />
     <Compile Include="Library.fs" />
     <Compile Include="Hover.fs" />
+    <Compile Include="Definition.fs" />
   </ItemGroup>
 
   <ItemGroup>

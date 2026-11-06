@@ -10,15 +10,15 @@ namespace Nanyx.LanguageServer;
 /// The <c>nanyx lsp</c> command runs it over stdio; tests run it over in-memory streams.
 /// </summary>
 /// <remarks>
-/// The server publishes diagnostics and shows inferred types on hover. Each editor feature is one handler
-/// class in <c>Handlers/</c>, registered in <see cref="Configure"/>, reading the document's last compile from
-/// <see cref="DocumentStore"/>. To add a feature, add a handler that derives from the matching OmniSharp base
-/// class and register it:
+/// The server publishes diagnostics, shows inferred types on hover and goes to definitions. Each editor feature
+/// is one handler class in <c>Handlers/</c>, registered in <see cref="Configure"/>, reading the document's last
+/// compile from <see cref="DocumentStore"/>. To add a feature, add a handler that derives from the matching
+/// OmniSharp base class and register it:
 /// <list type="bullet">
-///   <item><c>textDocument/definition</c> — a <c>DefinitionHandlerBase</c>.</item>
+///   <item><c>textDocument/references</c> — a <c>ReferencesHandlerBase</c>.</item>
 ///   <item><c>textDocument/completion</c> — a <c>CompletionHandlerBase</c>.</item>
 /// </list>
-/// These are deliberately not implemented yet: they need the compiler to record what each name refers to (#98).
+/// These are not implemented yet (#113).
 /// </remarks>
 public static class NanyxLanguageServer
 {
@@ -59,5 +59,6 @@ public static class NanyxLanguageServer
                 logging.SetMinimumLevel(LogLevel.Warning);
             })
             .WithHandler<TextDocumentSyncHandler>()
-            .WithHandler<HoverHandler>();
+            .WithHandler<HoverHandler>()
+            .WithHandler<DefinitionHandler>();
 }
