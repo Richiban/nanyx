@@ -8,7 +8,8 @@ namespace Nanyx.LanguageServer.Handlers;
 /// <summary>
 /// Shows the inferred type above each top-level def that does not write its own, read from the document's last
 /// compile. Where one def declares several names (a destructuring def), each lens says which name it is for. Nothing
-/// is shown in a document that did not type-check.
+/// is shown in a document that did not type-check, nor with <see cref="ServerSettings.TopLevelInlayHints"/>, where
+/// these types are inlay hints instead.
 /// </summary>
 public sealed class CodeLensHandler : CodeLensHandlerBase
 {
@@ -31,7 +32,7 @@ public sealed class CodeLensHandler : CodeLensHandlerBase
     private CodeLensContainer? Compute(CodeLensParams request)
     {
         var document = _documents.TryGet(request.TextDocument.Uri);
-        if (document?.Compiled is not { } compiled)
+        if (_settings.TopLevelInlayHints || document?.Compiled is not { } compiled)
         {
             return null;
         }

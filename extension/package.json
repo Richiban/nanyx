@@ -77,6 +77,19 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "Name inferred type variables `α`, `β`, `γ`, ... in hovers. Turn off for `a`, `b`, `c`, ... (passes `--latin-type-vars` to `nanyx lsp`, which needs a compiler that has it)."
+        },
+        "nanyx.topLevelTypes": {
+          "type": "string",
+          "enum": [
+            "codeLens",
+            "inlayHint"
+          ],
+          "enumDescriptions": [
+            "In a lens above each top-level definition.",
+            "As an inlay hint after each top-level definition's name, like the hints for locals and parameters."
+          ],
+          "default": "codeLens",
+          "markdownDescription": "Where to show the inferred type of a top-level definition that does not write its type. `inlayHint` passes `--top-level-inlay-hints` to `nanyx lsp`, which needs a compiler that has it."
         }
       }
     }

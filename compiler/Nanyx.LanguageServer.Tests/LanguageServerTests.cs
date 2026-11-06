@@ -18,8 +18,6 @@ public sealed class LanguageServerTests : IAsyncLifetime
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
 
-    private readonly Pipe _clientToServer = new();
-    private readonly Pipe _serverToClient = new();
     private readonly CancellationTokenSource _cancellation = new(Timeout);
     private readonly List<PublishDiagnosticsParams> _published = [];
     private readonly SemaphoreSlim _publishedSignal = new(0);
@@ -27,16 +25,29 @@ public sealed class LanguageServerTests : IAsyncLifetime
     private Task _serverTask = Task.CompletedTask;
     private LanguageClient _client = null!;
 
-    public async Task InitializeAsync()
+    public Task InitializeAsync() => StartAsync(ServerSettings.Default);
+
+    /// <summary>Replaces the server started for the test with one started with other settings.</summary>
+    private async Task RestartWithAsync(ServerSettings settings)
     {
+        await DisposeAsync();
+        await StartAsync(settings);
+    }
+
+    private async Task StartAsync(ServerSettings settings)
+    {
+        var clientToServer = new Pipe();
+        var serverToClient = new Pipe();
+
         _serverTask = NanyxLanguageServer.RunAsync(
-            _clientToServer.Reader.AsStream(),
-            _serverToClient.Writer.AsStream(),
-            cancellationToken: _cancellation.Token);
+            clientToServer.Reader.AsStream(),
+            serverToClient.Writer.AsStream(),
+            settings,
+            _cancellation.Token);
 
         _client = LanguageClient.PreInit(options => options
-            .WithInput(_serverToClient.Reader)
-            .WithOutput(_clientToServer.Writer)
+            .WithInput(serverToClient.Reader)
+            .WithOutput(clientToServer.Writer)
             .OnPublishDiagnostics(diagnostics =>
             {
                 lock (_published)
@@ -354,6 +365,31 @@ public sealed class LanguageServerTests : IAsyncLifetime
         // Only the hints in the range asked for.
         var secondLine = await InlayHintsIn(uri, new Range(1, 0, 1, 16));
         Assert.Equal([new Position(1, 12)], secondLine.Select(hint => hint.Position));
+    }
+
+    [Fact]
+    public async Task Top_level_inlay_hints_show_top_level_defs_types_as_inlay_hints_instead_of_lenses()
+    {
+        await RestartWithAsync(ServerSettings.Default with { TopLevelInlayHints = true });
+        var uri = DocumentUri.FromFileSystemPath(Path.Combine(Path.GetTempPath(), "top-level-hints.nyx"));
+
+        Open(uri, "def id = { x -> x }\r\ndef answer: int = 42\r\ndef (p, q) = (1, \"s\")\r\n");
+        Assert.Empty((await NextPublished(uri)).Diagnostics!);
+
+        var lenses = await _client.TextDocument.RequestCodeLens(
+            new CodeLensParams { TextDocument = new TextDocumentIdentifier(uri) },
+            _cancellation.Token);
+        Assert.Empty(lenses ?? []);
+
+        // Each name of the destructuring def has its own hint, so none needs to say which name it is for.
+        Assert.Equal(
+            [
+                (new Position(0, 6), ": α -> α"),
+                (new Position(0, 12), ": α"),
+                (new Position(2, 6), ": int"),
+                (new Position(2, 9), ": string")
+            ],
+            (await InlayHintsIn(uri, new Range(0, 0, 3, 0))).Select(hint => (hint.Position, hint.Label.String)));
     }
 
     [Fact]

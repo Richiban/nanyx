@@ -88,12 +88,16 @@ internal static class CliCommands
     /// </summary>
     /// <param name="stdio">Accepted and ignored: stdio is the only transport, but LSP clients conventionally pass it.</param>
     /// <param name="latinTypeVars">Name inferred type variables a, b, ... in hovers, rather than α, β, ...</param>
+    /// <param name="topLevelInlayHints">Show top-level defs' inferred types as inlay hints after their names, rather than in lenses above them.</param>
     [Consolo("lsp")]
     public static void Lsp(
         [Consolo("stdio")] bool stdio = false,
-        [Consolo("latin-type-vars")] bool latinTypeVars = false)
+        [Consolo("latin-type-vars")] bool latinTypeVars = false,
+        [Consolo("top-level-inlay-hints")] bool topLevelInlayHints = false)
     {
-        var settings = new Nanyx.LanguageServer.ServerSettings(latinTypeVars ? TypeVarNames.Latin : TypeVarNames.Greek);
+        var settings = new Nanyx.LanguageServer.ServerSettings(
+            latinTypeVars ? TypeVarNames.Latin : TypeVarNames.Greek,
+            topLevelInlayHints);
         Nanyx.LanguageServer.NanyxLanguageServer.RunStdioAsync(settings).GetAwaiter().GetResult();
     }
 
