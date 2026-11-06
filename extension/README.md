@@ -7,6 +7,10 @@ from the Nanyx language server.
 
 - Syntax highlighting for `.nyx` files.
 - Diagnostics as you type, from the Nanyx compiler running as a language server (`nanyx lsp`).
+- Inferred types on hover, in a lens above each top-level definition that does not write its type,
+  and as inlay hints after unannotated locals and parameters. VS Code's `editor.codeLens` and
+  `editor.inlayHints.enabled` settings turn the lenses and hints off.
+- Go to definition.
 - Commands: **Nanyx: Download the compiler** and **Nanyx: Restart the language server**.
 
 ## How the extension finds `nanyx`
@@ -47,7 +51,7 @@ the extension says so and you can run **Nanyx: Download the compiler** later or 
   `nanyx-lang/nanyx`. Point it somewhere else to install from a mirror, or at a release that has not
   been published on GitHub yet. The extension cannot list the releases at a custom URL, so it
   downloads `nanyx.compilerVersion`, or its minimum version if that is empty.
-- `nanyx.greekTypeVariables`: hovers name inferred type variables `α`, `β`, `γ`, ... (the default).
+- `nanyx.greekTypeVariables`: hovers, lenses and inlay hints name inferred type variables `α`, `β`, `γ`, ... (the default).
   Turn it off for `a`, `b`, `c`, ...; this starts the server with `nanyx lsp --latin-type-vars`,
   which compilers before this setting do not understand.
 

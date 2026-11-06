@@ -1,0 +1,59 @@
+using NyxCompiler;
+using OmniSharp.Extensions.LanguageServer.Protocol.Client.Capabilities;
+using OmniSharp.Extensions.LanguageServer.Protocol.Document;
+using OmniSharp.Extensions.LanguageServer.Protocol.Models;
+using Range = OmniSharp.Extensions.LanguageServer.Protocol.Models.Range;
+
+namespace Nanyx.LanguageServer.Handlers;
+
+/// <summary>
+/// Shows the inferred type after the name of each local def, lambda parameter and pattern variable that does not
+/// write its own, read from the document's last compile, as <c>: int</c>. Nothing is shown in a document that did
+/// not type-check.
+/// </summary>
+public sealed class InlayHintHandler : InlayHintsHandlerBase
+{
+    private readonly DocumentStore _documents;
+    private readonly ServerSettings _settings;
+
+    public InlayHintHandler(DocumentStore documents, ServerSettings settings)
+    {
+        _documents = documents;
+        _settings = settings;
+    }
+
+    public override Task<InlayHintContainer?> Handle(InlayHintParams request, CancellationToken cancellationToken) =>
+        Task.FromResult(Compute(request));
+
+    // Every hint is sent complete, so there is nothing left to resolve.
+    public override Task<InlayHint> Handle(InlayHint request, CancellationToken cancellationToken) =>
+        Task.FromResult(request);
+
+    private InlayHintContainer? Compute(InlayHintParams request)
+    {
+        var document = _documents.TryGet(request.TextDocument.Uri);
+        if (document?.Compiled is not { } compiled)
+        {
+            return null;
+        }
+
+        var positions = document.Positions;
+        return new InlayHintContainer(
+            TypeHints.inlayHints(_settings.TypeVarNames, document.FileName, compiled)
+                .Select(hint => new InlayHint
+                {
+                    Position = positions.ToPosition(hint.Span.End),
+                    Label = new StringOrInlayHintLabelParts($": {hint.Type}"),
+                    Kind = InlayHintKind.Type
+                })
+                .Where(hint => Contains(request.Range, hint.Position)));
+    }
+
+    private static bool Contains(Range range, Position position) =>
+        range.Start <= position && position <= range.End;
+
+    protected override InlayHintRegistrationOptions CreateRegistrationOptions(
+        InlayHintClientCapabilities capability,
+        ClientCapabilities clientCapabilities) =>
+        new() { DocumentSelector = TextDocumentSyncHandler.Selector, ResolveProvider = false };
+}

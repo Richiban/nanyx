@@ -1,0 +1,79 @@
+/// The inferred types an editor shows for the declarations that do not write theirs, as F# tooling does: a lens
+/// above each top-level def with its whole type, and an inlay hint after each local, parameter and pattern variable.
+/// Positions are character offsets into the source as the parser saw it, with line endings normalised to `\n`, as
+/// for `Hover`.
+module NyxCompiler.TypeHints
+
+open Parser.Program
+
+/// The inferred type of a declaration and the span of the name it declares.
+type TypeHint = { Name: string; Type: string; Span: SourceSpan }
+
+/// The hints for the root module, as top-level defs (for lenses) and everything else (for inlay hints), each in
+/// source order.
+///
+/// The declarations are taken a top-level def at a time, from its name to the next top-level def or expression, and
+/// the types in each are named together with the def's own type, so a parameter's `α` is the `α` of the def's
+/// signature. An annotated def is named with the rest but gets no lens.
+let private hints (names: TypeVarNames) (file: string) (result: CompileResult) : TypeHint list * TypeHint list =
+    match result.Syntax, result.Typed with
+    | Some syntax, Some typed ->
+        let own =
+            typed.Symbols
+            |> Map.values
+            |> Seq.filter (fun symbol -> symbol.Declaration.File = file && not (SourceSpan.isNone symbol.Declaration))
+            |> Seq.sortBy (fun symbol -> symbol.Declaration.Start)
+            |> List.ofSeq
+        // Where each run of declarations starts, and the top-level def it is named with, if any.
+        let isInferred (symbol: Symbol) =
+            typed.SymbolTypes.ContainsKey symbol.Id && not (typed.AnnotatedSymbols.Contains symbol.Id)
+        let starts =
+            let defs =
+                own
+                |> List.filter (fun symbol -> symbol.Kind = TopLevelValue)
+                |> List.map (fun symbol -> symbol.Declaration.Start, Some symbol)
+            let expressions =
+                syntax
+                |> List.choose (function
+                    | Expr value when not (SourceSpan.isNone value.Span) -> Some (value.Span.Start, None)
+                    | _ -> None)
+            (System.Int32.MinValue, None) :: defs @ expressions |> List.sortBy fst
+        let runs =
+            starts
+            |> List.mapi (fun index (start, def) ->
+                let finish = if index + 1 < starts.Length then fst starts.[index + 1] else System.Int32.MaxValue
+                let members =
+                    own
+                    |> List.filter (fun symbol ->
+                        symbol.Kind <> TopLevelValue
+                        && start <= symbol.Declaration.Start
+                        && symbol.Declaration.Start < finish
+                        && isInferred symbol)
+                def, members)
+        let lensesAndHints =
+            runs
+            |> List.map (fun (def, members) ->
+                let defType = def |> Option.bind (fun symbol -> typed.SymbolTypes |> Map.tryFind symbol.Id)
+                let types = Option.toList defType @ (members |> List.map (fun symbol -> typed.SymbolTypes.[symbol.Id]))
+                let written = Unifier.tysToDisplayStrings names types
+                let hint (symbol: Symbol) ty = { Name = symbol.Name; Type = ty; Span = symbol.Declaration }
+                let lens, memberTypes =
+                    match def, defType, written with
+                    | Some symbol, Some _, defWritten :: rest ->
+                        (if isInferred symbol then [ hint symbol defWritten ] else []), rest
+                    | _ -> [], written
+                lens, List.map2 hint members memberTypes)
+        List.collect fst lensesAndHints, List.collect snd lensesAndHints
+    | _ -> [], []
+
+/// A lens for each top-level def in the compiled root module that does not write its type, in source order, with
+/// made-up type variables named by `names`. A destructuring def gets one for each name it declares. `file` is the
+/// file the root module was compiled as (empty for source compiled directly), which tells its own declarations from
+/// those of the modules it imports. Empty when the module did not type-check.
+let typeLenses (names: TypeVarNames) (file: string) (result: CompileResult) : TypeHint list =
+    fst (hints names file result)
+
+/// An inlay hint for each local def, lambda parameter and pattern variable in the compiled root module that does
+/// not write its type, in source order, as for `typeLenses`.
+let inlayHints (names: TypeVarNames) (file: string) (result: CompileResult) : TypeHint list =
+    snd (hints names file result)

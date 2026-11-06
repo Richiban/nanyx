@@ -17,6 +17,7 @@
     <Compile Include="Library.fs" />
     <Compile Include="Hover.fs" />
     <Compile Include="Definition.fs" />
+    <Compile Include="TypeHints.fs" />
   </ItemGroup>
 
   <ItemGroup>

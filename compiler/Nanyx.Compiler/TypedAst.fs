@@ -76,12 +76,14 @@ type TypedTopLevelItem =
 type TypeDefInfo = { Parameters: TyVar list; Underlying: Ty; IsPrivate: bool }
 
 /// `ExprTypes` holds the resolved type of every expression inference typed, by node; `CalleeTypes` the type of
-/// the function at each call or pipe, by the call's node. Type variables left in them are generalised ones. Both are
-/// filled in for the root module of a compile only.
+/// the function at each call or pipe, by the call's node; `SymbolTypes` the type of each declaration the module
+/// makes itself, by its symbol. Type variables left in them are generalised ones. All three are filled in for the
+/// root module of a compile only.
 ///
 /// `Symbols` holds what the module declares and the imported definitions it refers to. `References` says which
 /// symbol each name resolved to, by the node of the identifier, call, pipe or qualified name; `ImportReferences`
-/// says which import a name brought in by an import came through.
+/// says which import a name brought in by an import came through. `AnnotatedSymbols` are the declarations that
+/// write their own type: an annotated def or lambda parameter.
 type TypedModule =
     { Module: Module
       Types: Map<string, Ty>
@@ -89,6 +91,8 @@ type TypedModule =
       Items: TypedTopLevelItem list
       ExprTypes: Map<NodeId, Ty>
       CalleeTypes: Map<NodeId, Ty>
+      SymbolTypes: Map<SymbolId, Ty>
       Symbols: Map<SymbolId, Symbol>
+      AnnotatedSymbols: Set<SymbolId>
       References: Map<NodeId, SymbolId>
       ImportReferences: Map<NodeId, SymbolId> }

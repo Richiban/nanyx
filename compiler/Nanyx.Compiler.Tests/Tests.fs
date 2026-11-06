@@ -1457,6 +1457,32 @@ let ``Hover shows the type of literals, locals, parameters, calls and lambdas`` 
     Assert.Equal(Some "int -> int", hoverType source (offsetOf source "double(" 0 1))
 
 [<Fact>]
+let ``Hover on a declaration's name shows the type of what it declares`` () =
+    let source =
+        "def id = { x -> x }\n" +
+        "def answer = {\n" +
+        "  def half = 21\n" +
+        "  half * 2\n" +
+        "}\n" +
+        "def describe = { o ->\n" +
+        "  match o\n" +
+        "  | #some(n) -> n + 1\n" +
+        "  | _ -> 0\n" +
+        "}\n"
+    // Top-level defs, generalised.
+    Assert.Equal(Some "α -> α", hoverType source (offsetOf source "id" 0 1))
+    Assert.Equal(Some "() -> int", hoverType source (offsetOf source "answer" 0 0))
+    // A parameter, a local def and a pattern variable.
+    Assert.Equal(Some "α", hoverType source (offsetOf source "x ->" 0 0))
+    Assert.Equal(Some "int", hoverType source (offsetOf source "half" 0 2))
+    Assert.Equal(Some "int", hoverType source (offsetOf source "(n)" 0 1))
+    Assert.Equal(Some "#some(int) | ω -> int", hoverType source (offsetOf source "describe" 0 0))
+    // The range is the declared name.
+    let info = (hoverAt source (offsetOf source "half" 0 2)).Value
+    Assert.Equal(offsetOf source "half" 0 0, info.Span.Start)
+    Assert.Equal(offsetOf source "half" 0 4, info.Span.End)
+
+[<Fact>]
 let ``Hover range is the span of the expression`` () =
     let source = "def value = 1 + 23"
     let info = (hoverAt source (offsetOf source "23" 0 1)).Value
@@ -1763,3 +1789,70 @@ let ``Imported names refer to the imported definition and the import`` () =
         let source = "import nanyx/text as t\ndef shout = t.toUpper(\"hi\")"
         let toUpper = (symbolAt (fun typed -> typed.References) (Compiler.compile source) (offsetOf source "t.toUpper" 0 2)).Value
         Assert.Equal("nanyx/text.nyx", toUpper.Declaration.File))
+
+// Type hints: the inferred types shown for declarations that do not write theirs.
+
+/// Each hint as its name, type and where its name starts.
+let private typeHints (hintsOf: TypeVarNames -> string -> CompileResult -> TypeHints.TypeHint list) (source: string) =
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, sprintf "%A" result.Diagnostics)
+    hintsOf Greek "" result |> List.map (fun hint -> hint.Name, hint.Type, hint.Span.Start)
+
+[<Fact>]
+let ``Lenses show the types of top-level defs that do not write theirs`` () =
+    let source =
+        "def id = { x -> x }\n" +
+        "def answer: int = 42\n" +
+        "def pair = { a, b -> (a, b) }\n" +
+        "def (p, q) = (1, \"s\")\n"
+    Assert.Equal<(string * string * int) list>(
+        [ "id", "α -> α", offsetOf source "id" 0 0
+          "pair", "α, β -> (α, β)", offsetOf source "pair" 0 0
+          "p", "int", offsetOf source "p," 0 0
+          "q", "string", offsetOf source "q)" 0 0 ],
+        typeHints TypeHints.typeLenses source)
+
+[<Fact>]
+let ``Inlay hints show the types of locals, parameters and pattern variables`` () =
+    let source =
+        "def scale = { factor ->\n" +
+        "  def offset = 1\n" +
+        "  def written: int = 2\n" +
+        "  factor * written + offset\n" +
+        "}\n" +
+        "def rest = { items -> match items\n" +
+        "  | [_, ...tail] -> tail\n" +
+        "  | _ -> items }\n"
+    Assert.Equal<(string * string * int) list>(
+        [ "factor", "int", offsetOf source "factor" 0 0
+          "offset", "int", offsetOf source "offset" 0 0
+          "items", "list(α)", offsetOf source "items" 0 0
+          "tail", "list(α)", offsetOf source "tail" 0 0 ],
+        typeHints TypeHints.inlayHints source)
+
+[<Fact>]
+let ``Hints name type variables as their top-level def's type does`` () =
+    let source =
+        "def pair = { a, b -> (a, b) }\n" +
+        "def second = { a, b -> b }\n"
+    Assert.Equal<(string * string * int) list>(
+        [ "a", "α", offsetOf source "{ a" 0 2
+          "b", "β", offsetOf source "b ->" 0 0
+          "a", "α", offsetOf source "{ a" 1 2
+          "b", "β", offsetOf source "b ->" 1 0 ],
+        typeHints TypeHints.inlayHints source)
+    Assert.Equal<(string * string * int) list>(
+        [ "pair", "α, β -> (α, β)", 4; "second", "α, β -> β", offsetOf source "second" 0 0 ],
+        typeHints TypeHints.typeLenses source)
+
+[<Fact>]
+let ``A call to a def that matches on a tag union keeps the argument's payload type`` () =
+    // Regression: the def's type was generalized before its constraints were solved, so its input came out
+    // as a fresh variable unrelated to its result, and `y` had a payload of no particular type.
+    let source =
+        "def mapId = { | #some(a) -> #some(a) | other -> other }\n" +
+        "def y = mapId(#some(5))"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    // `#some(5)` has no other tags, so neither has `y`.
+    Assert.Equal(TyTag("some", Some (TyPrimitive "int")), result.Typed.Value.Types.["y"])

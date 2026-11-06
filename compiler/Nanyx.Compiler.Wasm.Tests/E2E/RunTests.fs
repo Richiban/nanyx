@@ -967,3 +967,19 @@ let ``Run - a function that only calls the closure it is given compiles without 
         "@entry\n" +
         "def main = { }\n"
     runSource source |> assertRan ""
+
+[<Fact>]
+let ``Run - interpolating tags`` () =
+    let source =
+        "def mapOption\n" +
+        "  = { | #some(a), f -> #some(f(a))\n" +
+        "      | other, _ -> other }\n" +
+        "\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  def a = #some(5) \\mapOption { n -> n * 2 }\n" +
+        "  def b = #some(\"hi\")\n" +
+        "  def c = if 1 > 2 then #ok(true) else #none\n" +
+        "  println(\"{a} {b} {c} {#done}\")\n" +
+        "}\n"
+    runSource source |> assertRan "#some(10) #some(\"hi\") #none #done\n"

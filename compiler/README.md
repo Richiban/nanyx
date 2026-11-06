@@ -189,7 +189,7 @@ can start it with `nanyx lsp` and `TransportKind.stdio`.
 The server lives in `Nanyx.LanguageServer` and calls the compiler as a library: on every open and
 change it runs `Compiler.compileSource` (or `Compiler.compile` for an untitled buffer) on the editor's
 text, keeps the `CompileResult` in `DocumentStore`, and publishes the resulting diagnostics; hover and
-go-to-definition read the same result, so each change is compiled once. Standard-library imports resolve because the library is
+go-to-definition, lenses and inlay hints read the same result, so each change is compiled once. Standard-library imports resolve because the library is
 embedded in the compiler; imports by path resolve relative to the file as they do for `nanyx check`.
 
 What it does today:
@@ -204,13 +204,20 @@ What it does today:
   made-up type variables named `α`, `β`, ... through the Greek alphabet, a union's rest variable from
   the other end (`#some(α) | ω`), and annotation variables keeping their names, written bare as in an
   annotation (`nanyx lsp --latin-type-vars` uses `a`, `b`, ... and `z` instead); on a call's function name it shows the function's type at that call (so `id` in `id(5)` is
-  `int -> int`). The types come from the typed module's `ExprTypes` and `CalleeTypes`, recorded by
-  node during inference (see `NyxCompiler.Hover`). A file that does not type-check shows no hover.
+  `int -> int`), and on a declaration's own name (a def, a parameter, a pattern variable) the type of
+  what it declares. The types come from the typed module's `ExprTypes` and `CalleeTypes`, recorded by
+  node during inference, and `SymbolTypes`, by symbol (see `NyxCompiler.Hover`). A file that does not type-check shows no hover.
 - `textDocument/definition` goes from a value, parameter, pattern variable or import name to where it
   is declared, from the typed module's `References` and `Symbols` (see `NyxCompiler.Definition`). On a
   declaration's own name it returns that declaration. A definition in an imported source file opens that
   file; one in the standard library returns nothing, because the library is embedded in the compiler
   rather than a file the editor can open. Type names and context members are not symbols yet.
+- `textDocument/codeLens` shows the inferred type above each top-level def that does not write its own
+  (`α -> α` above `def id = { x -> x }`); a destructuring def's lenses say which name each is for
+  (`p: int`). `textDocument/inlayHint` shows `: type` after each unannotated local def, lambda parameter
+  and pattern variable. The types come from the typed module's `SymbolTypes`, leaving out its
+  `AnnotatedSymbols`, and are named together a top-level def at a time, so a hint's `α` is the one in its def's
+  lens (see `NyxCompiler.TypeHints`). A file that does not type-check shows neither.
 
 Find-references and completion are not implemented yet: each is one handler class in
 `Nanyx.LanguageServer/Handlers/`, registered in `NanyxLanguageServer.Configure` (tracked in

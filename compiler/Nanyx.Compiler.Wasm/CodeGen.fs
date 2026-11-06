@@ -929,6 +929,18 @@ let rec private tryTagPayloadType (tagName: string) (ty: Ty) : Ty option =
     | TyNominal(_, underlying, _) -> tryTagPayloadType tagName underlying
     | _ -> None
 
+/// The tags a value of type `ty` can be, each with its payload type, when `ty` is a tag or a union of tags. A
+/// union's rest variable names no tag of its own, so it adds none.
+let rec private tryTagMembers (ty: Ty) : (string * Ty option) list option =
+    match ty with
+    | TyTag(name, payloadTy) -> Some [ name, payloadTy ]
+    | TyUnion options ->
+        match options |> List.choose (function TyTag(name, payloadTy) -> Some (name, payloadTy) | _ -> None) with
+        | [] -> None
+        | members -> Some members
+    | TyNominal(_, underlying, _) -> tryTagMembers underlying
+    | _ -> None
+
 let rec private tryListElementType (ty: Ty) : Ty option =
     match ty with
     | TyApply("list", [ elementTy ]) -> Some elementTy
@@ -1862,11 +1874,80 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
     // write passes then only read that local. Evaluating a hole in the write pass would be wrong twice
     // over: its side effects would run again, and anything it allocated would land on top of the
     // output buffer, which is only reserved once the whole string has been written.
+    // The type of a hole that may be a tag: a tag literal's is plain from the literal.
+    let holeTy (inner: Expression) =
+        match inner.Kind with
+        | TagExpr(name, payload) ->
+            let payloadTy = payload |> Option.map (fun p -> tryGetExprTypeName env p |> Option.map TyPrimitive |> Option.defaultValue (TyPrimitive "unknown"))
+            Some (TyTag(name, payloadTy))
+        | _ -> tryExprTy env inner
+
     let interpolationHoleType inner =
         match tryGetExprTypeName env inner with
         | Some ("string" | "int" | "bool" | "float" as typeName) -> typeName
         | Some other -> failwith $"Unsupported interpolated value type for WASM MVP backend: {other}"
+        | None when holeTy inner |> Option.bind tryTagMembers |> Option.isSome -> "tag"
         | None -> failwith $"Unable to determine interpolated value type for WASM MVP backend: {inner}"
+
+    // A tag hole prints as `#name`, or `#name(payload)` with a string payload in quotes, as the docs show
+    // values. The discriminant picks the tag at run time; each tag the hole's type names is checked in turn.
+    // A tag that only an open union's rest could hold has a payload type nobody here knows, so it prints
+    // by name alone.
+    let tagHoleCases (inner: Expression) =
+        let members = holeTy inner |> Option.bind tryTagMembers |> Option.defaultValue []
+        let named = members |> List.map fst |> Set.ofList
+        let others =
+            match holeTy inner with
+            | Some (TyUnion options) when options |> List.exists (function TyVar _ -> true | _ -> false) ->
+                env.TagIds |> Map.toList |> List.filter (fun (name, _) -> not (named.Contains name)) |> List.map (fun (name, _) -> name, None)
+            | _ -> []
+        (members @ others)
+        |> List.map (fun (name, payloadTy) ->
+            match env.TagIds |> Map.tryFind name with
+            | Some id ->
+                let payloadTypeName =
+                    payloadTy
+                    |> Option.map (fun ty ->
+                        match trySimpleTypeName ty with
+                        | Some ("string" | "int" | "bool" as typeName) -> typeName
+                        | _ -> failwith $"Unsupported interpolated payload type for WASM MVP backend: #{name}({Unifier.tyToString ty})")
+                name, tagDiscriminantBase id, payloadTypeName
+            | None -> failwith $"Internal error: missing tag discriminant for #{name}")
+
+    let renderTagHole (valueCode: string) (inner: Expression) (renderText: string -> string) (renderPayload: string -> string -> string) =
+        tagHoleCases inner
+        |> List.map (fun (name, tagBase, payloadTypeName) ->
+            let body =
+                match payloadTypeName with
+                | None -> renderText $"#{name}"
+                | Some typeName ->
+                    let payloadCode = $"{valueCode}\n    i32.const {tagPayloadMask}\n    i32.and"
+                    let opening = renderText ("#" + name + "(")
+                    let closing = renderText ")"
+                    $"{opening}\n    {renderPayload typeName payloadCode}\n    {closing}"
+            $"{valueCode}\n    i32.const {tagDiscriminantMask}\n    i32.and\n    i32.const {tagBase}\n    i32.eq\n    if\n      {body}\n    end")
+        |> String.concat "\n    "
+
+    let renderTextLength (text: string) =
+        $"local.get $__interp_len\n    i32.const {Encoding.UTF8.GetByteCount text}\n    i32.add\n    local.set $__interp_len"
+
+    let renderTextWrite (text: string) = renderStaticBytes (Encoding.UTF8.GetBytes text)
+
+    let renderTagPayloadLength typeName payloadCode =
+        match typeName with
+        | "string" ->
+            let quotes = renderTextLength "\"\""
+            $"{quotes}\n    {payloadCode}\n    i32.const 4\n    i32.sub\n    i32.load\n    local.get $__interp_len\n    i32.add\n    local.set $__interp_len"
+        | "int" -> renderIntLength payloadCode
+        | _ -> renderBoolLength payloadCode
+
+    let renderTagPayloadWrite typeName payloadCode =
+        match typeName with
+        | "string" ->
+            let quote = renderTextWrite "\""
+            $"{quote}\n    {renderStringCopy payloadCode}\n    {quote}"
+        | "int" -> renderIntWrite payloadCode
+        | _ -> renderBoolWrite payloadCode
 
     // A float hole is formatted to a string here, in the evaluation pass, since formatting allocates and
     // the length and write passes must not.
@@ -1890,6 +1971,7 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
             | "string" | "float" ->
                 $"{valueCode}\n    i32.const 4\n    i32.sub\n    i32.load\n    local.get $__interp_len\n    i32.add\n    local.set $__interp_len"
             | "int" -> renderIntLength valueCode
+            | "tag" -> renderTagHole valueCode inner renderTextLength renderTagPayloadLength
             | _ -> renderBoolLength valueCode
 
     let renderInterpolationPartWrite (part, holeIndex) =
@@ -1900,6 +1982,7 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
             match interpolationHoleType inner with
             | "string" | "float" -> renderStringCopy valueCode
             | "int" -> renderIntWrite valueCode
+            | "tag" -> renderTagHole valueCode inner renderTextWrite renderTagPayloadWrite
             | _ -> renderBoolWrite valueCode
 
     match expr.Kind with
