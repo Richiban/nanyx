@@ -48,7 +48,7 @@ export async function activate(context: vscode.ExtensionContext) {
         event.affectsConfiguration("nanyx.compilerVersion") ||
         event.affectsConfiguration("nanyx.downloadUrl") ||
         event.affectsConfiguration("nanyx.greekTypeVariables") ||
-        event.affectsConfiguration("nanyx.topLevelTypes")
+        event.affectsConfiguration("nanyx.topLevelTypeHints")
       ) {
         void startOrRestart(context);
       }
@@ -184,8 +184,11 @@ async function restartClient(context: vscode.ExtensionContext, executable: strin
   if (!config.get<boolean>("greekTypeVariables", true)) {
     args.push("--latin-type-vars");
   }
-  if (config.get<string>("topLevelTypes", "codeLens") === "inlayHint") {
-    args.push("--top-level-inlay-hints");
+  const topLevel = config.get<string>("topLevelTypeHints", "codeLens");
+  if (topLevel === "inlayHint") {
+    args.push("--top-level-type-hints", "inlay");
+  } else if (topLevel === "off") {
+    args.push("--top-level-type-hints", "off");
   }
 
   // No `transport`: stdio is the default, and naming it makes the client append `--stdio` to the args.

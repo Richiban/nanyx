@@ -370,7 +370,7 @@ public sealed class LanguageServerTests : IAsyncLifetime
     [Fact]
     public async Task Top_level_inlay_hints_show_top_level_defs_types_as_inlay_hints_instead_of_lenses()
     {
-        await RestartWithAsync(ServerSettings.Default with { TopLevelInlayHints = true });
+        await RestartWithAsync(ServerSettings.Default with { TopLevelTypeHints = TopLevelTypeHints.Inlay });
         var uri = DocumentUri.FromFileSystemPath(Path.Combine(Path.GetTempPath(), "top-level-hints.nyx"));
 
         Open(uri, "def id = { x -> x }\r\ndef answer: int = 42\r\ndef (p, q) = (1, \"s\")\r\n");
@@ -390,6 +390,24 @@ public sealed class LanguageServerTests : IAsyncLifetime
                 (new Position(2, 9), ": string")
             ],
             (await InlayHintsIn(uri, new Range(0, 0, 3, 0))).Select(hint => (hint.Position, hint.Label.String)));
+    }
+
+    [Fact]
+    public async Task Top_level_type_hints_off_shows_no_lenses_and_only_the_locals_inlay_hints()
+    {
+        await RestartWithAsync(ServerSettings.Default with { TopLevelTypeHints = TopLevelTypeHints.Off });
+        var uri = DocumentUri.FromFileSystemPath(Path.Combine(Path.GetTempPath(), "top-level-hints-off.nyx"));
+
+        Open(uri, "def id = { x -> x }\r\n");
+        Assert.Empty((await NextPublished(uri)).Diagnostics!);
+
+        var lenses = await _client.TextDocument.RequestCodeLens(
+            new CodeLensParams { TextDocument = new TextDocumentIdentifier(uri) },
+            _cancellation.Token);
+        Assert.Empty(lenses ?? []);
+        Assert.Equal(
+            [(new Position(0, 12), ": α")],
+            (await InlayHintsIn(uri, new Range(0, 0, 1, 0))).Select(hint => (hint.Position, hint.Label.String)));
     }
 
     [Fact]
