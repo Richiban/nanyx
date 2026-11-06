@@ -33,6 +33,20 @@ let ``Transpile function call with arguments`` () =
     Assert.Contains("call $add", wat)
 
 [<Fact>]
+let ``Transpile attached function on a built-in type`` () =
+    let source =
+        "module M\n\n" +
+        "def Int.double: int -> int = { n -> n * 2 }\n\n" +
+        "def main = 3 \\ double"
+
+    let result = NyxCompiler.Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    let wat = Transpiler.Wasm.CodeGen.transpileTypedModuleToWat result.Typed.Value
+
+    Assert.Contains("i32.const 3", wat)
+    Assert.Contains("call $Int_double", wat)
+
+[<Fact>]
 let ``Transpile block local variable`` () =
     let source =
         "module M\n\n" +

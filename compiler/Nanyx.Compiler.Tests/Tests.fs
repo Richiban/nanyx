@@ -309,6 +309,35 @@ let ``Typecheck rejects attached def with missing type`` () =
     Assert.Contains("Unknown attached type", message)
 
 [<Fact>]
+let ``Typecheck allows attached defs on built-in types`` () =
+    let source =
+        "def Int.parse: string -> int = { s -> 0 }\n" +
+        "def String.shout: string -> string = { s -> s }\n" +
+        "def List.isBlank: list(int) -> bool = { xs -> true }"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    let typed = result.Typed.Value
+    Assert.Equal(TyFunc(TyPrimitive "string", TyPrimitive "int"), typed.Types.["Int.parse"])
+
+[<Fact>]
+let ``Typecheck infers primitive attached receiver type for unannotated lambda`` () =
+    let source = "def Int.double = { n -> n * 2 }"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    let typed = result.Typed.Value
+    Assert.Equal(TyFunc(TyPrimitive "int", TyPrimitive "int"), typed.Types.["Int.double"])
+
+[<Fact>]
+let ``Typecheck pipe resolves attached functions on built-in types`` () =
+    let source =
+        "def Int.double: int -> int = { n -> n * 2 }\n" +
+        "def n = 3 \\ double"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    let typed = result.Typed.Value
+    Assert.Equal(TyPrimitive "int", typed.Types.["n"])
+
+[<Fact>]
 let ``Typecheck pipe resolves attached functions`` () =
     let source =
         "type Person = (firstName: string surname: string)\n" +
