@@ -578,6 +578,46 @@ let ``Typecheck pipe resolves attached functions on nominals`` () =
     Assert.Equal(TyPrimitive "string", typed.Types.["s2"])
 
 [<Fact>]
+let ``Typecheck pipe picks the attached function by the name of the value's type`` () =
+    let source =
+        "type Option(a) = #some(a) | #none\n" +
+        "def List.map: (list(a), (a -> b)) -> list(b) = { xs, f -> [] }\n" +
+        "def Option.map: (Option(a), (a -> b)) -> Option(b) = { o, f -> #none }\n" +
+        "def xs: list(int) = [1, 2]\n" +
+        "def o: Option(int) = #some(1)\n" +
+        "def ys = xs \\ map({ x -> x > 1 })\n" +
+        "def p = o \\ map({ x -> \"a\" })"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    let typed = result.Typed.Value
+    Assert.Equal(TyApply("list", [ TyPrimitive "bool" ]), typed.Types.["ys"])
+    match Unifier.unalias typed.Types.["p"] with
+    | TyUnion options -> Assert.Contains(TyTag("some", Some (TyPrimitive "string")), options)
+    | other -> Assert.True(false, $"Unexpected type for p: %A{other}")
+
+[<Fact>]
+let ``Typecheck pipe calls a plain function when the value's type attaches none`` () =
+    let source =
+        "def Int.describe: int -> string = { n -> \"int\" }\n" +
+        "def describe: string -> string = { s -> s }\n" +
+        "def a = \"x\" \\ describe\n" +
+        "def b = 1 \\ describe"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    let typed = result.Typed.Value
+    Assert.Equal(TyPrimitive "string", typed.Types.["a"])
+    Assert.Equal(TyPrimitive "string", typed.Types.["b"])
+
+[<Fact>]
+let ``Typecheck pipe does not find attached functions of a module imported with as`` () =
+    let modules = [ "one.nyx", "module one\nexport def String.shout: string -> string = { s -> s ++ \"!\" }" ]
+    let unqualified = compileImportingAll modules "module main\nimport \"one.nyx\" as t\ndef a = \"x\" \\ shout"
+    Assert.False(unqualified.Diagnostics.IsEmpty)
+    let qualified = compileImportingAll modules "module main\nimport \"one.nyx\" as t\ndef a = \"x\" \\ t.String.shout"
+    Assert.True(qualified.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{qualified.Diagnostics}")
+    Assert.Equal(TyPrimitive "string", qualified.Typed.Value.Types.["a"])
+
+[<Fact>]
 let ``Typecheck supports polymorphic let`` () =
     let source =
         "def id = { x -> x }\n" +
