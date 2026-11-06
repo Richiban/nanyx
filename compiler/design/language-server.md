@@ -27,7 +27,8 @@ what the compiler keeps: exact spans, resolved names and types.
   resolved type of every expression by `NodeId` (`TypedModule.ExprTypes`, the `Types` table of the planned
   [semantic model](analyzers.md#3-the-semantic-model)), and the callee's type at each call (`CalleeTypes`), for
   the root module of a compile. Hover shows the narrowest typed expression under the pointer, or a call's
-  function at that call site. A desugared workflow bind or return gets a node id of its own, so the bind as
+  function at that call site. On a declaration's own name (a def, a parameter, a pattern variable) it shows the
+  type of what that declares, recorded by symbol (`SymbolTypes`). A desugared workflow bind or return gets a node id of its own, so the bind as
   written has no type rather than that of the rest of the workflow. Each document
   is compiled once per change and the result cached in `DocumentStore`, shared by diagnostics and hover. A
   declared signature or doc comment needs name resolution ([#98](https://github.com/nanyx-lang/nanyx/issues/98)),
@@ -39,8 +40,8 @@ what the compiler keeps: exact spans, resolved names and types.
   symbols yet, so they go nowhere either.
 - **Inferred types in lenses and inlay hints**, as F# tooling shows them. A top-level def that does not write
   its type gets a lens above it with its whole type; a local def, lambda parameter or pattern variable gets an
-  inlay hint after its name (`: int`). Inference records the type of each such declaration by symbol
-  (`TypedModule.InferredTypes`), and the types in one top-level def are named together, so a parameter's `α` is
+  inlay hint after its name (`: int`). The types are the declarations' `SymbolTypes`, less those inference
+  records as writing their own (`AnnotatedSymbols`), and the types in one top-level def are named together, so a parameter's `α` is
   the `α` in its def's lens (see `NyxCompiler.TypeHints`). Like hover, a file that fails to type-check shows none,
   so they disappear while the file is broken and the code moves up and down as the lenses come and go; keeping
   the last good ones until the next good compile is a follow-up.

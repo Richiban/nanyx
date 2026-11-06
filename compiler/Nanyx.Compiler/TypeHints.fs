@@ -25,6 +25,8 @@ let private hints (names: TypeVarNames) (file: string) (result: CompileResult) :
             |> Seq.sortBy (fun symbol -> symbol.Declaration.Start)
             |> List.ofSeq
         // Where each run of declarations starts, and the top-level def it is named with, if any.
+        let isInferred (symbol: Symbol) =
+            typed.SymbolTypes.ContainsKey symbol.Id && not (typed.AnnotatedSymbols.Contains symbol.Id)
         let starts =
             let defs =
                 own
@@ -46,19 +48,19 @@ let private hints (names: TypeVarNames) (file: string) (result: CompileResult) :
                         symbol.Kind <> TopLevelValue
                         && start <= symbol.Declaration.Start
                         && symbol.Declaration.Start < finish
-                        && typed.InferredTypes.ContainsKey symbol.Id)
+                        && isInferred symbol)
                 def, members)
         let lensesAndHints =
             runs
             |> List.map (fun (def, members) ->
-                let defType = def |> Option.bind (fun symbol -> typed.Types |> Map.tryFind symbol.Name)
-                let types = Option.toList defType @ (members |> List.map (fun symbol -> typed.InferredTypes.[symbol.Id]))
+                let defType = def |> Option.bind (fun symbol -> typed.SymbolTypes |> Map.tryFind symbol.Id)
+                let types = Option.toList defType @ (members |> List.map (fun symbol -> typed.SymbolTypes.[symbol.Id]))
                 let written = Unifier.tysToDisplayStrings names types
                 let hint (symbol: Symbol) ty = { Name = symbol.Name; Type = ty; Span = symbol.Declaration }
                 let lens, memberTypes =
                     match def, defType, written with
                     | Some symbol, Some _, defWritten :: rest ->
-                        (if typed.InferredTypes.ContainsKey symbol.Id then [ hint symbol defWritten ] else []), rest
+                        (if isInferred symbol then [ hint symbol defWritten ] else []), rest
                     | _ -> [], written
                 lens, List.map2 hint members memberTypes)
         List.collect fst lensesAndHints, List.collect snd lensesAndHints
