@@ -303,7 +303,7 @@ module Compiler =
             else
                 None)
 
-    let private parseWithDiagnostics (filePath: string) (source: string) : Result<Module * DeclaredNames, Diagnostic list> =
+    let private parseWithDiagnostics (filePath: string) (source: string) : Result<Module * DeclaredNames * (ModuleName * SourceSpan) list, Diagnostic list> =
         match parseModuleFileWithNames filePath source with
         | Result.Ok parsed -> Ok parsed
         | Result.Error err ->
@@ -710,20 +710,20 @@ module Compiler =
             let resolved =
                 parseWithDiagnostics (sourceFileName origin) source
                 |> Result.mapError (fun diagnostics -> Parsed, diagnostics)
-                |> Result.bind (fun (ast, declared) ->
+                |> Result.bind (fun (ast, declared, moduleBlocks) ->
                     applyAttributes (desugar ast)
-                    |> Result.map (fun desugared -> ast, declared, desugared)
+                    |> Result.map (fun desugared -> ast, declared, moduleBlocks, desugared)
                     |> Result.mapError (fun diagnostics -> Desugared, diagnostics))
             match resolved with
             | Result.Error failure -> Error failure
-            | Result.Ok (ast, declared, desugared) ->
+            | Result.Ok (ast, declared, moduleBlocks, desugared) ->
                 let imports = collectImports desugared
                 let mutable env =
                     match origin with
                     | StandardLibraryModule _ -> Intrinsics.typeEnv
                     | SourceFile _
                     | InMemory -> TypeEnv.empty
-                let mutable state = { NyxCompiler.Infer.emptyState with Declared = declared }
+                let mutable state = { NyxCompiler.Infer.emptyState with Declared = declared; ModuleBlocks = moduleBlocks }
                 let mutable errors: Diagnostic list = []
                 let mutable inlined: TopLevelItem list = []
                 let mutable inlinedTypes: Map<string, Ty> = Map.empty

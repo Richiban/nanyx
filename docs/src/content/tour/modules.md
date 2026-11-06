@@ -258,6 +258,8 @@ module functions =
     -- If any of the definitions in this module were exported, the full name would be `myModule.functions.helpers`
 ```
 
+A nested module encapsulates just like a file-level one: what it does not `export` can only be named inside the block, even by code elsewhere in the same file. Above, `functions.f` can be used anywhere in the file, but `helpers.helper1` only within `helpers`.
+
 If the file has no file-level module declaration, the nested module names are not prefixed:
 
 ```nanyx
