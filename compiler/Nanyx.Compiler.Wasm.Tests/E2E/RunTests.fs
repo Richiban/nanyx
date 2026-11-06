@@ -1126,3 +1126,34 @@ let ``Run - a proc block gives back whichever failure stopped it`` () =
         "show(run(3))\n" +
         "show(run(7))\n"
     runSource source |> assertRan "found\nnot found\nnil\n"
+
+[<Fact>]
+let ``Run - the prelude's proc, Result and Option helpers need no import`` () =
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def half: int -> Result(int, string) = { n -> if n % 2 == 0 then #some(n / 2) else #error(\"odd\") }\n" +
+        "def quarter = { n -> proc {\n" +
+        "  def h = try half(n)\n" +
+        "  return try half(h)\n" +
+        "} }\n" +
+        "\n" +
+        "def show: Result(int, string) -> () = {\n" +
+        "  | #some(n) -> println(\"some {n}\")\n" +
+        "  | #error(e) -> println(\"error {e}\")\n" +
+        "}\n" +
+        "\n" +
+        "show(quarter(8))\n" +
+        "show(quarter(6) \\ Result.mapError({ e -> \"ERR: \" ++ e }))\n" +
+        "show(half(4) \\ map({ n -> n * 10 }))\n" +
+        "def fallback = Result.defaultValue(half(3), 0)\n" +
+        "println(\"{fallback}\")\n" +
+        "def name: #some(string) | #empty = #some(\"abc\")\n" +
+        "def shouted = name \\ Option.map({ s -> s ++ \"!\" })\n" +
+        "match shouted\n" +
+        "  | #some(s) -> println(s)\n" +
+        "  | #empty -> println(\"empty\")\n" +
+        "def seven = Option.defaultValue(#none, 7)\n" +
+        "def three = Option.mapOr(name, 0, { s -> 3 })\n" +
+        "println(\"{seven} {three}\")\n"
+    runSource source |> assertRan "some 2\nerror ERR: odd\nsome 20\n0\nabc!\n7 3\n"

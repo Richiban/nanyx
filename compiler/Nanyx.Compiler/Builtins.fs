@@ -81,11 +81,15 @@ module StandardLibrary =
         | ModuleImport name when name.StartsWith importPrefix -> Some (name.Substring importPrefix.Length)
         | _ -> None
 
+    /// The module every other module imports without saying so (`nanyx/prelude`): what is in scope with no imports.
+    let preludeModuleName = "prelude"
+
     let private resourceName (moduleName: string) = $"{packageName}/{moduleName}.nyx"
 
     let private assembly = Assembly.GetExecutingAssembly()
 
-    /// The modules the library ships, in alphabetical order.
+    /// The modules the library ships that a program imports by name, in alphabetical order. The prelude is left
+    /// out, since it is imported automatically.
     let moduleNames : string list =
         assembly.GetManifestResourceNames()
         |> Array.choose (fun name ->
@@ -93,6 +97,7 @@ module StandardLibrary =
                 Some (name.Substring(importPrefix.Length, name.Length - importPrefix.Length - ".nyx".Length))
             else
                 None)
+        |> Array.filter (fun name -> name <> preludeModuleName)
         |> Array.sort
         |> Array.toList
 
