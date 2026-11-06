@@ -137,6 +137,33 @@ let ``Importing the same module twice is not ambiguous`` () =
     Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
 
 [<Fact>]
+let ``A module imported along two paths is checked once`` () =
+    let modules =
+        [ "shared.nyx", "module shared\nexport def foo = 1"
+          "left.nyx", "module left\nimport \"shared.nyx\"\nexport def l = foo"
+          "right.nyx", "module right\nimport \"shared.nyx\"\nexport def r = foo" ]
+    let result = compileImportingAll modules "module main\nimport \"left.nyx\"\nimport \"right.nyx\"\nimport \"shared.nyx\"\nimport \"./shared.nyx\" as s2\ndef a = foo\ndef b = s2.foo"
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    let typed = result.Typed.Value
+    let fooSymbols =
+        typed.References
+        |> Map.values
+        |> Seq.distinct
+        |> Seq.filter (fun id -> typed.Symbols |> Map.tryFind id |> Option.exists (fun symbol -> symbol.Name = "foo"))
+        |> Seq.toList
+    Assert.Equal(1, fooSymbols.Length)
+
+[<Fact>]
+let ``An error in a module imported along two paths is reported once`` () =
+    let modules =
+        [ "shared.nyx", "module shared\nexport def foo = undefinedName"
+          "left.nyx", "module left\nimport \"shared.nyx\"\nexport def l = foo"
+          "right.nyx", "module right\nimport \"shared.nyx\"\nexport def r = foo" ]
+    let result = compileImportingAll modules "module main\nimport \"left.nyx\"\nimport \"right.nyx\"\ndef a = l"
+    let unknown = result.Diagnostics |> List.filter (fun diag -> diag.Message.Contains "undefinedName")
+    Assert.Equal(1, unknown.Length)
+
+[<Fact>]
 let ``An attached name two imports define is ambiguous where it is used`` () =
     let modules =
         [ "one.nyx", "module one\nexport def String.shout: string -> string = { s -> s }"
