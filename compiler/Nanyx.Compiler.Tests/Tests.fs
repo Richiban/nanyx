@@ -689,7 +689,7 @@ let ``Typecheck allows wider unions in assignment`` () =
 [<Fact>]
 let ``Typecheck supports tag union rest parameter`` () =
     let source =
-        "def mapOption: ((#some(a) | r), a -> b) -> #some(b) | r = { o, f ->\n" +
+        "def mapOption: (#some(a) | r), (a -> b) -> #some(b) | r = { o, f ->\n" +
         "  match o\n" +
         "  | #some(v) -> #some(f(v))\n" +
         "  | other -> other\n" +
@@ -742,7 +742,7 @@ let ``Typecheck accepts annotations the body proves`` () =
 [<Fact>]
 let ``Typecheck requires catch-all for tag union rest`` () =
     let source =
-        "def mapOption: ((#some(a) | r), a -> b) -> #some(b) | r = { o, f ->\n" +
+        "def mapOption: (#some(a) | r), (a -> b) -> #some(b) | r = { o, f ->\n" +
         "  match o\n" +
         "  | #some(v) -> #some(f(v))\n" +
         "}\n"
@@ -757,7 +757,7 @@ let ``Typecheck tag union width and rest regression`` () =
         "def u: #some(string) | #nil = #nil\n" +
         "def g: (#some(string) | #nil | #notFound) -> string = { o -> \"\" }\n" +
         "def _ = g(u)\n" +
-        "def mapOption: ((#some(a) | r), a -> b) -> #some(b) | r = { o, f ->\n" +
+        "def mapOption: (#some(a) | r), (a -> b) -> #some(b) | r = { o, f ->\n" +
         "  match o\n" +
         "  | #some(v) -> #some(f(v))\n" +
         "  | other -> other\n" +
@@ -1477,7 +1477,7 @@ let ``Hover on a polymorphic function shows it instantiated at the call`` () =
 [<Fact>]
 let ``Type variables are shown as 'a, 'b in order of appearance`` () =
     let source = "def pair = { a, b -> (b, a) }"
-    Assert.Equal(Some "('a, 'b) -> ('b, 'a)", hoverType source (offsetOf source "{" 0 0))
+    Assert.Equal(Some "'a, 'b -> ('b, 'a)", hoverType source (offsetOf source "{" 0 0))
 
 [<Fact>]
 let ``Hover inside a for loop's arm shows the arm's expression, not the loop element`` () =
@@ -1519,7 +1519,7 @@ let ``A workflow bind is not given the type of the rest of the workflow`` () =
 [<Fact>]
 let ``Type variables named in an annotation keep their names`` () =
     let source = "def first: (t, a) -> t = { x, y -> x }"
-    Assert.Equal(Some "('t, 'a) -> 't", hoverType source (offsetOf source "{" 0 0))
+    Assert.Equal(Some "'t, 'a -> 't", hoverType source (offsetOf source "{" 0 0))
     // A made-up variable skips the names an annotation took.
     let mixed =
         "def f: a -> int = { x ->\n" +
@@ -1537,27 +1537,36 @@ let ``Hover shows tags with their hash`` () =
         "def mapOption: (#some(a) | r), (a -> b) -> (#some(b) | r) = { | #some(a), f -> #some(f(a)) | other, _ -> other }\n" +
         "def result = mapOption(#some(1), { n -> \"Mapped: {n}\" })"
     Assert.Equal(
-        Some "((#some(int) | 'a), (int -> string)) -> (#some(string) | 'a)",
+        Some "#some(int) | 'a, (int -> string) -> #some(string) | 'a",
         hoverType union (offsetOf union "mapOption(" 0 0))
 
 [<Fact>]
-let ``Printed types bracket functions and unions where they would run together`` () =
+let ``Printed types have the fewest brackets the grammar allows`` () =
     let a = TyVar { Id = 1; Name = Some "a" }
     let b = TyVar { Id = 2; Name = Some "b" }
     let c = TyVar { Id = 3; Name = Some "c" }
     let union = TyUnion [ TyTag("some", Some a); TyTag("none", None) ]
+    let pair x y = TyRecord(Map.ofList [ "0", x; "1", y ])
     // `->` groups to the right: a function input is bracketed, a function result is not.
     Assert.Equal("('a -> 'b) -> 'c", Unifier.tyToString (TyFunc(TyFunc(a, b), c)))
     Assert.Equal("'a -> 'b -> 'c", Unifier.tyToString (TyFunc(a, TyFunc(b, c))))
-    // A union result and a union input are bracketed.
-    Assert.Equal("'a -> (#some('a) | #none)", Unifier.tyToString (TyFunc(a, union)))
-    Assert.Equal("(#some('a) | #none) -> 'a", Unifier.tyToString (TyFunc(union, a)))
-    // Items separated by commas.
-    Assert.Equal("(int, ('a -> 'b))", Unifier.tyToString (TyRecord(Map.ofList [ "0", TyPrimitive "int"; "1", TyFunc(a, b) ])))
+    // `|` binds tighter than `->`: a union is never bracketed next to an arrow.
+    Assert.Equal("'a -> #some('a) | #none", Unifier.tyToString (TyFunc(a, union)))
+    Assert.Equal("#some('a) | #none -> 'a", Unifier.tyToString (TyFunc(union, a)))
+    // A signature's parameters are bare; a function among them, or anywhere items are separated by commas,
+    // has brackets of its own.
+    Assert.Equal("int, ('a -> 'b) -> 'c", Unifier.tyToString (TyFunc(pair (TyPrimitive "int") (TyFunc(a, b)), c)))
+    Assert.Equal("(int, ('a -> 'b))", Unifier.tyToString (pair (TyPrimitive "int") (TyFunc(a, b))))
     Assert.Equal("map(string, ('a -> 'b))", Unifier.tyToString (TyApply("map", [ TyPrimitive "string"; TyFunc(a, b) ])))
-    // A lone argument or payload needs no brackets.
+    // Only the signature itself writes parameters bare: a function nested in it, as its input or its result,
+    // keeps its brackets, since a bare list can only come before the arrow.
+    Assert.Equal("(('a, 'b) -> 'c) -> ('a, 'b) -> 'c", Unifier.tyToString (TyFunc(TyFunc(pair a b, c), TyFunc(pair a b, c))))
+    Assert.Equal("'a -> ('a, 'b) -> 'c", Unifier.tyToString (TyFunc(a, TyFunc(pair a b, c))))
+    // A lone argument or payload needs no brackets, and a tuple payload's items are the payload's.
     Assert.Equal("list('a -> 'b)", Unifier.tyToString (TyApply("list", [ TyFunc(a, b) ])))
     Assert.Equal("#some(int)", Unifier.tyToString (TyTag("some", Some (TyPrimitive "int"))))
+    Assert.Equal("#pair(int, ('a -> 'b))", Unifier.tyToString (TyTag("pair", Some (pair (TyPrimitive "int") (TyFunc(a, b))))))
+    Assert.Equal("#apply((int, 'a) -> 'b)", Unifier.tyToString (TyTag("apply", Some (TyFunc(pair (TyPrimitive "int") a, b)))))
     // The unit type is written `()`.
     Assert.Equal("() -> ()", Unifier.tyToString (TyFunc(TyPrimitive "unit", TyPrimitive "unit")))
 

@@ -480,6 +480,16 @@ let statementItems, statementItemsRef = createParserForwardedToRef<Statement lis
 let typeExpr, typeExprRef = createParserForwardedToRef<TypeExpr, ParseState>()
 /// The type in a def's annotation: a type expression, or bare parameters `int, int -> int` (see `typeExpr`).
 let typeSignature, typeSignatureRef = createParserForwardedToRef<TypeExpr, ParseState>()
+/// Types separated by commas, and the result they go to when an arrow follows them.
+let typeList, typeListRef = createParserForwardedToRef<TypeExpr list * TypeExpr option, ParseState>()
+
+/// What a `typeList` means: `a, b -> c` is a function of two parameters, since `,` binds tighter than `->`.
+let private typeListToType (items: TypeExpr list, resultOpt: TypeExpr option) : TypeExpr =
+    match items, resultOpt with
+    | [ single ], None -> single
+    | _, None -> TypeTuple items
+    | [ single ], Some result -> TypeFunc(single, result)
+    | _, Some result -> TypeFunc(TypeTuple items, result)
 
 // Pattern parsers
 let pattern, patternRef = createParserForwardedToRef<Pattern, ParseState>()
@@ -752,18 +762,15 @@ do
                 (many (attempt (recordFieldSeparator >>. (attempt typeMemberField <|> typeField))))
                 (fun first rest -> TypeRecord(first :: rest)))
 
+    // Brackets group: `(int, a -> b)` is a function of two parameters, as it is without them, and `()` is unit.
     let typeTupleOrParen =
         between
             (pstring "(")
             (ws >>. pstring ")")
-            (sepBy (ws >>. typeExpr) (pstring "," .>> ws))
-        |>> fun items ->
-            match items with
-            | [] -> TypeUnit
-            | [single] -> single
-            | multiple -> TypeTuple multiple
+            (ws >>. opt (attempt typeSignature))
+        |>> Option.defaultValue TypeUnit
 
-    let typeTagPayloadItem =
+    let typeTag =
         let namedField =
             pipe3
                 identifierNoWs
@@ -772,32 +779,24 @@ do
                 (fun name optFlag typeValue ->
                     let isOptional = optFlag.IsSome
                     TypeField(name, false, isOptional, Some typeValue, None))
+        // A payload is a record of named fields, or the types in the brackets: `#pair(int, string)` carries a
+        // tuple and `#apply(a, b -> c)` a function.
+        let payload =
+            between
+                (pstring "(")
+                (ws >>. pstring ")")
+                (attempt (sepBy1 (ws >>. namedField) (pstring "," .>> ws) |>> TypeRecord) <|> (ws >>. typeList |>> typeListToType))
+        pipe2 (pstring "#" >>. identifierNoWs) (opt payload) (fun tagName payloadOpt -> TypeTag(tagName, payloadOpt))
 
-        attempt (namedField |>> Choice1Of2) <|> (typeExpr |>> Choice2Of2)
-
-    let typeTag =
-        pstring "#" >>. identifierNoWs >>= fun tagName ->
-        opt (between (pstring "(") (pstring ")") (sepBy1 (ws >>. typeTagPayloadItem) (pstring "," .>> ws))) >>= fun payloadOpt ->
-        match payloadOpt with
-        | None -> preturn (TypeTag(tagName, None))
-        | Some items ->
-            let hasNamed = items |> List.exists (function Choice1Of2 _ -> true | _ -> false)
-            if hasNamed then
-                let fields =
-                    items
-                    |> List.choose (function Choice1Of2 field -> Some field | _ -> None)
-                preturn (TypeTag(tagName, Some (TypeRecord fields)))
-            else
-                let payloadTypes = items |> List.choose (function Choice2Of2 t -> Some t | _ -> None)
-                match payloadTypes with
-                | [single] -> preturn (TypeTag(tagName, Some single))
-                | multiple -> preturn (TypeTag(tagName, Some (TypeTuple multiple)))
-
+    // `map(string, int)` has two arguments; `map(string, a -> b)` has one, a function, as `,` binds tighter.
     let typeApply =
         pipe2
             identifierNoWs
-            (between (pstring "(") (pstring ")") (sepBy1 (ws >>. typeExpr) (pstring "," .>> ws)))
-            (fun name args -> TypeApply(name, args))
+            (between (pstring "(") (ws >>. pstring ")") (ws >>. typeList))
+            (fun name (args, resultOpt) ->
+                match resultOpt with
+                | None -> TypeApply(name, args)
+                | Some _ -> TypeApply(name, [ typeListToType (args, resultOpt) ]))
 
     let contextSet =
         between
@@ -866,26 +865,20 @@ do
 
     typeExprRef := typeWithContext
 
-    // In a def's annotation `,` binds tighter than `->`, so `int, int -> int` means `(int, int) -> int`
-    // (see the types page); a parameter that is itself a function type needs parentheses. The bare form is
-    // only allowed there: elsewhere a `,` already separates lambda parameters, tuple items or fields.
-    let bareParameterArrow =
-        attempt (
-            pipe2
-                (sepBy1 typeUnion (attempt (wsInline >>. pstring "," >>. ws)))
-                (ws >>. pstring "->" >>. ws >>. typeExpr)
-                (fun parameters result -> parameters, result)
-            >>= function
-                | (_ :: _ :: _ as parameters), result -> preturn (TypeFunc(TypeTuple parameters, result))
-                | _ -> fail "a function type with bare parameters needs at least two")
+    // `,` binds tighter than `->` wherever types are listed (see the types page), so `int, int -> int` means
+    // `(int, int) -> int` in a def's annotation, in brackets, in type arguments and in a tag's payload alike. A
+    // function that is one of the items has brackets of its own. A record's fields and a lambda's parameters
+    // are separated by commas themselves, so a type there is a `typeExpr`, which takes no bare list.
+    typeListRef :=
+        sepBy1 typeUnion (attempt (wsInline >>. pstring "," >>. ws))
+        .>>. opt (attempt (ws >>. pstring "->" >>. ws >>. typeExpr))
 
+    // A def's annotation: a type list, possibly after the contexts it needs.
     typeSignatureRef :=
-        choice [
-            attempt (pipe2 (contextSet .>> ws) bareParameterArrow (fun ctx t ->
-                TypeWithContext((match ctx with TypeContext items -> items | _ -> []), t)))
-            bareParameterArrow
-            typeExpr
-        ]
+        attempt (
+            pipe2 (contextSet .>> ws) typeList (fun ctx list ->
+                TypeWithContext((match ctx with TypeContext items -> items | _ -> []), typeListToType list)))
+        <|> (typeList |>> typeListToType)
     ()
 
 let typedIdentifier: Parser<Identifier * TypeExpr option, ParseState> =

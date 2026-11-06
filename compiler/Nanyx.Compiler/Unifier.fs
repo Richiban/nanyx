@@ -27,17 +27,26 @@ module Unifier =
         else
             None, namedFields
 
-    /// `ty` as it would be written in an annotation. A function or union is bracketed wherever it would otherwise
-    /// run into what surrounds it: as a function's input (`(a -> b) -> c`, since `->` groups to the right), as a
-    /// union that is a function's result (`a -> (#some(a) | #none)`), as a member of a union, and wherever items are
-    /// separated by commas (`(int, (a -> b))`).
-    let rec tyToString (ty: Ty) : string =
-        // A function or union, bracketed.
+    /// `ty` with the fewest brackets the grammar allows. `,` binds tighter than `->`, which groups to the right,
+    /// and `|` binds tighter than both, so a function needs brackets only where it is an item of a comma list
+    /// (`(int, (a -> b))`), the input of another function (`(a -> b) -> c`) or a member of a union; a union never
+    /// does. At the top, `signature` writes a function's parameters bare, as a def's annotation would:
+    /// `int, (a -> b) -> a`.
+    let rec private printTy (signature: bool) (ty: Ty) : string =
+        // A function, bracketed; in brackets its parameters are not bare.
         let grouped ty =
             match ty with
-            | TyFunc _
-            | TyUnion _ -> $"({tyToString ty})"
-            | _ -> tyToString ty
+            | TyFunc _ -> $"({printTy false ty})"
+            | _ -> printTy false ty
+        // The items of a tuple, each bracketed where a comma list needs it.
+        let items tys = tys |> List.map grouped |> String.concat ", "
+        let bareTuple ty =
+            match ty with
+            | TyRecord fields ->
+                match tryTupleLikeRecord fields with
+                | Some tupleItems, [] -> Some (items tupleItems)
+                | _ -> None
+            | _ -> None
         match ty with
         // The unit type is written `()`; `unit` is only its internal name.
         | TyPrimitive "unit" -> "()"
@@ -48,19 +57,15 @@ module Unifier =
             | None -> $"'t{v.Id}"
         | TyNominal(name, _, _) -> name
         | TyFunc(arg, ret) ->
-            // `->` groups to the right, so a function result needs no brackets; a union result does.
-            let retText =
-                match ret with
-                | TyUnion _ -> grouped ret
-                | _ -> tyToString ret
-            $"{grouped arg} -> {retText}"
+            let argText =
+                match bareTuple arg with
+                | Some bare when signature -> bare
+                | _ -> grouped arg
+            $"{argText} -> {printTy false ret}"
         | TyRecord fields ->
             match tryTupleLikeRecord fields with
             | Some tupleItems, namedFields ->
-                let tupleText =
-                    tupleItems
-                    |> List.map grouped
-                    |> String.concat ", "
+                let tupleText = items tupleItems
                 let namedText =
                     namedFields
                     |> List.sortBy fst
@@ -78,19 +83,21 @@ module Unifier =
                 |> List.map (fun (name, fieldTy) -> $"{name}: {grouped fieldTy}")
                 |> String.concat ", "
                 |> fun inner -> $"{{ {inner} }}"
-        // Tags are written with their `#`, as in source: `#some(int) | #notFound`.
+        // Tags are written with their `#`, as in source: `#some(int) | #notFound`. A tuple payload's items are the
+        // payload's own brackets' items: `#pair(int, string)`.
         | TyTag(name, payloadOpt) ->
             match payloadOpt with
-            | Some payload -> $"#{name}({tyToString payload})"
+            | Some payload -> $"#{name}({bareTuple payload |> Option.defaultWith (fun () -> printTy false payload)})"
             | None -> $"#{name}"
-        | TyApply(name, [ arg ]) -> $"{name}({tyToString arg})"
-        | TyApply(name, args) ->
-            let argsText = args |> List.map grouped |> String.concat ", "
-            $"{name}({argsText})"
-        | TyUnion items ->
-            items
+        | TyApply(name, [ arg ]) -> $"{name}({printTy false arg})"
+        | TyApply(name, args) -> $"{name}({items args})"
+        | TyUnion members ->
+            members
             |> List.map grouped
             |> String.concat " | "
+
+    /// `ty` as it would be written in a def's annotation: see `printTy`.
+    let tyToString (ty: Ty) : string = printTy true ty
 
     /// The type variables of `ty` in the order `tyToString` prints them, each once. A nominal's underlying type
     /// is not printed, so its variables are not included.
