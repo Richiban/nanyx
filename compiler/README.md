@@ -102,16 +102,11 @@ The `Compiler` workflow (`.github/workflows/compiler.yml`) builds and tests the 
 Linux and Windows for every pull request and push to `main` that touches `compiler/`, and
 publishes a self-contained `nanyx` executable for each supported platform as a workflow artifact.
 
-To cut a release, bump `<Version>` in `Nanyx.Compiler.Cli/NanyxCompiler.Cli.csproj`, merge,
-then push a tag of the form `compiler/<version>`:
-
-```powershell
-git tag compiler/0.1.0
-git push origin compiler/0.1.0
-```
-
-The workflow checks that the tag matches the project version and attaches the binaries to a
-GitHub release. (The VS Code extension is released the same way with `extension/<version>` tags.)
+To cut a release, bump `<Version>` in `Nanyx.Compiler.Cli/NanyxCompiler.Cli.csproj` and merge.
+When the workflow on `main` finds no `compiler/<version>` tag for that version, it creates the tag
+and attaches the binaries it just built and tested to a GitHub release; nothing is rebuilt. Pushes
+that leave the version unchanged release nothing. (The VS Code extension is released the same way:
+bump `version` in `extension/package.json` and merge.)
 
 ## Running programs
 
