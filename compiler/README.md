@@ -201,10 +201,9 @@ What it does today:
 - A file that fails to parse gets one diagnostic for the parse error, and a compiler exception is
   reported as a diagnostic rather than taking the server down.
 - `textDocument/hover` shows the inferred type of the narrowest expression under the pointer, with
-  made-up type variables named `α`, `β`, ... through the Greek alphabet (`nanyx lsp --latin-type-vars`
-  names them `a`, `b`, ... instead) and annotation variables keeping their names, written bare as in
-  an annotation; on a
-  call's function name it shows the function's type at that call (so `id` in `id(5)` is
+  made-up type variables named `α`, `β`, ... through the Greek alphabet, a union's rest variable from
+  the other end (`#some(α) | ω`), and annotation variables keeping their names, written bare as in an
+  annotation (`nanyx lsp --latin-type-vars` uses `a`, `b`, ... and `z` instead); on a call's function name it shows the function's type at that call (so `id` in `id(5)` is
   `int -> int`). The types come from the typed module's `ExprTypes` and `CalleeTypes`, recorded by
   node during inference (see `NyxCompiler.Hover`). A file that does not type-check shows no hover.
 
