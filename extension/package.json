@@ -8,7 +8,7 @@
     "url": "https://github.com/nanyx-lang/nanyx"
   },
   "license": "MIT",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "icon": "img/nanyx.png",
   "galleryBanner": {
     "color": "#5b5bf2",
@@ -66,12 +66,12 @@
         "nanyx.compilerVersion": {
           "type": "string",
           "default": "",
-          "markdownDescription": "The compiler release to download when no `nanyx` is found. Leave empty for the version this extension was built for."
+          "markdownDescription": "Pins the compiler release to download and use when no `nanyx` is found, e.g. `0.5.2`. Leave empty to use the newest compiler release (checked for at most once a day)."
         },
         "nanyx.downloadUrl": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Where to download the compiler from. `${version}`, `${rid}` (e.g. `win-x64`) and `${ext}` (`zip` or `tar.gz`) are substituted. Leave empty for the GitHub releases of nanyx-lang/nanyx."
+          "markdownDescription": "Where to download the compiler from. `${version}`, `${rid}` (e.g. `win-x64`) and `${ext}` (`zip` or `tar.gz`) are substituted. Leave empty for the GitHub releases of nanyx-lang/nanyx. With a custom URL the newest release cannot be looked up, so `nanyx.compilerVersion` (or the extension's minimum version) is downloaded."
         },
         "nanyx.greekTypeVariables": {
           "type": "boolean",
