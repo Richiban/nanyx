@@ -188,8 +188,8 @@ can start it with `nanyx lsp` and `TransportKind.stdio`.
 
 The server lives in `Nanyx.LanguageServer` and calls the compiler as a library: on every open and
 change it runs `Compiler.compileSource` (or `Compiler.compile` for an untitled buffer) on the editor's
-text, keeps the `CompileResult` in `DocumentStore`, and publishes the resulting diagnostics; hover reads
-the same result, so each change is compiled once. Standard-library imports resolve because the library is
+text, keeps the `CompileResult` in `DocumentStore`, and publishes the resulting diagnostics; hover and
+go-to-definition read the same result, so each change is compiled once. Standard-library imports resolve because the library is
 embedded in the compiler; imports by path resolve relative to the file as they do for `nanyx check`.
 
 What it does today:
@@ -206,11 +206,16 @@ What it does today:
   annotation (`nanyx lsp --latin-type-vars` uses `a`, `b`, ... and `z` instead); on a call's function name it shows the function's type at that call (so `id` in `id(5)` is
   `int -> int`). The types come from the typed module's `ExprTypes` and `CalleeTypes`, recorded by
   node during inference (see `NyxCompiler.Hover`). A file that does not type-check shows no hover.
+- `textDocument/definition` goes from a value, parameter, pattern variable or import name to where it
+  is declared, from the typed module's `References` and `Symbols` (see `NyxCompiler.Definition`). On a
+  declaration's own name it returns that declaration. A definition in an imported source file opens that
+  file; one in the standard library returns nothing, because the library is embedded in the compiler
+  rather than a file the editor can open. Type names and context members are not symbols yet.
 
-Go-to-definition and completion are deliberately not implemented yet: each is one handler class in
-`Nanyx.LanguageServer/Handlers/`, registered in `NanyxLanguageServer.Configure`, and they wait on the
-compiler recording what each name refers to ([#98](https://github.com/nanyx-lang/nanyx/issues/98)).
-Hover likewise shows only types, not a name's declared signature or docs. Two compiler improvements
+Find-references and completion are not implemented yet: each is one handler class in
+`Nanyx.LanguageServer/Handlers/`, registered in `NanyxLanguageServer.Configure` (tracked in
+[#113](https://github.com/nanyx-lang/nanyx/issues/113)).
+Hover shows only types, not a name's declared signature or docs. Two compiler improvements
 the server makes visible: a parse error currently drops the whole file (so one error hides
 everything after it), and only some diagnostics carry a range.
 

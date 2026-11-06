@@ -32,8 +32,13 @@ what the compiler keeps: exact spans, resolved names and types.
   is compiled once per change and the result cached in `DocumentStore`, shared by diagnostics and hover. A
   declared signature or doc comment needs name resolution ([#98](https://github.com/nanyx-lang/nanyx/issues/98)),
   and a file that fails to type-check shows no hover.
-- **No go-to-definition or completion.** Each is one handler in `Handlers/`; they wait on the compiler
-  keeping a span for every node ([#96](https://github.com/nanyx-lang/nanyx/issues/96)) and recording what each name refers to ([#98](https://github.com/nanyx-lang/nanyx/issues/98)).
+- **Go-to-definition** for values, parameters, pattern variables and imports, from the symbols and references
+  name resolution records ([#98](https://github.com/nanyx-lang/nanyx/issues/98)). A declaration's own name goes
+  to itself. A definition in an imported source file opens that file; one in the standard library goes nowhere,
+  since the library is embedded in the compiler, not a file on disk. Type names and context members are not
+  symbols yet, so they go nowhere either.
+- **No find-references or completion.** Each is one handler in `Handlers/`. Find-references can read the same
+  `References` table, though only of the open document's own compile.
 - **A parse error hides the rest of the file**, because the parser has no error recovery.
 - **The extension** highlights syntax, finds `nanyx` (setting, `PATH`, or a downloaded release) and offers
   *Download the compiler* and *Restart the language server*.
@@ -54,6 +59,8 @@ _To do._ Candidate items, not yet filed, in rough dependency order:
 2. **Hover.** Inferred types are done ([#120](https://github.com/nanyx-lang/nanyx/issues/120)); declared
    signatures and docs follow from name resolution ([#98](https://github.com/nanyx-lang/nanyx/issues/98)).
 3. **Go-to-definition and find-references.** From the recorded symbols and references ([#98](https://github.com/nanyx-lang/nanyx/issues/98)).
+   Go-to-definition is done for values; it still needs type names and context members as symbols, and a
+   way to open standard-library source (a virtual document, say).
 4. **Document symbols.** The outline view, from top-level definitions.
 5. **Completion.** Names in scope, then record members and module exports.
 6. **Code actions.** From diagnostic fixes.

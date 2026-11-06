@@ -7,9 +7,12 @@ namespace Nanyx.LanguageServer;
 
 /// <summary>An open document: its text and the result of compiling that text.</summary>
 /// <param name="Text">The editor's buffer, which is usually ahead of the saved file.</param>
+/// <param name="FileName">
+/// The file the compiler's spans name for this document: its full path, or empty for a document not on disk.
+/// </param>
 /// <param name="Compiled">What the compiler made of <paramref name="Text"/>; <c>null</c> if the compiler threw.</param>
 /// <param name="CompilerFailure">The exception the compiler threw, if it did.</param>
-public sealed record OpenDocument(string Text, CompileResult? Compiled, Exception? CompilerFailure)
+public sealed record OpenDocument(string Text, string FileName, CompileResult? Compiled, Exception? CompilerFailure)
 {
     /// <summary>Converts positions in <see cref="Text"/>, built once per change rather than on every request.</summary>
     public SourcePositions Positions { get; } = new(Text);
@@ -45,19 +48,19 @@ public sealed class DocumentStore
 
     private OpenDocument Compile(DocumentUri uri, string text)
     {
+        // A file on disk gets its imports resolved relative to itself; anything else (an untitled buffer, say)
+        // can still import the standard library. The compiler names a file by its full path.
+        var path = uri.Scheme == "file" ? Path.GetFullPath(uri.GetFileSystemPath()) : null;
         try
         {
-            // A file on disk gets its imports resolved relative to itself; anything else (an untitled buffer, say)
-            // can still import the standard library.
-            var path = uri.Scheme == "file" ? uri.GetFileSystemPath() : null;
             var result = path is null ? Compiler.compile(text) : Compiler.compileSource(path, text);
-            return new OpenDocument(text, result, null);
+            return new OpenDocument(text, path ?? string.Empty, result, null);
         }
         catch (Exception ex)
         {
             // A compiler bug must not take the server down with it: it is reported as a diagnostic instead.
             _logger.LogError(ex, "The compiler failed on {Uri}", uri);
-            return new OpenDocument(text, null, ex);
+            return new OpenDocument(text, path ?? string.Empty, null, ex);
         }
     }
 }
