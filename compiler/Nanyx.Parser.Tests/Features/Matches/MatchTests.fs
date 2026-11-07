@@ -9,7 +9,7 @@ open System.IO
 [<Fact>]
 let ``a braced guard pattern takes any expression and the bare form still parses`` () =
     match parseModule "def f = { | { < 0 } -> 1 | { >= limit * 2 } -> 2 | > 5 -> 3 | _ -> 4 }" with
-    | Result.Ok [ Def (ValueDef (_, "f", _, Kind (Lambda (_, Kind (Match (_, arms)))))) ] ->
+    | Result.Ok [ Kind (Def (ValueDef (_, "f", _, Kind (Lambda (_, Kind (Match (_, arms))))))) ] ->
         match arms |> List.map fst with
         | [ [ Kind (GuardPattern ("<", Kind (LiteralExpr (IntLit 0)))) ]
             [ Kind (GuardPattern (">=", Kind (BinaryOp ("*", Kind (IdentifierExpr "limit"), _)))) ]
@@ -42,7 +42,7 @@ let ``An or-pattern arm becomes one arm per alternative`` () =
         "    | _ -> \"weekday\"\n" +
         "}"
     match parseModule source with
-    | Result.Ok [ Def (ValueDef (_, "f", _, Kind (Lambda (_, Kind (Block [ Kind (ExprStatement (Kind (Match (_, arms)))) ]))))) ] ->
+    | Result.Ok [ Kind (Def (ValueDef (_, "f", _, Kind (Lambda (_, Kind (Block [ Kind (ExprStatement (Kind (Match (_, arms)))) ])))))) ] ->
         let patterns = arms |> List.map (fst >> List.map (fun pattern -> pattern.Kind))
         patterns |> should equal [ [ LiteralPattern (StringLit "Sat") ]; [ LiteralPattern (StringLit "Sun") ]; [ WildcardPattern ] ]
         // Both alternatives share the same body.
@@ -60,7 +60,7 @@ let ``An or-pattern may put each alternative on its own line`` () =
         "    | _ -> 0\n" +
         "}"
     match parseModule source with
-    | Result.Ok [ Def (ValueDef (_, "f", _, Kind (Lambda (_, Kind (Block [ Kind (ExprStatement (Kind (Match (_, arms)))) ]))))) ] ->
+    | Result.Ok [ Kind (Def (ValueDef (_, "f", _, Kind (Lambda (_, Kind (Block [ Kind (ExprStatement (Kind (Match (_, arms)))) ])))))) ] ->
         arms
         |> List.map (fst >> List.map (fun pattern -> pattern.Kind))
         |> should equal [ [ TagPattern ("sat", None) ]; [ TagPattern ("sun", None) ]; [ WildcardPattern ] ]
@@ -70,7 +70,7 @@ let ``An or-pattern may put each alternative on its own line`` () =
 /// The scrutinees of the one match in `def f = { x -> <body> }`, or the parse error.
 let private scrutineesOf (body: string) =
     match parseModule ("def f = { x ->\n" + body + "\n}") with
-    | Result.Ok [ Def (ValueDef (_, "f", _, Kind (Lambda (_, Kind (Block [ Kind (ExprStatement (Kind (Match (scrutinees, _)))) ]))))) ] ->
+    | Result.Ok [ Kind (Def (ValueDef (_, "f", _, Kind (Lambda (_, Kind (Block [ Kind (ExprStatement (Kind (Match (scrutinees, _)))) ])))))) ] ->
         Result.Ok scrutinees
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
     | Result.Error err -> Result.Error err
@@ -116,7 +116,7 @@ let ``A block scrutinee is measured against the match line, not the match keywor
         "  n\n" +
         "}"
     match parseModule source with
-    | Result.Ok [ Def (ValueDef (_, "f", _, Kind (Lambda (_, Kind (Block [ Kind (DefStatement (_, _, _, Kind (Match ([ Kind (Pipe _) ], _)))); _ ]))))) ] -> ()
+    | Result.Ok [ Kind (Def (ValueDef (_, "f", _, Kind (Lambda (_, Kind (Block [ Kind (DefStatement (_, _, _, Kind (Match ([ Kind (Pipe _) ], _)))); _ ])))))) ] -> ()
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
     | Result.Error err -> failwith $"Parse failed: {err}"
 
@@ -135,7 +135,7 @@ let ``A block scrutinee indented no more than the match is an error`` () =
 [<Fact>]
 let ``Or-patterns work in pattern lambdas and with several scrutinees`` () =
     match parseModule "def f = { | 0, _ | _, 0 -> \"axis\" | _, _ -> \"plane\" }" with
-    | Result.Ok [ Def (ValueDef (_, "f", _, Kind (Lambda (args, Kind (Match (_, arms)))))) ] ->
+    | Result.Ok [ Kind (Def (ValueDef (_, "f", _, Kind (Lambda (args, Kind (Match (_, arms))))))) ] ->
         args |> List.length |> should equal 2
         arms |> List.length |> should equal 3
         arms |> List.map (fst >> List.length) |> should equal [ 2; 2; 2 ]

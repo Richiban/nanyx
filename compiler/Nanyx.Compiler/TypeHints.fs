@@ -36,7 +36,7 @@ let private hints (names: TypeVarNames) (file: string) (result: CompileResult) :
             let expressions =
                 syntax
                 |> List.choose (function
-                    | Expr value when not (SourceSpan.isNone value.Span) -> Some (value.Span.Start, None)
+                    | Kind (Expr value) when not (SourceSpan.isNone value.Span) -> Some (value.Span.Start, None)
                     | _ -> None)
             (System.Int32.MinValue, None) :: defs @ expressions |> List.sortBy fst
         let runs =

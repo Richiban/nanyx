@@ -8,7 +8,7 @@ open System.IO
 
 let private payloadOf source =
     match parseModule source with
-    | Result.Ok [ Def (ValueDef (_, _, _, Kind (TagExpr (_, Some payload)))) ] -> payload.Kind
+    | Result.Ok [ Kind (Def (ValueDef (_, _, _, Kind (TagExpr (_, Some payload))))) ] -> payload.Kind
     | other -> failwith $"Expected a single def of a tag with a payload, got: {other}"
 
 [<Fact>]

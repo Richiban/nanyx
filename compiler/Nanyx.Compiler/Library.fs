@@ -89,20 +89,20 @@ module Compiler =
     let private collectImports (module': Module) =
         module'
         |> List.choose (function
-            | Import items -> Some items
+            | Kind (Import items) -> Some items
             | _ -> None)
         |> List.collect id
 
     let private removeImportStatements (module': Module) =
         module'
         |> List.filter (function
-            | Import _ -> false
+            | Kind (Import _) -> false
             | _ -> true)
 
     let private declaredModuleName (module': Module) =
         module'
         |> List.tryPick (function
-            | ModuleDecl name -> Some name
+            | Kind (ModuleDecl name) -> Some name
             | _ -> None)
 
     /// An expression with `visit` applied to every node, inner nodes first: `visit` is given the node as it was
@@ -268,20 +268,20 @@ module Compiler =
         let bodies =
             inlined
             |> List.choose (function
-                | Def (ValueDef(_, name, _, value)) -> Some (name, value)
+                | Kind (Def (ValueDef(_, name, _, value))) -> Some (name, value)
                 | _ -> None)
         let contextMembers =
             inlined @ own
             |> List.collect (function
-                | Def (TypeDef(_, modifiers, _, Kind (TypeRecord fields))) when modifiers |> List.contains Context ->
+                | Kind (Def (TypeDef(_, modifiers, _, Kind (TypeRecord fields)))) when modifiers |> List.contains Context ->
                     fields |> List.map (function TypeField(fieldName, _, _, _, _) | TypeMember(fieldName, _) -> fieldName)
                 | _ -> [])
             |> Set.ofList
         let rootNames =
             own
             |> List.collect (function
-                | Def (ValueDef(_, _, _, value)) -> referencedNames value
-                | Expr value -> referencedNames value
+                | Kind (Def (ValueDef(_, _, _, value))) -> referencedNames value
+                | Kind (Expr value) -> referencedNames value
                 | _ -> [])
         let isReferenced (referenced: Set<string>) (name: string) =
             referenced.Contains name
@@ -298,7 +298,7 @@ module Compiler =
         let reached = reach (Set.ofList rootNames) Set.empty
         inlined
         |> List.filter (function
-            | Def (ValueDef(_, name, _, _)) -> reached.Contains name
+            | Kind (Def (ValueDef(_, name, _, _))) -> reached.Contains name
             | _ -> true)
 
     /// The items an importer inlines for the backend from a module it imports: the module's own value
@@ -313,9 +313,9 @@ module Compiler =
             |> Option.defaultValue "import"
         checkedModule.Own
         |> List.choose (function
-            | Def (ValueDef(true, name, _, _)) ->
+            | Kind (Def (ValueDef(true, name, _, _))) ->
                 qualifier |> Option.map (fun q -> name, $"{q}.{name}")
-            | Def (ValueDef(false, name, _, _)) -> Some (name, $"{moduleName}.{name}")
+            | Kind (Def (ValueDef(false, name, _, _))) -> Some (name, $"{moduleName}.{name}")
             | _ -> None)
         |> Map.ofList
 
@@ -325,9 +325,9 @@ module Compiler =
         let ownItems =
             checkedModule.Own
             |> List.choose (function
-                | Def (ValueDef(_, name, typeOpt, expr)) ->
-                    Some (Def (ValueDef(false, rename name, typeOpt, renameReferencesInExpr renames expr)))
-                | Def (TypeDef _) as typeDef -> Some typeDef
+                | Kind (Def (ValueDef(_, name, typeOpt, expr))) as item ->
+                    Some { item with Kind = Def (ValueDef(false, rename name, typeOpt, renameReferencesInExpr renames expr)) }
+                | Kind (Def (TypeDef _)) as typeDef -> Some typeDef
                 | _ -> None)
         checkedModule.Inlined @ ownItems
 
@@ -344,21 +344,21 @@ module Compiler =
         let seen = System.Collections.Generic.HashSet<string>()
         items
         |> List.filter (function
-            | Def (ValueDef(_, name, _, _)) -> seen.Add("value:" + name)
-            | Def (TypeDef(name, _, _, _)) -> seen.Add("type:" + name)
+            | Kind (Def (ValueDef(_, name, _, _))) -> seen.Add("value:" + name)
+            | Kind (Def (TypeDef(name, _, _, _))) -> seen.Add("type:" + name)
             | _ -> true)
 
     let private exportedValueNames (module': Module) =
         module'
         |> List.choose (function
-            | Def (ValueDef(true, name, _, _)) -> Some name
+            | Kind (Def (ValueDef(true, name, _, _))) -> Some name
             | _ -> None)
         |> Set.ofList
 
     let private exportedTypeNames (module': Module) =
         module'
         |> List.choose (function
-            | Def (TypeDef(name, modifiers, _, _)) when modifiers |> List.contains Export -> Some name
+            | Kind (Def (TypeDef(name, modifiers, _, _))) when modifiers |> List.contains Export -> Some name
             | _ -> None)
         |> Set.ofList
 
@@ -671,9 +671,9 @@ module Compiler =
 
         module'
         |> List.map (function
-            | Def (ValueDef(isExport, name, typeOpt, expr)) ->
-                Def (ValueDef(isExport, name, typeOpt, desugarExpr expr))
-            | Expr expr -> Expr (desugarExpr expr)
+            | Kind (Def (ValueDef(isExport, name, typeOpt, expr))) as item ->
+                { item with Kind = Def (ValueDef(isExport, name, typeOpt, desugarExpr expr)) }
+            | Kind (Expr expr) as item -> { item with Kind = Expr (desugarExpr expr) }
             | other -> other)
 
     /// The attribute that marks a definition as the program's entry point: `@entry def main = { ... }`.
@@ -695,27 +695,23 @@ module Compiler =
     /// (the context the runtime supplies to the entry point); any other attribute, or an attribute that does
     /// not precede a value definition, is an error.
     let applyAttributes (module': Module) : Result<Module, Diagnostic list> =
-        // An attribute has no span of its own yet (#96): it is reported at what follows it, if that has one.
-        let attributedSpan (following: TopLevelItem list) =
-            match following with
-            | Def (ValueDef(_, _, _, value)) :: _
-            | Expr value :: _ -> value.Span
-            | _ -> SourceSpan.none
         let rec loop (remaining: TopLevelItem list) (acc: TopLevelItem list) (entryCalls: TopLevelItem list) (errors: Diagnostic list) =
             match remaining with
             | [] -> List.rev acc, List.rev entryCalls, List.rev errors
-            | Attribute name :: rest when name <> entryAttribute ->
-                loop rest acc entryCalls (Diagnostics.at DiagnosticCodes.UnknownAttribute (attributedSpan rest) $"Unknown attribute '@{name}'" :: errors)
-            | Attribute _ :: (Def (ValueDef(_, name, _, value)) as def) :: rest ->
-                loop rest (def :: acc) (Expr (Expression.from value (FunctionCall(name, None, []))) :: entryCalls) errors
-            | Attribute name :: rest ->
-                loop rest acc entryCalls (Diagnostics.at DiagnosticCodes.MisplacedAttribute (attributedSpan rest) $"Attribute '@{name}' must be followed by a definition" :: errors)
+            | Kind (Attribute name) as attribute :: rest when name <> entryAttribute ->
+                loop rest acc entryCalls (Diagnostics.at DiagnosticCodes.UnknownAttribute attribute.Span $"Unknown attribute '@{name}'" :: errors)
+            | Kind (Attribute _) :: (Kind (Def (ValueDef(_, name, _, value))) as def) :: rest ->
+                // The call is made up for the def, and reported there.
+                let call = TopLevelItem.at def.Span (Expr (Expression.from value (FunctionCall(name, None, []))))
+                loop rest (def :: acc) (call :: entryCalls) errors
+            | Kind (Attribute name) as attribute :: rest ->
+                loop rest acc entryCalls (Diagnostics.at DiagnosticCodes.MisplacedAttribute attribute.Span $"Attribute '@{name}' must be followed by a definition" :: errors)
             | item :: rest -> loop rest (item :: acc) entryCalls errors
         match loop module' [] [] [] with
         | items, entryCalls, [] ->
             let entryImport =
                 if not entryCalls.IsEmpty && not (importsModule entryContextModule items) then
-                    [ Import [ { Source = ModuleImport entryContextModule; Alias = None; Span = SourceSpan.none } ] ]
+                    [ TopLevelItem.synthetic (Import [ { Source = ModuleImport entryContextModule; Alias = None; Span = SourceSpan.none } ]) ]
                 else
                     []
             Ok (entryImport @ items @ entryCalls)
@@ -777,6 +773,7 @@ module Compiler =
             | TypedDef (TypedTypeDef(name, modifiers, parameters, body)) ->
                 Some (Def (TypeDef(name, modifiers, parameters, body)))
             | TypedExprItem expr -> Some (Expr (retargetPipes pipeTargets expr.Expr)))
+        |> List.map TopLevelItem.synthetic
 
     let private originKey (origin: ModuleOrigin) =
         match origin with
@@ -949,11 +946,11 @@ module Compiler =
                         let resolvedTypes, resolvedTypeDefs, resolvedItems = resolveTypes subst types state.TypeDefs items
                         let own = moduleFromTypedItems state.PipeTargets resolvedItems
                         // The module's own definitions win over imported ones of the same name.
-                        let ownNames = exportedValueNames own |> Set.union (own |> List.choose (function Def (ValueDef(false, name, _, _)) -> Some name | _ -> None) |> Set.ofList)
+                        let ownNames = exportedValueNames own |> Set.union (own |> List.choose (function Kind (Def (ValueDef(false, name, _, _))) -> Some name | _ -> None) |> Set.ofList)
                         let inlined =
                             inlined @ preludeInlined
                             |> List.filter (function
-                                | Def (ValueDef(_, name, _, _)) -> not (ownNames.Contains name)
+                                | Kind (Def (ValueDef(_, name, _, _))) -> not (ownNames.Contains name)
                                 | _ -> true)
                             |> distinctDefinitions
                             |> reachedItems own

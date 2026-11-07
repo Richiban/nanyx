@@ -66,7 +66,7 @@ and private patternExpressions (pattern: Pattern) : Expression list =
     | ElsePattern -> []
 
 let rec private topLevelExpressions (item: TopLevelItem) : Expression list =
-    match item with
+    match item.Kind with
     | Def (ValueDef(_, _, _, value))
     | Expr value -> [ value ]
     | ModuleBlock(_, items) -> items |> List.collect topLevelExpressions

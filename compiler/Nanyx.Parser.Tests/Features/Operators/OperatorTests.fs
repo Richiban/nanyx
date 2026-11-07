@@ -14,12 +14,12 @@ let ``Parse binary-operators.nyx file`` () =
     | Result.Ok module' ->
         module' |> List.length |> should be (greaterThan 10)
         match module'.[0] with
-        | ModuleDecl name -> name |> should equal "BinaryOperators"
+        | Kind (ModuleDecl name) -> name |> should equal "BinaryOperators"
         | _ -> failwith "Expected ModuleDecl"
 
-        let hasBinaryOp op module' =
+        let hasBinaryOp op (module': Module) =
             module' |> List.exists (fun item ->
-                match item with
+                match item.Kind with
                 | Def (ValueDef (_, _, _, Kind (BinaryOp (operator, _, _)))) -> operator = op
                 | _ -> false
             )
@@ -35,48 +35,48 @@ let ``Parse binary-operators.nyx file`` () =
 [<Fact>]
 let ``++ is concatenation, looser than + and tighter than ==`` () =
     match parseModule "def x = a + b ++ c == d" with
-    | Result.Ok [ Def (ValueDef (_, "x", _, Kind (BinaryOp ("==", Kind (BinaryOp ("++", Kind (BinaryOp ("+", _, _)), _)), _)))) ] -> ()
+    | Result.Ok [ Kind (Def (ValueDef (_, "x", _, Kind (BinaryOp ("==", Kind (BinaryOp ("++", Kind (BinaryOp ("+", _, _)), _)), _))))) ] -> ()
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
     | Result.Error err -> failwith $"Parse failed: {err}"
 
 [<Fact>]
 let ``++ associates to the right`` () =
     match parseModule "def x = a ++ b ++ c" with
-    | Result.Ok [ Def (ValueDef (_, "x", _, Kind (BinaryOp ("++", Kind (IdentifierExpr "a"), Kind (BinaryOp ("++", _, _)))))) ] -> ()
+    | Result.Ok [ Kind (Def (ValueDef (_, "x", _, Kind (BinaryOp ("++", Kind (IdentifierExpr "a"), Kind (BinaryOp ("++", _, _))))))) ] -> ()
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
     | Result.Error err -> failwith $"Parse failed: {err}"
 
 [<Fact>]
 let ``and binds tighter than or and looser than comparison`` () =
     match parseModule "def x = a == b and c or d" with
-    | Result.Ok [ Def (ValueDef (_, "x", _, Kind (BinaryOp ("or", Kind (BinaryOp ("and", Kind (BinaryOp ("==", _, _)), _)), Kind (IdentifierExpr "d"))))) ] -> ()
+    | Result.Ok [ Kind (Def (ValueDef (_, "x", _, Kind (BinaryOp ("or", Kind (BinaryOp ("and", Kind (BinaryOp ("==", _, _)), _)), Kind (IdentifierExpr "d")))))) ] -> ()
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
     | Result.Error err -> failwith $"Parse failed: {err}"
 
 [<Fact>]
 let ``not is a prefix keyword that binds tighter than infix operators`` () =
     match parseModule "def x = not a == b" with
-    | Result.Ok [ Def (ValueDef (_, "x", _, Kind (BinaryOp ("==", Kind (FunctionCall ("not", _, [ Kind (IdentifierExpr "a") ])), _)))) ] -> ()
+    | Result.Ok [ Kind (Def (ValueDef (_, "x", _, Kind (BinaryOp ("==", Kind (FunctionCall ("not", _, [ Kind (IdentifierExpr "a") ])), _))))) ] -> ()
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
     | Result.Error err -> failwith $"Parse failed: {err}"
 
 [<Fact>]
 let ``keyword operators do not swallow identifiers that start with them`` () =
     match parseModule "def x = order and android or nothing" with
-    | Result.Ok [ Def (ValueDef (_, "x", _, Kind (BinaryOp ("or", Kind (BinaryOp ("and", Kind (IdentifierExpr "order"), Kind (IdentifierExpr "android"))), Kind (IdentifierExpr "nothing"))))) ] -> ()
+    | Result.Ok [ Kind (Def (ValueDef (_, "x", _, Kind (BinaryOp ("or", Kind (BinaryOp ("and", Kind (IdentifierExpr "order"), Kind (IdentifierExpr "android"))), Kind (IdentifierExpr "nothing")))))) ] -> ()
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
     | Result.Error err -> failwith $"Parse failed: {err}"
 
 [<Fact>]
 let ``&& and || are aliases for and and or`` () =
     match parseModule "def x = a && b || c" with
-    | Result.Ok [ Def (ValueDef (_, "x", _, Kind (BinaryOp ("or", Kind (BinaryOp ("and", _, _)), _)))) ] -> ()
+    | Result.Ok [ Kind (Def (ValueDef (_, "x", _, Kind (BinaryOp ("or", Kind (BinaryOp ("and", _, _)), _))))) ] -> ()
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
     | Result.Error err -> failwith $"Parse failed: {err}"
 
 [<Fact>]
 let ``++ shorthand lambda is the two-argument concatenation`` () =
     match parseModule "def f = { ++ }" with
-    | Result.Ok [ Def (ValueDef (_, "f", _, Kind (Lambda ([ ("x", None); ("y", None) ], Kind (BinaryOp ("++", _, _)))))) ] -> ()
+    | Result.Ok [ Kind (Def (ValueDef (_, "f", _, Kind (Lambda ([ ("x", None); ("y", None) ], Kind (BinaryOp ("++", _, _))))))) ] -> ()
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
     | Result.Error err -> failwith $"Parse failed: {err}"

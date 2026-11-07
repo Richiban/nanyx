@@ -14,13 +14,13 @@ let ``Parse piping.nyx file`` () =
     | Result.Ok module' ->
         module' |> List.length |> should be (greaterThan 5)
         match module'.[0] with
-        | ModuleDecl name -> name |> should equal "Piping"
+        | Kind (ModuleDecl name) -> name |> should equal "Piping"
         | _ -> failwith "Expected ModuleDecl"
 
         let hasPipe =
             module' |> List.exists (fun item ->
                 match item with
-                | Def (ValueDef (_, _, _, Kind (Pipe _))) -> true
+                | Kind (Def (ValueDef (_, _, _, Kind (Pipe _)))) -> true
                 | _ -> false
             )
         hasPipe |> should equal true
@@ -29,7 +29,7 @@ let ``Parse piping.nyx file`` () =
 [<Fact>]
 let ``A pipe target may take named arguments`` () =
     match parseModule "def r = x \\f(a, y = z)" with
-    | Result.Ok [ Def (ValueDef (_, _, _, Kind (Pipe (_, "f", _, [ args ])))) ] ->
+    | Result.Ok [ Kind (Def (ValueDef (_, _, _, Kind (Pipe (_, "f", _, [ args ]))))) ] ->
         match args.Kind with
         | RecordExpr [ PositionalField (Kind (IdentifierExpr "a")); NamedField ("y", Kind (IdentifierExpr "z")) ] -> ()
         | other -> failwith $"Expected record arguments, got: {other}"
@@ -37,7 +37,7 @@ let ``A pipe target may take named arguments`` () =
 
 let private callArgumentsOf source =
     match parseModule source with
-    | Result.Ok [ Def (ValueDef (_, _, _, Kind (Pipe (value, _, _, args)))) ] -> pipeCallArguments value args |> List.map _.Kind
+    | Result.Ok [ Kind (Def (ValueDef (_, _, _, Kind (Pipe (value, _, _, args))))) ] -> pipeCallArguments value args |> List.map _.Kind
     | other -> failwith $"Expected a single def of a pipe, got: {other}"
 
 [<Fact>]

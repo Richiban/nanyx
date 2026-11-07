@@ -8,19 +8,19 @@ open ParserTestHelpers
 [<Fact>]
 let ``list spread desugars to concatenation`` () =
     match parseModule "def x = [1, ...xs, 2, 3, ...ys]" with
-    | Result.Ok [ Def (ValueDef (_, "x", _, Kind (BinaryOp ("++", Kind (ListExpr [ Kind (LiteralExpr (IntLit 1)) ]),
-                                                           Kind (BinaryOp ("++", Kind (IdentifierExpr "xs"),
-                                                              Kind (BinaryOp ("++", Kind (ListExpr [ Kind (LiteralExpr (IntLit 2)); Kind (LiteralExpr (IntLit 3)) ]),
-                                                                                    Kind (IdentifierExpr "ys"))))))))) ] -> ()
+    | Result.Ok [ Kind (Def (ValueDef (_, "x", _, Kind (BinaryOp ("++", Kind (ListExpr [ Kind (LiteralExpr (IntLit 1)) ]),
+                                                                 Kind (BinaryOp ("++", Kind (IdentifierExpr "xs"),
+                                                                    Kind (BinaryOp ("++", Kind (ListExpr [ Kind (LiteralExpr (IntLit 2)); Kind (LiteralExpr (IntLit 3)) ]),
+                                                                                          Kind (IdentifierExpr "ys")))))))))) ] -> ()
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
     | Result.Error err -> failwith $"Parse failed: {err}"
 
 [<Fact>]
 let ``a list of only a spread is the spread itself, and no spread is a plain list`` () =
     match parseModule "def x = [...xs]\ndef y = [1, 2]\ndef z = []" with
-    | Result.Ok [ Def (ValueDef (_, "x", _, Kind (IdentifierExpr "xs")))
-                  Def (ValueDef (_, "y", _, Kind (ListExpr [ _; _ ])))
-                  Def (ValueDef (_, "z", _, Kind (ListExpr []))) ] -> ()
+    | Result.Ok [ Kind (Def (ValueDef (_, "x", _, Kind (IdentifierExpr "xs"))))
+                  Kind (Def (ValueDef (_, "y", _, Kind (ListExpr [ _; _ ]))))
+                  Kind (Def (ValueDef (_, "z", _, Kind (ListExpr [])))) ] -> ()
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
     | Result.Error err -> failwith $"Parse failed: {err}"
 
@@ -33,7 +33,7 @@ let ``Parse literals.nyx file`` () =
     | Result.Ok module' ->
         module' |> should haveLength 6  // 1 module + 5 defs
         match module'.[0] with
-        | ModuleDecl name -> name |> should equal "Literals"
+        | Kind (ModuleDecl name) -> name |> should equal "Literals"
         | _ -> failwith "Expected ModuleDecl"
 
         let defs = module' |> List.tail
@@ -47,7 +47,7 @@ let ``Parse interpolated string literal`` () =
     | Result.Error err -> failwith $"Parse failed: {err}"
     | Result.Ok module' ->
         match module' with
-        | [Def (ValueDef(_, "msg", _, Kind (InterpolatedString parts)))] ->
+        | [Kind (Def (ValueDef(_, "msg", _, Kind (InterpolatedString parts))))] ->
             parts |> should haveLength 2
         | _ -> failwith "Expected interpolated string"
 
@@ -58,7 +58,7 @@ let ``Parse single-quoted string without interpolation`` () =
     | Result.Error err -> failwith $"Parse failed: {err}"
     | Result.Ok module' ->
         match module' with
-        | [Def (ValueDef(_, "msg", _, Kind (LiteralExpr (StringLit value))))] ->
+        | [Kind (Def (ValueDef(_, "msg", _, Kind (LiteralExpr (StringLit value)))))] ->
             value |> should equal "Hello {name}"
         | _ -> failwith "Expected plain string literal"
 
@@ -69,7 +69,7 @@ let ``Parse multiline string literal`` () =
     | Result.Error err -> failwith $"Parse failed: {err}"
     | Result.Ok module' ->
         match module' with
-        | [Def (ValueDef(_, "msg", _, Kind (LiteralExpr (StringLit value))))] ->
+        | [Kind (Def (ValueDef(_, "msg", _, Kind (LiteralExpr (StringLit value)))))] ->
             value |> should equal "Hello\nworld"
         | _ -> failwith "Expected multiline string literal"
 
@@ -80,5 +80,5 @@ let ``Parse dotted def name`` () =
     | Result.Error err -> failwith $"Parse failed: {err}"
     | Result.Ok module' ->
         match module' with
-        | [Def (ValueDef(_, name, _, _))] -> name |> should equal "Person.fullName"
+        | [Kind (Def (ValueDef(_, name, _, _)))] -> name |> should equal "Person.fullName"
         | _ -> failwith "Expected dotted def name"

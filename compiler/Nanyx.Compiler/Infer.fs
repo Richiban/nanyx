@@ -1949,9 +1949,9 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
     let mutable preboundFreshVars: Map<string, Ty> = Map.empty
     for item in module' do
         match item with
-        | Def (TypeDef(name, modifiers, parameters, body)) ->
+        | Kind (Def (TypeDef(name, modifiers, parameters, body))) ->
             state <- registerTypeDef state name modifiers parameters body
-        | Def (ValueDef(isExport, name, typeOpt, value)) ->
+        | Kind (Def (ValueDef(isExport, name, typeOpt, value))) ->
             let symbol, declared = declareSymbol DefValue value.Id name TopLevelValue isExport state
             state <- declared
             let _, declaredTypeExprOpt = extractContextFromTypeExpr typeOpt
@@ -1970,7 +1970,7 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
         | _ -> ()
 
     for item in module' do
-        match item with
+        match item.Kind with
         | Def (ValueDef(isExport, name, typeOpt, expr)) when errors.IsEmpty ->
             let contextsExist =
                 match fst (extractContextFromTypeExpr typeOpt) with

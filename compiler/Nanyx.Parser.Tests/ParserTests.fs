@@ -15,7 +15,7 @@ let ``Parse string literal`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (LiteralExpr (StringLit value)))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (LiteralExpr (StringLit value))))) ->
             name |> should equal "message"
             value |> should equal "Hello world"
         | _ -> failwith "Expected Def with StringLit"
@@ -30,7 +30,7 @@ let ``Parse integer literal`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (LiteralExpr (IntLit value)))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (LiteralExpr (IntLit value))))) ->
             name |> should equal "count"
             value |> should equal 42
         | _ -> failwith "Expected Def with IntLit"
@@ -45,7 +45,7 @@ let ``Parse float literal`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (LiteralExpr (FloatLit value)))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (LiteralExpr (FloatLit value))))) ->
             name |> should equal "pi"
             value |> should equal 3.14159
         | _ -> failwith "Expected Def with FloatLit"
@@ -60,7 +60,7 @@ let ``Parse boolean true`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (LiteralExpr (BoolLit value)))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (LiteralExpr (BoolLit value))))) ->
             name |> should equal "flag"
             value |> should equal true
         | _ -> failwith "Expected Def with BoolLit"
@@ -75,7 +75,7 @@ let ``Parse boolean false`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (LiteralExpr (BoolLit value)))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (LiteralExpr (BoolLit value))))) ->
             name |> should equal "flag"
             value |> should equal false
         | _ -> failwith "Expected Def with BoolLit"
@@ -91,7 +91,7 @@ let ``Parse module declaration`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | ModuleDecl name ->
+        | Kind (ModuleDecl name) ->
             name |> should equal "Test"
         | _ -> failwith "Expected ModuleDecl"
     | Result.Error err -> failwith $"Parse should succeed, got: {err}"
@@ -106,10 +106,10 @@ let ``Parse module with definition`` () =
     | Result.Ok module' ->
         module' |> should haveLength 2
         match module'.[0] with
-        | ModuleDecl _ -> ()
+        | Kind (ModuleDecl _) -> ()
         | _ -> failwith "Expected ModuleDecl"
         match module'.[1] with
-        | Def _ -> ()
+        | Kind (Def _) -> ()
         | _ -> failwith "Expected Def"
     | Result.Error err -> failwith $"Parse should succeed, got: {err}"
 
@@ -128,19 +128,19 @@ let ``Parse ws-sensitive mid-file module block`` () =
     | Result.Ok module' ->
         module' |> should haveLength 5
         match module'.[0] with
-        | ModuleDecl "Root" -> ()
+        | Kind (ModuleDecl "Root") -> ()
         | _ -> failwith "Expected ModuleDecl Root"
         match module'.[1] with
-        | ModuleDecl "Root.Inner" -> ()
+        | Kind (ModuleDecl "Root.Inner") -> ()
         | _ -> failwith "Expected ModuleDecl Root.Inner"
         match module'.[2] with
-        | Def (TypeDef(name, _, _, _)) -> name |> should equal "Root.Inner.Person"
+        | Kind (Def (TypeDef(name, _, _, _))) -> name |> should equal "Root.Inner.Person"
         | _ -> failwith "Expected qualified type def"
         match module'.[3] with
-        | Def (ValueDef(_, name, _, _)) -> name |> should equal "Root.Inner.Person.toString"
+        | Kind (Def (ValueDef(_, name, _, _))) -> name |> should equal "Root.Inner.Person.toString"
         | _ -> failwith "Expected qualified attached def"
         match module'.[4] with
-        | Def (ValueDef(_, name, _, _)) -> name |> should equal "Root.Inner.value"
+        | Kind (Def (ValueDef(_, name, _, _))) -> name |> should equal "Root.Inner.value"
         | _ -> failwith "Expected qualified value def"
     | Result.Error err -> failwith $"Parse should succeed, got: {err}"
 
@@ -155,7 +155,7 @@ let ``Parse multiple definitions`` () =
         module' |> should haveLength 3
         for item in module' do
             match item with
-            | Def _ -> ()
+            | Kind (Def _) -> ()
             | _ -> failwith "Expected all Def"
     | Result.Error err -> failwith $"Parse should succeed, got: {err}"
 
@@ -169,7 +169,7 @@ let ``Parse definition with newline before equals`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (LiteralExpr (IntLit value)))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (LiteralExpr (IntLit value))))) ->
             name |> should equal "x"
             value |> should equal 1
         | _ -> failwith "Expected Def with IntLit"
@@ -185,7 +185,7 @@ let ``Parse typed definition with newline before equals`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, Some _, Kind (Lambda _))) ->
+        | Kind (Def (ValueDef (_, name, Some _, Kind (Lambda _)))) ->
             name |> should equal "f"
         | _ -> failwith "Expected typed Def with Lambda"
     | Result.Error err -> failwith $"Parse should succeed, got: {err}"
@@ -200,7 +200,7 @@ let ``Parse context-typed definition with newline before equals`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, Some _, Kind (Lambda _))) ->
+        | Kind (Def (ValueDef (_, name, Some _, Kind (Lambda _)))) ->
             name |> should equal "f"
         | _ -> failwith "Expected context-typed Def with Lambda"
     | Result.Error err -> failwith $"Parse should succeed, got: {err}"
@@ -215,7 +215,7 @@ let ``Parse identifier expression`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (IdentifierExpr value))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (IdentifierExpr value)))) ->
             name |> should equal "x"
             value |> should equal "someValue"
         | _ -> failwith "Expected Def with IdentifierExpr"
@@ -230,7 +230,7 @@ let ``Identifier can start with underscore`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, _)) ->
+        | Kind (Def (ValueDef (_, name, _, _))) ->
             name |> should equal "_private"
         | _ -> failwith "Expected Def"
     | Result.Error err -> failwith $"Parse should succeed, got: {err}"
@@ -244,7 +244,7 @@ let ``Identifier can contain digits`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, _)) ->
+        | Kind (Def (ValueDef (_, name, _, _))) ->
             name |> should equal "value123"
         | _ -> failwith "Expected Def"
     | Result.Error err -> failwith $"Parse should succeed, got: {err}"
@@ -259,7 +259,7 @@ let ``Parse simple member access`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (MemberAccess(Kind (IdentifierExpr objName), fieldName, _)))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (MemberAccess(Kind (IdentifierExpr objName), fieldName, _))))) ->
             name |> should equal "x"
             objName |> should equal "point"
             fieldName |> should equal "x"
@@ -275,7 +275,7 @@ let ``Parse nested member access`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (MemberAccess(Kind (MemberAccess(Kind (IdentifierExpr outer), inner, _)), value, _)))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (MemberAccess(Kind (MemberAccess(Kind (IdentifierExpr outer), inner, _)), value, _))))) ->
             name |> should equal "x"
             outer |> should equal "outer"
             inner |> should equal "inner"
@@ -292,7 +292,7 @@ let ``Parse member access in binary operation`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (BinaryOp("+", Kind (MemberAccess(Kind (IdentifierExpr p1), f1, _)), Kind (MemberAccess(Kind (IdentifierExpr p2), f2, _)))))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (BinaryOp("+", Kind (MemberAccess(Kind (IdentifierExpr p1), f1, _)), Kind (MemberAccess(Kind (IdentifierExpr p2), f2, _))))))) ->
             name |> should equal "sum"
             p1 |> should equal "point"
             f1 |> should equal "x"
@@ -407,7 +407,7 @@ def pi = 3.14"""
     | Result.Ok module' ->
         module' |> should haveLength 4
         match module'.[0] with
-        | ModuleDecl name -> name |> should equal "Test"
+        | Kind (ModuleDecl name) -> name |> should equal "Test"
         | _ -> failwith "Expected ModuleDecl"
     | Result.Error err ->
         failwith $"Parse failed: {err}"
@@ -422,7 +422,7 @@ let ``Parse function call with no arguments`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (FunctionCall (funcName, _, args)))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (FunctionCall (funcName, _, args))))) ->
             name |> should equal "x"
             funcName |> should equal "foo"
             args |> should haveLength 0
@@ -438,7 +438,7 @@ let ``Parse function call with one argument`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (FunctionCall (funcName, _, args)))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (FunctionCall (funcName, _, args))))) ->
             name |> should equal "x"
             funcName |> should equal "println"
             args |> should haveLength 1
@@ -457,7 +457,7 @@ let ``Parse function call with multiple arguments`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (FunctionCall (funcName, _, args)))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (FunctionCall (funcName, _, args))))) ->
             name |> should equal "result"
             funcName |> should equal "add"
             // With comma operator, f(x, y) creates a single tuple argument
@@ -479,7 +479,7 @@ let ``Parse function call with identifier argument`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (FunctionCall (funcName, _, args)))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (FunctionCall (funcName, _, args))))) ->
             name |> should equal "y"
             funcName |> should equal "foo"
             args |> should haveLength 1
@@ -498,7 +498,7 @@ let ``Parse nested function calls`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (FunctionCall (funcName, _, args)))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (FunctionCall (funcName, _, args))))) ->
             name |> should equal "x"
             funcName |> should equal "outer"
             args |> should haveLength 1
@@ -523,7 +523,7 @@ let ``Parse lambda with no parameters`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (Lambda (parameters, body)))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (Lambda (parameters, body))))) ->
             name |> should equal "f"
             parameters |> should haveLength 0
             match body.Kind with
@@ -541,7 +541,7 @@ let ``Parse lambda with one parameter`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (Lambda (parameters, body)))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (Lambda (parameters, body))))) ->
             name |> should equal "f"
             parameters |> should haveLength 1
             parameters.[0] |> fst |> should equal "x"
@@ -560,7 +560,7 @@ let ``Parse lambda with multiple parameters`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (Lambda (parameters, body)))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (Lambda (parameters, body))))) ->
             name |> should equal "add"
             parameters |> should haveLength 2
             parameters.[0] |> fst |> should equal "x"
@@ -577,7 +577,7 @@ let ``Parse lambda with function call in body`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (Lambda (parameters, body)))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (Lambda (parameters, body))))) ->
             name |> should equal "f"
             parameters |> should haveLength 1
             parameters.[0] |> fst |> should equal "x"
@@ -598,7 +598,7 @@ let ``Parse lambda as function argument`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (FunctionCall (funcName, _, args)))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (FunctionCall (funcName, _, args))))) ->
             name |> should equal "x"
             funcName |> should equal "map"
             // With comma operator, f(x, y) creates a single tuple argument
@@ -621,7 +621,7 @@ let ``Parse shorthand lambda with binary operator`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (Lambda (parameters, body)))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (Lambda (parameters, body))))) ->
             name |> should equal "multiply"
             parameters |> should haveLength 2
             parameters.[0] |> fst |> should equal "x"
@@ -644,7 +644,7 @@ let ``Parse shorthand lambda with unary operation`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (Lambda (parameters, body)))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (Lambda (parameters, body))))) ->
             name |> should equal "double"
             parameters |> should haveLength 1
             parameters.[0] |> fst |> should equal "x"
@@ -666,7 +666,7 @@ let ``Parse shorthand lambda with property access`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (Lambda (parameters, body)))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (Lambda (parameters, body))))) ->
             name |> should equal "getName"
             parameters |> should haveLength 1
             parameters.[0] |> fst |> should equal "x"
@@ -687,7 +687,7 @@ let ``Parse shorthand lambda with addition`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (Lambda (parameters, body)))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (Lambda (parameters, body))))) ->
             name |> should equal "addFive"
             parameters |> should haveLength 1
             parameters.[0] |> fst |> should equal "x"
@@ -709,7 +709,7 @@ let ``Parse shorthand lambda as function argument`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (FunctionCall (funcName, _, args)))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (FunctionCall (funcName, _, args))))) ->
             name |> should equal "doubled"
             funcName |> should equal "map"
             // With comma operator, f(x, y) creates a single tuple argument
@@ -738,7 +738,7 @@ let ``Parse simple pipe`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (Pipe (expr, funcName, _, args)))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (Pipe (expr, funcName, _, args))))) ->
             name |> should equal "result"
             match expr.Kind with
             | IdentifierExpr id -> id |> should equal "x"
@@ -757,7 +757,7 @@ let ``Parse pipe with arguments`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (Pipe (expr, funcName, _, args)))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (Pipe (expr, funcName, _, args))))) ->
             name |> should equal "result"
             match expr.Kind with
             | IdentifierExpr id -> id |> should equal "x"
@@ -782,7 +782,7 @@ let ``Parse chained pipes`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (Pipe (Kind (Pipe (Kind (Pipe (expr, f, _, _)), g, _, _)), h, _, _)))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (Pipe (Kind (Pipe (Kind (Pipe (expr, f, _, _)), g, _, _)), h, _, _))))) ->
             name |> should equal "result"
             match expr.Kind with
             | IdentifierExpr id -> id |> should equal "x"
@@ -802,7 +802,7 @@ let ``Parse pipe with literal`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (Pipe (expr, funcName, _, args)))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (Pipe (expr, funcName, _, args))))) ->
             name |> should equal "result"
             match expr.Kind with
             | LiteralExpr (IntLit n) -> n |> should equal 5
@@ -821,7 +821,7 @@ let ``Parse pipe with lambda argument`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (Pipe (expr, funcName, _, args)))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (Pipe (expr, funcName, _, args))))) ->
             name |> should equal "result"
             match expr.Kind with
             | IdentifierExpr id -> id |> should equal "items"
@@ -846,7 +846,7 @@ let ``Parse addition`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (BinaryOp (op, left, right)))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (BinaryOp (op, left, right))))) ->
             name |> should equal "sum"
             op |> should equal "+"
             match left.Kind, right.Kind with
@@ -865,7 +865,7 @@ let ``Parse multiplication`` () =
     match result with
     | Result.Ok module' ->
         match module'.[0] with
-        | Def (ValueDef (_, _, _, Kind (BinaryOp (op, _, _)))) ->
+        | Kind (Def (ValueDef (_, _, _, Kind (BinaryOp (op, _, _))))) ->
             op |> should equal "*"
         | _ -> failwith "Expected Def with BinaryOp"
     | Result.Error err -> failwith $"Parse should succeed, got: {err}"
@@ -878,7 +878,7 @@ let ``Parse operator precedence - multiplication before addition`` () =
     match result with
     | Result.Ok module' ->
         match module'.[0] with
-        | Def (ValueDef (_, _, _, Kind (BinaryOp ("+", Kind (LiteralExpr (IntLit 1)), Kind (BinaryOp ("*", Kind (LiteralExpr (IntLit 2)), Kind (LiteralExpr (IntLit 3)))))))) ->
+        | Kind (Def (ValueDef (_, _, _, Kind (BinaryOp ("+", Kind (LiteralExpr (IntLit 1)), Kind (BinaryOp ("*", Kind (LiteralExpr (IntLit 2)), Kind (LiteralExpr (IntLit 3))))))))) ->
             () // Correct precedence: 1 + (2 * 3)
         | _ -> failwith "Expected correct precedence: 1 + (2 * 3)"
     | Result.Error err -> failwith $"Parse should succeed, got: {err}"
@@ -891,7 +891,7 @@ let ``Parse parenthesized expression`` () =
     match result with
     | Result.Ok module' ->
         match module'.[0] with
-        | Def (ValueDef (_, _, _, Kind (BinaryOp ("*", Kind (BinaryOp ("+", Kind (LiteralExpr (IntLit 1)), Kind (LiteralExpr (IntLit 2)))), Kind (LiteralExpr (IntLit 3)))))) ->
+        | Kind (Def (ValueDef (_, _, _, Kind (BinaryOp ("*", Kind (BinaryOp ("+", Kind (LiteralExpr (IntLit 1)), Kind (LiteralExpr (IntLit 2)))), Kind (LiteralExpr (IntLit 3))))))) ->
             () // Correct: (1 + 2) * 3
         | _ -> failwith "Expected correct precedence: (1 + 2) * 3"
     | Result.Error err -> failwith $"Parse should succeed, got: {err}"
@@ -904,7 +904,7 @@ let ``Parse comparison operators`` () =
     match result with
     | Result.Ok module' ->
         match module'.[0] with
-        | Def (ValueDef (_, _, _, Kind (BinaryOp (">", Kind (LiteralExpr (IntLit 5)), Kind (LiteralExpr (IntLit 3)))))) ->
+        | Kind (Def (ValueDef (_, _, _, Kind (BinaryOp (">", Kind (LiteralExpr (IntLit 5)), Kind (LiteralExpr (IntLit 3))))))) ->
             ()
         | _ -> failwith "Expected comparison operator"
     | Result.Error err -> failwith $"Parse should succeed, got: {err}"
@@ -917,7 +917,7 @@ let ``Parse equality operators`` () =
     match result with
     | Result.Ok module' ->
         match module'.[0] with
-        | Def (ValueDef (_, _, _, Kind (BinaryOp ("==", Kind (IdentifierExpr "a"), Kind (IdentifierExpr "b"))))) ->
+        | Kind (Def (ValueDef (_, _, _, Kind (BinaryOp ("==", Kind (IdentifierExpr "a"), Kind (IdentifierExpr "b")))))) ->
             ()
         | _ -> failwith "Expected equality operator"
     | Result.Error err -> failwith $"Parse should succeed, got: {err}"
@@ -932,7 +932,7 @@ let ``Parse literals.nyx file`` () =
     | Result.Ok module' ->
         module' |> should haveLength 6  // 1 module + 5 defs
         match module'.[0] with
-        | ModuleDecl name -> name |> should equal "Literals"
+        | Kind (ModuleDecl name) -> name |> should equal "Literals"
         | _ -> failwith "Expected ModuleDecl"
         
         // Check that we have string, int, float, and bool literals
@@ -949,14 +949,14 @@ let ``Parse function-calls.nyx file`` () =
     | Result.Ok module' ->
         module' |> should haveLength 7  // 1 module + 6 function call defs
         match module'.[0] with
-        | ModuleDecl name -> name |> should equal "FunctionCalls"
+        | Kind (ModuleDecl name) -> name |> should equal "FunctionCalls"
         | _ -> failwith "Expected ModuleDecl"
         
         // Verify all are function calls
         let defs = module' |> List.tail
         for def in defs do
             match def with
-            | Def (ValueDef (_, _, _, Kind (FunctionCall _))) -> ()
+            | Kind (Def (ValueDef (_, _, _, Kind (FunctionCall _)))) -> ()
             | _ -> failwith "Expected all definitions to contain function calls"
     | Result.Error err -> failwith $"Parse failed: {err}"
 
@@ -969,14 +969,14 @@ let ``Parse lambdas.nyx file`` () =
     | Result.Ok module' ->
         module' |> should haveLength 7  // 1 module + 6 lambda defs
         match module'.[0] with
-        | ModuleDecl name -> name |> should equal "Lambdas"
+        | Kind (ModuleDecl name) -> name |> should equal "Lambdas"
         | _ -> failwith "Expected ModuleDecl"
         
         // Verify all are lambdas
         let defs = module' |> List.tail
         for def in defs do
             match def with
-            | Def (ValueDef (_, _, _, Kind (Lambda _))) -> ()
+            | Kind (Def (ValueDef (_, _, _, Kind (Lambda _)))) -> ()
             | _ -> failwith "Expected all definitions to contain lambdas"
     | Result.Error err -> failwith $"Parse failed: {err}"
 
@@ -989,15 +989,15 @@ let ``Parse shorthand-lambdas.nyx file`` () =
     | Result.Ok module' ->
         module' |> should haveLength 15  // 1 module + 14 shorthand lambda defs
         match module'.[0] with
-        | ModuleDecl name -> name |> should equal "ShorthandLambdas"
+        | Kind (ModuleDecl name) -> name |> should equal "ShorthandLambdas"
         | _ -> failwith "Expected ModuleDecl"
         
         // Verify all are lambdas (some within function calls)
         let defs = module' |> List.tail
         for def in defs do
             match def with
-            | Def (ValueDef (_, _, _, Kind (Lambda _))) -> ()
-            | Def (ValueDef (_, _, _, Kind (FunctionCall (_, _, args)))) ->
+            | Kind (Def (ValueDef (_, _, _, Kind (Lambda _)))) -> ()
+            | Kind (Def (ValueDef (_, _, _, Kind (FunctionCall (_, _, args))))) ->
                 // With comma operator, args may be wrapped in TupleExpr
                 let rec hasLambda arg = 
                     match arg.Kind with
@@ -1018,13 +1018,13 @@ let ``Parse binary-operators.nyx file`` () =
     | Result.Ok module' ->
         module' |> List.length |> should be (greaterThan 10)
         match module'.[0] with
-        | ModuleDecl name -> name |> should equal "BinaryOperators"
+        | Kind (ModuleDecl name) -> name |> should equal "BinaryOperators"
         | _ -> failwith "Expected ModuleDecl"
         
         // Check for specific operators
-        let hasBinaryOp op module' =
+        let hasBinaryOp op (module': Module) =
             module' |> List.exists (fun item ->
-                match item with
+                match item.Kind with
                 | Def (ValueDef (_, _, _, Kind (BinaryOp (operator, _, _)))) -> operator = op
                 | _ -> false
             )
@@ -1046,13 +1046,13 @@ let ``Parse piping.nyx file`` () =
     | Result.Ok module' ->
         module' |> List.length |> should be (greaterThan 5)
         match module'.[0] with
-        | ModuleDecl name -> name |> should equal "Piping"
+        | Kind (ModuleDecl name) -> name |> should equal "Piping"
         | _ -> failwith "Expected ModuleDecl"
         
         // Verify we have some pipe expressions
         let hasPipe = module' |> List.exists (fun item ->
             match item with
-            | Def (ValueDef (_, _, _, Kind (Pipe _))) -> true
+            | Kind (Def (ValueDef (_, _, _, Kind (Pipe _)))) -> true
             | _ -> false
         )
         hasPipe |> should equal true
@@ -1067,7 +1067,7 @@ let ``Parse block with two literals`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (Block statements))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (Block statements)))) ->
             name |> should equal "test"
             statements |> should haveLength 2
             match statements.[0] with
@@ -1088,25 +1088,25 @@ let ``Parse comprehensive.nyx file`` () =
     | Result.Ok module' ->
         module' |> List.length |> should be (greaterThan 5)
         match module'.[0] with
-        | ModuleDecl name -> name |> should equal "Comprehensive"
+        | Kind (ModuleDecl name) -> name |> should equal "Comprehensive"
         | _ -> failwith "Expected ModuleDecl"
         
         // Should have a mix of literals, function calls, lambdas, and binary ops
         let hasLiteral = module' |> List.exists (fun item ->
             match item with
-            | Def (ValueDef (_, _, _, Kind (LiteralExpr _))) -> true
+            | Kind (Def (ValueDef (_, _, _, Kind (LiteralExpr _)))) -> true
             | _ -> false
         )
         
         let hasFunctionCall = module' |> List.exists (fun item ->
             match item with
-            | Def (ValueDef (_, _, _, Kind (FunctionCall _))) -> true
+            | Kind (Def (ValueDef (_, _, _, Kind (FunctionCall _)))) -> true
             | _ -> false
         )
         
         let hasLambda = module' |> List.exists (fun item ->
             match item with
-            | Def (ValueDef (_, _, _, Kind (Lambda _))) -> true
+            | Kind (Def (ValueDef (_, _, _, Kind (Lambda _)))) -> true
             | _ -> false
         )
         

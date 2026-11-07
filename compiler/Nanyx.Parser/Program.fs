@@ -167,6 +167,39 @@ and StatementKind =
     | UseStatement of UseBinding
     | ExprStatement of Expression
 
+and Definition =
+    | ValueDef of bool * Identifier * TypeExpr option * Expression
+    | TypeDef of Identifier * TypeDefModifier list * (Identifier * TypeExpr option) list * TypeExpr
+
+/// An item at the top level of a module and where it came from. Like Expression, equality and comparison look only
+/// at Kind, and it is printed (%A) as its kind alone. Like Pattern, it is declared before Expression.
+and [<CustomEquality; CustomComparison; StructuredFormatDisplay("{Kind}")>] TopLevelItem =
+    { Kind: TopLevelItemKind
+      Span: SourceSpan
+      Id: NodeId }
+
+    override this.Equals(other) =
+        match other with
+        | :? TopLevelItem as item -> this.Kind = item.Kind
+        | _ -> false
+
+    override this.GetHashCode() = hash this.Kind
+
+    interface IComparable with
+        member this.CompareTo(other) =
+            match other with
+            | :? TopLevelItem as item -> compare this.Kind item.Kind
+            | _ -> invalidArg "other" "a TopLevelItem can only be compared with another TopLevelItem"
+
+and TopLevelItemKind =
+    | ModuleDecl of ModuleName
+    | ModuleBlock of ModuleName * TopLevelItem list
+    | Def of Definition
+    | Import of ImportItem list
+    | Expr of Expression
+    /// An `@name` attribute line; it applies to the top-level item that follows it (e.g. `@entry`).
+    | Attribute of Identifier
+
 /// An expression and where it came from. Equality and comparison look only at `Kind`, leaving out the name spans
 /// some kinds carry: two expressions are the same when they are the same code, wherever it was written. It is
 /// printed (`%A`) as its kind alone.
@@ -241,22 +274,11 @@ type ListPatternElement =
     | RegularPattern of Pattern
     | Splat of (Identifier * SourceSpan) option
 
-type Definition =
-    | ValueDef of bool * Identifier * TypeExpr option * Expression
-    | TypeDef of Identifier * TypeDefModifier list * (Identifier * TypeExpr option) list * TypeExpr
-
-type TopLevelItem =
-    | ModuleDecl of ModuleName
-    | ModuleBlock of ModuleName * TopLevelItem list
-    | Def of Definition
-    | Import of ImportItem list
-    | Expr of Expression
-    /// An `@name` attribute line; it applies to the top-level item that follows it (e.g. `@entry`).
-    | Attribute of Identifier
 
 type Module = TopLevelItem list
 
-/// Matches a node (an expression, a pattern, a statement or a type expression) by its kind inside a larger pattern:
+/// Matches a node (an expression, a pattern, a statement, a type expression or a top-level item) by its kind inside
+/// a larger pattern:
 /// `FunctionCall(_, _, [ Kind (IdentifierExpr name) ])`, `TagPattern(_, Some (Kind (IdentifierPattern name)))`.
 let inline (|Kind|) (node: ^Node) = (^Node: (member Kind: ^Kind) node)
 
@@ -317,6 +339,14 @@ let pipeCallArguments (value: Expression) (args: Expression list) : Expression l
         // The record keeps its node, so every phase that rebuilds this call agrees on it.
         [ { record with Kind = RecordExpr spliced } ]
     | _ -> value :: args
+
+module TopLevelItem =
+    /// A top-level item written at `span`.
+    let at (span: SourceSpan) (kind: TopLevelItemKind) : TopLevelItem =
+        { TopLevelItem.Kind = kind; Span = span; Id = NodeId.next () }
+
+    /// A top-level item the compiler made up that has no source of its own.
+    let synthetic (kind: TopLevelItemKind) = at SourceSpan.none kind
 
 /// How a node declares names. One node can declare in more than one way: `def f = { x -> x }` declares `f` by
 /// the lambda as a def's value, and `x` by the lambda's parameters.
@@ -1960,9 +1990,13 @@ do
         spannedStatement (attempt importStatement <|> attempt typeDefStatement <|> attempt defStatement <|> attempt recStatement <|> attempt useStatement <|> exprStatement)
         <?> "statement"
 
+/// Runs `p` and makes what it built a top-level item spanning the text it consumed.
+let private spannedItem (p: Parser<TopLevelItemKind, ParseState>) : Parser<TopLevelItem, ParseState> =
+    withSpan p |>> fun (kind, span) -> TopLevelItem.at span kind
+
 // Parser for module declaration
 let moduleDecl: Parser<TopLevelItem, ParseState> =
-    pstring "module" >>. ws >>. identifier |>> ModuleDecl
+    spannedItem (pstring "module" >>. ws >>. identifier |>> ModuleDecl)
     <?> "module declaration"
 
 let private valueDefExprParser =
@@ -1971,37 +2005,43 @@ let private valueDefExprParser =
 // Parser for value definition (top-level)
 let valueDef: Parser<TopLevelItem, ParseState> =
     getPosition >>= fun lineStart ->
-        pipe2
-            (opt (attempt (pstring "export" >>. ws)))
-            (parseDefWith lineStart.Column typedQualifiedIdentifier valueDefExprParser)
-            (fun exportOpt (name, typeOpt, expr) -> Def(ValueDef(exportOpt.IsSome, name, typeOpt, expr)))
+        spannedItem (
+            pipe2
+                (opt (attempt (pstring "export" >>. ws)))
+                (parseDefWith lineStart.Column typedQualifiedIdentifier valueDefExprParser)
+                (fun exportOpt (name, typeOpt, expr) -> Def(ValueDef(exportOpt.IsSome, name, typeOpt, expr))))
     <?> "value definition"
 
-// Top-level `def (x, y) = ...`, as the defs it desugars into (see `destructuringBindings`).
+// Top-level `def (x, y) = ...`, as the defs it desugars into (see `destructuringBindings`). Each spans the whole
+// `def (...) = value`.
 let valueDestructuringDef: Parser<TopLevelItem list, ParseState> =
     getPosition >>= fun lineStart ->
-        destructuringDefWith lineStart.Column valueDefExprParser
-        |>> fun (isExport, bindings) ->
-            bindings |> List.mapi (fun index (name, value) -> Def(ValueDef(isExport && index > 0, name, None, value)))
+        withSpan (destructuringDefWith lineStart.Column valueDefExprParser)
+        |>> fun ((isExport, bindings), span) ->
+            let span = match List.tryHead bindings with Some (_, value) -> endingAt value.Span span | None -> span
+            bindings |> List.mapi (fun index (name, value) -> TopLevelItem.at span (Def(ValueDef(isExport && index > 0, name, None, value))))
     <?> "value definition"
 
 // Parser for type definition (top-level)
 let typeDef: Parser<TopLevelItem, ParseState> =
-    typeDefCore |>> Def
+    spannedItem (typeDefCore |>> Def)
 
 // Parser for top-level expressions (script-style)
 let topLevelExpr: Parser<TopLevelItem, ParseState> =
-    exprWithoutCrossingNewlines |>> Expr
+    spannedItem (exprWithoutCrossingNewlines |>> Expr)
     <?> "top-level expression"
 
 // Parser for an attribute line such as `@entry`; it annotates the next top-level item
 let attributeItem: Parser<TopLevelItem, ParseState> =
-    pchar '@' >>. identifierNoWs |>> Attribute
+    spannedItem (pchar '@' >>. identifierNoWs |>> Attribute)
     <?> "attribute"
+
+let private importLine: Parser<TopLevelItem, ParseState> =
+    spannedItem (attempt (pstring "import" >>. wsNoNl() >>. importItems) |>> Import)
 
 let private moduleBlockItem: Parser<TopLevelItem, ParseState> =
     choice [
-        (attempt (pstring "import" >>. wsNoNl() >>. importItems) |>> Import)
+        importLine
         attributeItem
         attempt typeDef
         valueDef
@@ -2019,7 +2059,8 @@ let moduleBlockDecl: Parser<TopLevelItem, ParseState> =
     let lineAtIndent indent =
         attempt (manyMinMaxSatisfy indent indent (fun c -> c = ' ' || c = '\t') >>. linePayload)
 
-    // The block's text is noted, since what it does not export can only be named inside it.
+    // The block's text is noted, since what it does not export can only be named inside it. The block itself ends
+    // where its last item does, not at a comment after it.
     withSpan (attempt (
         (pstring "module" >>. ws >>. identifierNoWs .>> wsNoNl() .>> pstring "=") >>= fun name ->
             skipMany (skipAnyOf " \t") >>. newline >>.
@@ -2029,20 +2070,17 @@ let moduleBlockDecl: Parser<TopLevelItem, ParseState> =
                     pipe2
                         linePayload
                         (many (attempt (newline >>. lineAtIndent indent)))
-                        (fun first rest ->
-                            let items = first :: rest |> List.choose id
-                            match items with
-                            | [] -> ModuleBlock(name, [])
-                            | _ -> ModuleBlock(name, items))
-                    >>= fun block ->
-                        match block with
-                        | ModuleBlock(_, items) when items.IsEmpty -> pzero
-                        | _ -> preturn block
+                        (fun first rest -> name, first :: rest |> List.choose id)
+                    >>= fun (name, items) -> if items.IsEmpty then pzero else preturn (ModuleBlock(name, items))
                 else
                     pzero
     ))
-    >>= fun (block, span) ->
-        match block with
+    >>= fun (kind, span) ->
+        let block =
+            match kind with
+            | ModuleBlock(_, items) -> TopLevelItem.at (endingAt (List.last items).Span span) kind
+            | _ -> TopLevelItem.at span kind
+        match kind with
         | ModuleBlock(name, _) ->
             updateUserState (fun state -> { state with ModuleBlocks = state.ModuleBlocks @ [ name, span ] }) >>% block
         | _ -> preturn block
@@ -2053,7 +2091,7 @@ let topLevelItem: Parser<TopLevelItem, ParseState> =
     ws >>. choice [
         attempt moduleBlockDecl
         moduleDecl
-        (attempt (pstring "import" >>. wsNoNl() >>. importItems) |>> Import)
+        importLine
         attributeItem
         attempt typeDef
         valueDef
@@ -2180,7 +2218,7 @@ let rec private expandModuleBlock (prefix: string) (items: TopLevelItem list) : 
     let localTypeNames =
         items
         |> List.choose (function
-            | Def (TypeDef(name, _, _, _)) when not (name.Contains(".")) -> Some name
+            | Kind (Def (TypeDef(name, _, _, _))) when not (name.Contains(".")) -> Some name
             | _ -> None)
         |> Set.ofList
 
@@ -2192,7 +2230,7 @@ let rec private expandModuleBlock (prefix: string) (items: TopLevelItem list) : 
     let localValueNames =
         items
         |> List.choose (function
-            | Def (ValueDef(_, name, _, _)) when not (name.Contains(".")) -> Some name
+            | Kind (Def (ValueDef(_, name, _, _))) when not (name.Contains(".")) -> Some name
             | _ -> None)
         |> Set.ofList
 
@@ -2219,33 +2257,35 @@ let rec private expandModuleBlock (prefix: string) (items: TopLevelItem list) : 
 
     items
     |> List.collect (fun item ->
-        match item with
+        let keep kind = [ { item with Kind = kind } ]
+        match item.Kind with
         | ModuleDecl _ -> []
         | ModuleBlock(name, nested) ->
+            // The nested block becomes a module declaration, written where the block was.
             let nestedPrefix = qualifyModuleName prefix name
-            ModuleDecl nestedPrefix :: expandModuleBlock nestedPrefix nested
-        | Import imports -> [ Import imports ]
-        | Attribute name -> [ Attribute name ]
-        | Expr expr -> [ Expr (rewriteExpressionInModule valueMap typeMap expr) ]
+            TopLevelItem.at item.Span (ModuleDecl nestedPrefix) :: expandModuleBlock nestedPrefix nested
+        | Import _
+        | Attribute _ -> [ item ]
+        | Expr expr -> keep (Expr (rewriteExpressionInModule valueMap typeMap expr))
         | Def (ValueDef(isExport, name, typeOpt, expr)) ->
-            [ Def (ValueDef(isExport, qualifyDefName name, typeOpt |> Option.map rewriteType, rewriteExpressionInModule valueMap typeMap expr)) ]
+            keep (Def (ValueDef(isExport, qualifyDefName name, typeOpt |> Option.map rewriteType, rewriteExpressionInModule valueMap typeMap expr)))
         | Def (TypeDef(name, modifiers, typeParams, body)) ->
             let mappedTypeParams = typeParams |> List.map (fun (paramName, paramTypeOpt) -> paramName, paramTypeOpt |> Option.map rewriteType)
-            [ Def (TypeDef(qualifyTypeName name, modifiers, mappedTypeParams, rewriteType body)) ])
+            keep (Def (TypeDef(qualifyTypeName name, modifiers, mappedTypeParams, rewriteType body))))
 
 let private expandMidFileModules (items: TopLevelItem list) : TopLevelItem list =
     let rec loop (currentModule: string option) (remaining: TopLevelItem list) (acc: TopLevelItem list) =
         match remaining with
         | [] -> List.rev acc
         | item :: rest ->
-            match item with
+            match item.Kind with
             | ModuleDecl name -> loop (Some name) rest (item :: acc)
             | ModuleBlock(name, innerItems) ->
                 let prefix =
                     match currentModule with
                     | Some root when not (String.IsNullOrWhiteSpace root) -> qualifyModuleName root name
                     | _ -> name
-                let expanded = ModuleDecl prefix :: expandModuleBlock prefix innerItems
+                let expanded = TopLevelItem.at item.Span (ModuleDecl prefix) :: expandModuleBlock prefix innerItems
                 loop currentModule rest ((List.rev expanded) @ acc)
             | _ -> loop currentModule rest (item :: acc)
     loop None items []

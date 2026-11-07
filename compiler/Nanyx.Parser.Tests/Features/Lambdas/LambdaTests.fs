@@ -14,13 +14,13 @@ let ``Parse lambdas.nyx file`` () =
     | Result.Ok module' ->
         module' |> should haveLength 7  // 1 module + 6 lambda defs
         match module'.[0] with
-        | ModuleDecl name -> name |> should equal "Lambdas"
+        | Kind (ModuleDecl name) -> name |> should equal "Lambdas"
         | _ -> failwith "Expected ModuleDecl"
 
         let defs = module' |> List.tail
         for def in defs do
             match def with
-            | Def (ValueDef (_, _, _, Kind (Lambda _))) -> ()
+            | Kind (Def (ValueDef (_, _, _, Kind (Lambda _)))) -> ()
             | _ -> failwith "Expected all definitions to contain lambdas"
     | Result.Error err -> failwith $"Parse failed: {err}"
 
@@ -33,14 +33,14 @@ let ``Parse shorthand-lambdas.nyx file`` () =
     | Result.Ok module' ->
         module' |> should haveLength 15  // 1 module + 14 shorthand lambda defs
         match module'.[0] with
-        | ModuleDecl name -> name |> should equal "ShorthandLambdas"
+        | Kind (ModuleDecl name) -> name |> should equal "ShorthandLambdas"
         | _ -> failwith "Expected ModuleDecl"
 
         let defs = module' |> List.tail
         for def in defs do
             match def with
-            | Def (ValueDef (_, _, _, Kind (Lambda _))) -> ()
-            | Def (ValueDef (_, _, _, Kind (FunctionCall (_, _, args)))) ->
+            | Kind (Def (ValueDef (_, _, _, Kind (Lambda _)))) -> ()
+            | Kind (Def (ValueDef (_, _, _, Kind (FunctionCall (_, _, args))))) ->
                 let rec hasLambda (arg: Expression) =
                     match arg.Kind with
                     | Lambda _ -> true
@@ -54,6 +54,6 @@ let ``Parse shorthand-lambdas.nyx file`` () =
 [<Fact>]
 let ``an empty block is a lambda returning unit`` () =
     match parseModule "def main = {\n}\ndef noop = { }" with
-    | Result.Ok [ Def (ValueDef (_, "main", None, Kind (Lambda ([], Kind UnitExpr)))); Def (ValueDef (_, "noop", None, Kind (Lambda ([], Kind UnitExpr)))) ] -> ()
+    | Result.Ok [ Kind (Def (ValueDef (_, "main", None, Kind (Lambda ([], Kind UnitExpr))))); Kind (Def (ValueDef (_, "noop", None, Kind (Lambda ([], Kind UnitExpr))))) ] -> ()
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
     | Result.Error err -> failwith $"Parse failed: {err}"

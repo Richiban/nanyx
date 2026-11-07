@@ -3012,7 +3012,7 @@ module private LambdaLifting =
         let topLevelFunctions =
             module'
             |> List.choose (function
-                | Def (ValueDef(_, name, _, Kind (Lambda(args, _)))) when not args.IsEmpty -> Some (name, args.Length)
+                | Kind (Def (ValueDef(_, name, _, Kind (Lambda(args, _))))) when not args.IsEmpty -> Some (name, args.Length)
                 | _ -> None)
             |> Map.ofList
 
@@ -3021,7 +3021,7 @@ module private LambdaLifting =
         let recordTypes =
             module'
             |> List.choose (function
-                | Def (TypeDef(name, _, parameters, Kind (TypeRecord fields))) ->
+                | Kind (Def (TypeDef(name, _, parameters, Kind (TypeRecord fields)))) ->
                     let members =
                         fields
                         |> List.choose (function
@@ -3058,7 +3058,7 @@ module private LambdaLifting =
                 let wrapperName = $"__fn_{sanitizeIdentifier name}"
                 let parameters = [ for index in 1 .. topLevelFunctions.[name] -> $"__arg{index}" ]
                 let call = Expression.synthetic (FunctionCall(name, None, [ Expression.synthetic (TupleExpr (parameters |> List.map (fun p -> Expression.synthetic (IdentifierExpr p)))) ]))
-                lifted.Add(Def (ValueDef(false, wrapperName, None, Expression.synthetic (Lambda((envParameter, None) :: (parameters |> List.map (fun p -> p, None)), call)))))
+                lifted.Add(TopLevelItem.synthetic (Def (ValueDef(false, wrapperName, None, Expression.synthetic (Lambda((envParameter, None) :: (parameters |> List.map (fun p -> p, None)), call))))))
                 wrappers.[name] <- wrapperName
                 wrapperName
 
@@ -3140,7 +3140,7 @@ module private LambdaLifting =
                             Set.difference (referencedNames liftedBody |> Set.ofList) (innerScope |> Set.add liftedName |> Set.add envParameter)
                             |> Set.intersect scope
                             |> Set.toList
-                        lifted.Add(Def (ValueDef(false, liftedName, None, liftedLambda lambda args captured liftedBody)))
+                        lifted.Add(TopLevelItem.synthetic (Def (ValueDef(false, liftedName, None, liftedLambda lambda args captured liftedBody))))
                         origins.[liftedName] <- { Owner = owner; LocalName = Some name; Captured = captured; Source = None }
                         [ keep (DefStatement(isExport, name, None, closureOf lambda liftedName captured)) ]
                     | DefStatement(isExport, name, typeOpt, Kind (FunctionCall("__rec", _, [ rhs ]))) ->
@@ -3223,24 +3223,24 @@ module private LambdaLifting =
                 |> Set.toList
             let name = $"__lambda_{counter}"
             counter <- counter + 1
-            lifted.Add(Def (ValueDef(false, name, None, liftedLambda lambda args captured liftedBody)))
+            lifted.Add(TopLevelItem.synthetic (Def (ValueDef(false, name, None, liftedLambda lambda args captured liftedBody))))
             origins.[name] <- { Owner = owner; LocalName = None; Captured = captured; Source = Some lambda }
             closureOf lambda name captured
 
         let liftItem (item: TopLevelItem) : TopLevelItem =
-            match item with
+            match item.Kind with
             // A definition's own lambda is the function being defined; lift inside its body only.
             | Def (ValueDef(isExport, name, typeOpt, (Kind (Lambda(args, body)) as lambda))) ->
                 owner <- name
                 let scope = Set.union (args |> List.map fst |> Set.ofList) (boundNames body |> Set.ofList)
-                Def (ValueDef(isExport, name, typeOpt, { lambda with Kind = Lambda(args, liftExpr scope body) }))
+                { item with Kind = Def (ValueDef(isExport, name, typeOpt, { lambda with Kind = Lambda(args, liftExpr scope body) })) }
             | Def (ValueDef(isExport, name, typeOpt, rhs)) ->
                 owner <- name
-                Def (ValueDef(isExport, name, typeOpt, liftExpr (boundNames rhs |> Set.ofList) rhs))
+                { item with Kind = Def (ValueDef(isExport, name, typeOpt, liftExpr (boundNames rhs |> Set.ofList) rhs)) }
             | Expr expr ->
                 owner <- ""
-                Expr (liftExpr (boundNames expr |> Set.ofList) expr)
-            | other -> other
+                { item with Kind = Expr (liftExpr (boundNames expr |> Set.ofList) expr) }
+            | _ -> item
 
         let items = module' |> List.map liftItem
 
@@ -3253,11 +3253,11 @@ module private LambdaLifting =
             | Some (Kind (TypeContext _)) -> true
             | _ -> false
         let defTypes =
-            module' |> List.choose (function Def (ValueDef(_, name, typeOpt, _)) -> Some (name, typeOpt) | _ -> None) |> Map.ofList
+            module' |> List.choose (function Kind (Def (ValueDef(_, name, typeOpt, _))) -> Some (name, typeOpt) | _ -> None) |> Map.ofList
         if defTypes |> Map.exists (fun _ typeOpt -> takesContexts typeOpt) then
             module'
             |> List.collect (function
-                | Def (TypeDef(_, modifiers, _, Kind (TypeRecord fields))) when modifiers |> List.contains Context ->
+                | Kind (Def (TypeDef(_, modifiers, _, Kind (TypeRecord fields)))) when modifiers |> List.contains Context ->
                     fields |> List.map (function TypeField(fieldName, _, _, _, _) | TypeMember(fieldName, _) -> fieldName)
                 | _ -> [])
             |> List.distinct
@@ -3279,7 +3279,7 @@ let private extractTypeLayouts (module': Module) : Map<string, string list> * Ma
     let results =
         module'
         |> List.choose (function
-            | Def (TypeDef(name, _, _, Kind (TypeRecord fields))) ->
+            | Kind (Def (TypeDef(name, _, _, Kind (TypeRecord fields)))) ->
                 let fieldInfo =
                     fields
                     |> List.choose (function
@@ -3336,13 +3336,13 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
     let defs =
         module'
         |> List.choose (function
-            | Def (ValueDef(_, name, typeOpt, expr)) -> Some(name, typeOpt, expr)
+            | Kind (Def (ValueDef(_, name, typeOpt, expr))) -> Some(name, typeOpt, expr)
             | _ -> None)
 
     let topLevelExprs =
         module'
         |> List.choose (function
-            | Expr expr -> Some expr
+            | Kind (Expr expr) -> Some expr
             | _ -> None)
 
     let typeLayouts, typeFieldTypes = extractTypeLayouts module'
@@ -3403,7 +3403,7 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
         let contextMemberNames =
             module'
             |> List.collect (function
-                | Def (TypeDef(_, modifiers, _, Kind (TypeRecord fields))) when modifiers |> List.contains Context ->
+                | Kind (Def (TypeDef(_, modifiers, _, Kind (TypeRecord fields)))) when modifiers |> List.contains Context ->
                     fields |> List.map (function TypeField(fieldName, _, _, _, _) | TypeMember(fieldName, _) -> fieldName)
                 | _ -> [])
         if functionContextRequirements.IsEmpty then Map.empty

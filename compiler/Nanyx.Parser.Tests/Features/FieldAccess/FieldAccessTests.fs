@@ -8,8 +8,8 @@ open ParserTestHelpers
 [<Fact>]
 let ``a member of a call's result is a member access, while C(T).f is a context access`` () =
     match parseModule "def a = openFile(path).contents\ndef b = ToString(a).toString(x)" with
-    | Result.Ok [ Def (ValueDef (_, "a", _, Kind (MemberAccess (Kind (FunctionCall ("openFile", _, _)), "contents", _))))
-                  Def (ValueDef (_, "b", _, Kind (ContextMemberCall (Kind (TypeApply ("ToString", _)), "toString", _)))) ] -> ()
+    | Result.Ok [ Kind (Def (ValueDef (_, "a", _, Kind (MemberAccess (Kind (FunctionCall ("openFile", _, _)), "contents", _)))))
+                  Kind (Def (ValueDef (_, "b", _, Kind (ContextMemberCall (Kind (TypeApply ("ToString", _)), "toString", _))))) ] -> ()
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
     | Result.Error err -> failwith $"Parse failed: {err}"
 

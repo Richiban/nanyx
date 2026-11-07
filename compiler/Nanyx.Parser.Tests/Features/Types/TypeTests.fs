@@ -33,7 +33,7 @@ let ``def annotation can start an indented continuation line`` () =
     let optionOf payload = ty (TypeUnion [ tag "some" (Some (var payload)); var "r" ])
     let expected = func (tuple [ optionOf "a"; func (var "a") (var "b") ]) (optionOf "b")
     match parseModule source with
-    | Result.Ok [ Def (ValueDef (_, "mapOption", Some annotation, Kind (Lambda _))) ] -> annotation |> should equal expected
+    | Result.Ok [ Kind (Def (ValueDef (_, "mapOption", Some annotation, Kind (Lambda _)))) ] -> annotation |> should equal expected
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
     | Result.Error err -> failwith $"Parse failed: {err}"
 
@@ -41,7 +41,7 @@ let ``def annotation can start an indented continuation line`` () =
 let ``bare parameters in a def annotation bind tighter than the arrow`` () =
     let annotationOf source =
         match parseModule source with
-        | Result.Ok [ Def (ValueDef (_, _, Some annotation, _)) ] -> annotation
+        | Result.Ok [ Kind (Def (ValueDef (_, _, Some annotation, _))) ] -> annotation
         | other -> failwith $"Unexpected parse: %A{other}"
     let expected = func (tuple [ named "int"; named "int" ]) (named "int")
     annotationOf "def add: int, int -> int = { x, y -> x + y }" |> should equal expected
@@ -51,7 +51,7 @@ let ``bare parameters in a def annotation bind tighter than the arrow`` () =
 let ``comma binds tighter than the arrow inside brackets too`` () =
     let annotationOf source =
         match parseModule source with
-        | Result.Ok [ Def (ValueDef (_, _, Some annotation, _)) ] -> annotation
+        | Result.Ok [ Kind (Def (ValueDef (_, _, Some annotation, _))) ] -> annotation
         | other -> failwith $"Unexpected parse: %A{other}"
     let pair = tuple [ named "int"; var "a" ]
     // In brackets, `int, a -> b` is still a function of two parameters.
@@ -91,7 +91,7 @@ let ``a record type may start with positional fields, named by position`` () =
 [<Fact>]
 let ``lambda parameters still split at commas`` () =
     match parseModule "def f = { x: int, y -> x + y }" with
-    | Result.Ok [ Def (ValueDef (_, "f", None, Kind (Lambda ([ ("x", Some (Kind (TypeName "int"))); ("y", None) ], _)))) ] -> ()
+    | Result.Ok [ Kind (Def (ValueDef (_, "f", None, Kind (Lambda ([ ("x", Some (Kind (TypeName "int"))); ("y", None) ], _))))) ] -> ()
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
     | Result.Error err -> failwith $"Parse failed: {err}"
 
@@ -99,7 +99,7 @@ let ``lambda parameters still split at commas`` () =
 let ``typeof names a value as a type`` () =
     let annotationOf source =
         match parseModule source with
-        | Result.Ok [ Def (ValueDef (_, _, Some annotation, _)) ] -> annotation
+        | Result.Ok [ Kind (Def (ValueDef (_, _, Some annotation, _))) ] -> annotation
         | other -> failwith $"Unexpected parse: %A{other}"
     let value name = Expression.synthetic (IdentifierExpr name)
     let typeOf name = ty (TypeOf (value name))
@@ -119,7 +119,7 @@ let ``typeof names a value as a type`` () =
 [<Fact>]
 let ``typeof is a keyword only on its own`` () =
     match parseModule "def t: typeofThing = t" with
-    | Result.Ok [ Def (ValueDef (_, _, Some (Kind (TypeName "typeofThing")), _)) ] -> ()
+    | Result.Ok [ Kind (Def (ValueDef (_, _, Some (Kind (TypeName "typeofThing")), _))) ] -> ()
     | other -> failwith $"Unexpected parse: %A{other}"
 
 [<Fact>]
@@ -133,7 +133,7 @@ let ``typeof in a module block names the block's own value`` () =
         let annotation =
             items
             |> List.pick (function
-                | Def (ValueDef (_, "config.custom", Some annotation, _)) -> Some annotation
+                | Kind (Def (ValueDef (_, "config.custom", Some annotation, _))) -> Some annotation
                 | _ -> None)
         annotation |> should equal (ty (TypeOf (Expression.synthetic (IdentifierExpr "config.defaults"))))
     | Result.Error err -> failwith $"Parse failed: {err}"
