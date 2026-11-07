@@ -76,7 +76,7 @@ let ``comma binds tighter than the arrow inside brackets too`` () =
 let ``a record type may start with positional fields, named by position`` () =
     let annotationOf source =
         match parseModule source with
-        | Result.Ok [ Def (ValueDef (_, _, Some annotation, _)) ] -> annotation
+        | Result.Ok [ Kind (Def (ValueDef (_, _, Some annotation, _))) ] -> annotation
         | other -> failwith $"Unexpected parse: %A{other}"
     let field name typeValue = TypeField (name, false, false, Some typeValue, None)
     let record fields = ty (TypeRecord fields)
