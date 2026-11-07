@@ -34,10 +34,10 @@ only then design the public contract that Nanyx-authored analyzers will be writt
 
 ## Where the compiler is today
 
-- **Spans cover expressions, patterns and statements** ([#96](https://github.com/nanyx-lang/nanyx/issues/96)).
-  Every expression, pattern, statement and import has a `SourceSpan`, expressions, patterns and statements have a
-  `NodeId`, and declarations' names are kept beside the tree (below). Type expressions and top-level items have
-  none yet.
+- **Spans cover expressions, patterns, statements and type expressions**
+  ([#96](https://github.com/nanyx-lang/nanyx/issues/96)). Every expression, pattern, statement, type expression and
+  import has a `SourceSpan`, all but imports have a `NodeId`, and declarations' names are kept beside the tree
+  (below). Top-level items have none yet.
 - **Diagnostics are structured** ([#97](https://github.com/nanyx-lang/nanyx/issues/97)). `Diagnostic` is the
   record in [section 2](#2-structured-diagnostics), every compiler error has a code from the table in
   `Diagnostics.fs`, and each is created with the span of the node it is about, in that node's file, so a
@@ -52,7 +52,7 @@ only then design the public contract that Nanyx-authored analyzers will be writt
   `TypeEnv` carries the symbol it declares, so inference records which symbol every identifier, call, pipe target
   and qualified name resolved to (`TypedModule.Symbols`, `References`, and `ImportReferences` for the import a
   name came through). Values, parameters, pattern variables and imports are symbols; type names and context
-  members are not yet, because type expressions have no nodes. Declarations have no nodes either, so the parser
+  members are not yet, though type expressions now have nodes to record them against. Declarations have no nodes either, so the parser
   keeps their spans beside the tree (`DeclaredNames`) until [#96](https://github.com/nanyx-lang/nanyx/issues/96)
   gives them their own.
 - **The typed tree is a placeholder.** `TypedExpr` wraps the untyped `Expression` with a type and some optional

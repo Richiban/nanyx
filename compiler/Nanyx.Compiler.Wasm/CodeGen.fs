@@ -691,7 +691,7 @@ let private ctxFnArity (_, _, arity: int) = arity
 
 // Convert a TypeExpr to a string key (e.g., TypeApply("ToString", [TypeVar "a"]) -> "ToString_a")
 let rec private typeExprToKey (t: TypeExpr) =
-    match t with
+    match t.Kind with
     | TypeName name -> name
     | TypeVar name -> name
     | TypeApply(name, typeArgs) -> 
@@ -703,36 +703,36 @@ let rec private typeExprToKey (t: TypeExpr) =
 /// `<context key>_<member>` for an instance of a parameterised one (`ToString_int_toString`).
 let private contextMemberKey (contextType: TypeExpr option) (memberName: string) =
     match contextType with
-    | Some (TypeApply _ as applied) -> $"{typeExprToKey applied}_{memberName}"
+    | Some ({ TypeExpr.Kind = TypeApply _ } as applied) -> $"{typeExprToKey applied}_{memberName}"
     | _ -> memberName
 
 // Extract context type expressions from a TypeWithContext or TypeContext annotation
 let private extractContextTypes (typeExpr: TypeExpr option) : TypeExpr list =
     match typeExpr with
-    | Some (TypeWithContext(contexts, _)) -> contexts
-    | Some (TypeContext contexts) -> contexts
+    | Some (Kind (TypeWithContext(contexts, _))) -> contexts
+    | Some (Kind (TypeContext contexts)) -> contexts
     | _ -> []
 
 // Extract context type names from a TypeWithContext or TypeContext annotation
 let private extractContextTypeNames (typeExpr: TypeExpr option) : string list =
     match typeExpr with
-    | Some (TypeWithContext(contexts, _)) ->
+    | Some (Kind (TypeWithContext(contexts, _))) ->
         contexts |> List.choose (function
-            | TypeName name -> Some name
-            | TypeApply(name, _) -> Some name
+            | Kind (TypeName name) -> Some name
+            | Kind (TypeApply(name, _)) -> Some name
             | _ -> None)
-    | Some (TypeContext contexts) ->
+    | Some (Kind (TypeContext contexts)) ->
         contexts |> List.choose (function
-            | TypeName name -> Some name
-            | TypeApply(name, _) -> Some name
+            | Kind (TypeName name) -> Some name
+            | Kind (TypeApply(name, _)) -> Some name
             | _ -> None)
     | _ -> []
 
 // Get the inner type (without context) from a TypeWithContext or TypeContext
 let private unwrapContextType (typeExpr: TypeExpr option) : TypeExpr option =
     match typeExpr with
-    | Some (TypeWithContext(_, inner)) -> Some inner
-    | Some (TypeContext _) -> None  // TypeContext alone has no inner type
+    | Some (Kind (TypeWithContext(_, inner))) -> Some inner
+    | Some (Kind (TypeContext _)) -> None  // TypeContext alone has no inner type
     | other -> other
 
 let private sanitizeIdentifier (name: string) =
@@ -2952,21 +2952,21 @@ module private LambdaLifting =
     /// `ty` with the type parameters of a context replaced by the arguments of one of its instances.
     let rec private substituteTypeParameters (arguments: Map<string, TypeExpr>) (ty: TypeExpr) : TypeExpr =
         let recur = substituteTypeParameters arguments
-        match ty with
+        match ty.Kind with
         | TypeName name
         | TypeVar name when arguments.ContainsKey name -> arguments.[name]
-        | TypeFunc(input, output) -> TypeFunc(recur input, recur output)
-        | TypeTuple items -> TypeTuple(items |> List.map recur)
-        | TypeApply(name, items) -> TypeApply(name, items |> List.map recur)
-        | other -> other
+        | TypeFunc(input, output) -> { ty with Kind = TypeFunc(recur input, recur output) }
+        | TypeTuple items -> { ty with Kind = TypeTuple(items |> List.map recur) }
+        | TypeApply(name, items) -> { ty with Kind = TypeApply(name, items |> List.map recur) }
+        | _ -> ty
 
     /// A lambda bound to a context member, with each parameter it leaves unannotated given the type the member
     /// declares for it, so the lifted function knows its parameters' types (a string to interpolate, say).
     let private annotateFromMemberType (memberType: TypeExpr option) (args: (string * TypeExpr option) list) =
         let declared =
             match memberType with
-            | Some (TypeFunc(TypeTuple items, _)) when items.Length = args.Length -> items
-            | Some (TypeFunc(input, _)) when args.Length = 1 -> [ input ]
+            | Some (Kind (TypeFunc(Kind (TypeTuple items), _))) when items.Length = args.Length -> items
+            | Some (Kind (TypeFunc(input, _))) when args.Length = 1 -> [ input ]
             | _ -> []
         if declared.IsEmpty then args
         else List.map2 (fun (name, annotation) ty -> name, Some (annotation |> Option.defaultValue ty)) args declared
@@ -3004,7 +3004,7 @@ module private LambdaLifting =
         let recordTypes =
             module'
             |> List.choose (function
-                | Def (TypeDef(name, _, parameters, TypeRecord fields)) ->
+                | Def (TypeDef(name, _, parameters, Kind (TypeRecord fields))) ->
                     let members =
                         fields
                         |> List.choose (function
@@ -3019,9 +3019,9 @@ module private LambdaLifting =
         /// to the instance's arguments), or of any record type with such a member when the context is not named.
         let memberType (contextType: TypeExpr option) (memberName: string) : TypeExpr option =
             match contextType with
-            | Some (TypeName name) ->
+            | Some (Kind (TypeName name)) ->
                 recordTypes |> Map.tryFind name |> Option.bind (fun (_, members) -> members |> Map.tryFind memberName)
-            | Some (TypeApply(name, arguments)) ->
+            | Some (Kind (TypeApply(name, arguments))) ->
                 recordTypes
                 |> Map.tryFind name
                 |> Option.bind (fun (parameters, members) ->
@@ -3144,7 +3144,7 @@ module private LambdaLifting =
                         let contextType, bindings =
                             match binding with
                             | UseValue(Kind (RecordExpr fields)) -> None, namedFields fields
-                            | UseValue(Kind (FunctionCall(contextName, _, [ Kind (RecordExpr fields) ]))) -> Some (TypeName contextName), namedFields fields
+                            | UseValue(Kind (FunctionCall(contextName, _, [ Kind (RecordExpr fields) ]))) -> Some (TypeExpr.synthetic (TypeName contextName)), namedFields fields
                             | UseContextInstance(contextType, Kind (RecordExpr fields)) -> Some contextType, namedFields fields
                             | UseValue(Kind (IdentifierExpr recordName) as recordRef) when localRecords.ContainsKey recordName ->
                                 None,
@@ -3232,15 +3232,15 @@ module private LambdaLifting =
         // wrapper when some function takes contexts.
         let takesContexts (typeOpt: TypeExpr option) =
             match typeOpt with
-            | Some (TypeWithContext _)
-            | Some (TypeContext _) -> true
+            | Some (Kind (TypeWithContext _))
+            | Some (Kind (TypeContext _)) -> true
             | _ -> false
         let defTypes =
             module' |> List.choose (function Def (ValueDef(_, name, typeOpt, _)) -> Some (name, typeOpt) | _ -> None) |> Map.ofList
         if defTypes |> Map.exists (fun _ typeOpt -> takesContexts typeOpt) then
             module'
             |> List.collect (function
-                | Def (TypeDef(_, modifiers, _, TypeRecord fields)) when modifiers |> List.contains Context ->
+                | Def (TypeDef(_, modifiers, _, Kind (TypeRecord fields))) when modifiers |> List.contains Context ->
                     fields |> List.map (function TypeField(fieldName, _, _, _, _) | TypeMember(fieldName, _) -> fieldName)
                 | _ -> [])
             |> List.distinct
@@ -3253,7 +3253,7 @@ module private LambdaLifting =
 
 let private extractTypeLayouts (module': Module) : Map<string, string list> * Map<string, Map<string, string>> =
     let rec typeExprToTypeString (t: TypeExpr) : string =
-        match t with
+        match t.Kind with
         | TypeName name -> name
         | TypeFunc(param, ret) -> $"({typeExprToTypeString param}) -> ({typeExprToTypeString ret})"
         | TypeUnit -> "()"
@@ -3262,7 +3262,7 @@ let private extractTypeLayouts (module': Module) : Map<string, string list> * Ma
     let results =
         module'
         |> List.choose (function
-            | Def (TypeDef(name, _, _, TypeRecord fields)) ->
+            | Def (TypeDef(name, _, _, Kind (TypeRecord fields))) ->
                 let fieldInfo =
                     fields
                     |> List.choose (function
@@ -3288,25 +3288,25 @@ let private extractTypeLayouts (module': Module) : Map<string, string list> * Ma
 
 let private getLayoutFromTypeExpr (typeLayouts: Map<string, string list>) (typeFieldTypes: Map<string, Map<string, string>>) (typeExpr: TypeExpr option) : (string list * Map<string, string>) option =
     match typeExpr with
-    | Some (TypeName typeName) ->
+    | Some (Kind (TypeName typeName)) ->
         match typeLayouts |> Map.tryFind typeName, typeFieldTypes |> Map.tryFind typeName with
         | Some layout, Some types -> Some (layout, types)
         | Some layout, None -> Some (layout, Map.empty)
         | _ -> None
-    | Some (TypeRecord fields) ->
+    | Some (Kind (TypeRecord fields)) ->
         let fieldInfo =
             fields
             |> List.choose (function
                 | TypeField(fieldName, _, _, typeOpt, _) ->
                     let typeName =
                         match typeOpt with
-                        | Some (TypeName t) -> t
+                        | Some (Kind (TypeName t)) -> t
                         | _ -> "unknown"
                     Some (fieldName, typeName)
                 | TypeMember(fieldName, typeOpt) ->
                     let typeName =
                         match typeOpt with
-                        | Some (TypeName t) -> t
+                        | Some (Kind (TypeName t)) -> t
                         | _ -> "unknown"
                     Some (fieldName, typeName))
         let fieldNames = fieldInfo |> List.map fst |> List.sort
@@ -3352,11 +3352,11 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
                 let contextFnNames =
                     contextTypes
                     |> List.collect (fun ctxType ->
-                        let baseName = match ctxType with
+                        let baseName = match ctxType.Kind with
                                        | TypeName n -> n
                                        | TypeApply(n, _) -> n
                                        | _ -> "unknown"
-                        let needsQualified = match ctxType with
+                        let needsQualified = match ctxType.Kind with
                                              | TypeApply _ -> true  // Parameterized - need qualified
                                              | _ -> false           // Simple - keep simple names
                         typeLayouts |> Map.tryFind baseName 
@@ -3379,7 +3379,7 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
         let contextMemberNames =
             module'
             |> List.collect (function
-                | Def (TypeDef(_, modifiers, _, TypeRecord fields)) when modifiers |> List.contains Context ->
+                | Def (TypeDef(_, modifiers, _, Kind (TypeRecord fields))) when modifiers |> List.contains Context ->
                     fields |> List.map (function TypeField(fieldName, _, _, _, _) | TypeMember(fieldName, _) -> fieldName)
                 | _ -> [])
         if functionContextRequirements.IsEmpty then Map.empty
@@ -3400,10 +3400,10 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
             defs
             |> List.choose (fun (name, typeOpt, _) ->
                 match unwrapContextType typeOpt with
-                | Some (TypeFunc(_, TypeName "string")) -> Some (name, "string")
-                | Some (TypeFunc(_, TypeName "int")) -> Some (name, "int")
-                | Some (TypeFunc(_, TypeName "bool")) -> Some (name, "bool")
-                | Some (TypeFunc(_, TypeApply("list", _))) -> Some (name, "list")
+                | Some (Kind (TypeFunc(_, Kind (TypeName "string")))) -> Some (name, "string")
+                | Some (Kind (TypeFunc(_, Kind (TypeName "int")))) -> Some (name, "int")
+                | Some (Kind (TypeFunc(_, Kind (TypeName "bool")))) -> Some (name, "bool")
+                | Some (Kind (TypeFunc(_, Kind (TypeApply("list", _))))) -> Some (name, "list")
                 | _ -> None)
             |> Map.ofList
         let fromIntrinsics =
@@ -3517,7 +3517,7 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
             // Initialize RecordLayouts from def-level type annotations
             // Extract parameter types from TypeFunc chain: (A -> B -> C) means params are A, B
             let rec extractParamTypes (t: TypeExpr) : TypeExpr list =
-                match t with
+                match t.Kind with
                 | TypeFunc(param, ret) -> param :: extractParamTypes ret
                 | _ -> []
 
@@ -3528,14 +3528,14 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
             let defParamTypes =
                 let annotated =
                     match unwrapContextType defTypeOpt with
-                    | Some (TypeFunc(TypeTuple items, _)) when items.Length = parameterNames.Length -> items
-                    | Some (TypeFunc(TypeUnit, _)) when parameterNames.IsEmpty -> []
+                    | Some (Kind (TypeFunc(Kind (TypeTuple items), _))) when items.Length = parameterNames.Length -> items
+                    | Some (Kind (TypeFunc(Kind TypeUnit, _))) when parameterNames.IsEmpty -> []
                     | Some t -> extractParamTypes t
                     | None -> []
                 annotated |> List.truncate parameterNames.Length
 
             let initialRecordInfo =
-                List.zip parameterNames (defParamTypes @ List.replicate (parameterNames.Length - defParamTypes.Length) (TypeUnit))
+                List.zip parameterNames (defParamTypes @ List.replicate (parameterNames.Length - defParamTypes.Length) (TypeExpr.synthetic TypeUnit))
                 |> List.choose (fun (paramName, paramType) ->
                     match getLayoutFromTypeExpr typeLayouts typeFieldTypes (Some paramType) with
                     | Some (fieldNames, fieldTypes) -> Some (paramName, fieldNames, fieldTypes)
@@ -3559,7 +3559,7 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
 
             // Build param types map for string detection during dbg calls
             let rec typeExprToString (t: TypeExpr) =
-                match t with
+                match t.Kind with
                 | TypeName "string" -> Some "string"
                 | TypeName "int" -> Some "int"
                 | TypeName "bool" -> Some "bool"
