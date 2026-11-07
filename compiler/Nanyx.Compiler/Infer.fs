@@ -448,6 +448,38 @@ let rec private typeExprToTy (state: InferState) (typeExpr: TypeExpr) : Ty * Inf
         typeExprToTy state baseType
     | TypeWhere(baseType, _) ->
         typeExprToTy state baseType
+    // The value was inferred before the annotation was read (see `inferTypeOfValues`), and its type is the
+    // one it was given there: a polymorphic value's type instantiated afresh. A `typeof` where there are no
+    // values to name, such as in a type definition, is reported elsewhere.
+    | TypeOf value ->
+        match state.ExprTypes |> Map.tryFind value.Id with
+        | Some ty -> ty, state
+        | None -> freshVar state
+
+/// The values named by each `typeof` in `typeExpr`, in the order they are written.
+let rec private typeOfValues (typeExpr: TypeExpr) : Expression list =
+    let ofList items = items |> List.collect typeOfValues
+    match typeExpr with
+    | TypeOf value -> [ value ]
+    | TypeName _ | TypeVar _ | TypeUnit -> []
+    | TypeTuple items | TypeUnion items | TypeIntersection items | TypeContext items -> ofList items
+    | TypeRecord fields ->
+        fields
+        |> List.collect (function
+            | TypeField(_, _, _, Some t, _) | TypeMember(_, Some t) -> typeOfValues t
+            | _ -> [])
+    | TypeApply(_, args) -> ofList args
+    | TypeFunc(arg, ret) -> typeOfValues arg @ typeOfValues ret
+    | TypeTag(_, payload) -> payload |> Option.map typeOfValues |> Option.defaultValue []
+    | TypeWithContext(contexts, inner) -> ofList contexts @ typeOfValues inner
+    | TypeOptional inner | TypeConstraint(_, inner, _) | TypeWhere(inner, _) -> typeOfValues inner
+
+/// The error for each `typeof` in the type definition `name`: a type definition is not in the scope of any value.
+let private typeOfInTypeDef (name: Identifier) (body: TypeExpr) (parameters: (Identifier * TypeExpr option) list) : Diagnostic list =
+    body :: (parameters |> List.choose snd)
+    |> List.collect typeOfValues
+    |> List.map (fun value ->
+        Diagnostics.at DiagnosticCodes.MisplacedTypeof value.Span $"'typeof' cannot be used in the definition of the type '{name}', only in the type of a value")
 
 let private extractContextFromTypeExpr (typeExpr: TypeExpr option) : TypeExpr list option * TypeExpr option =
     match typeExpr with
@@ -1694,7 +1726,23 @@ and inferUseBinding (env: TypeEnv) (state: InferState) (binding: UseBinding) : R
         // TODO: Validate that expr satisfies the context type
         inferExpr env state expr
 
+/// Infers the value named by each `typeof` in `typeExpr`, so that reading the annotation finds their types.
+and private inferTypeOfValues (env: TypeEnv) (state: InferState) (typeExpr: TypeExpr) : Result<InferState, Diagnostic list> =
+    typeOfValues typeExpr
+    |> List.fold (fun result value -> result |> Result.bind (fun current -> inferExpr env current value |> Result.map snd)) (Ok state)
+
 and inferLambdaWithExpected (env: TypeEnv) (state: InferState) (lambda: Expression) (args: (Identifier * TypeExpr option) list) (body: Expression) (expectedInputOpt: Ty option) (expectedReturnOpt: Ty option) : Result<TypedExpr * InferState, Diagnostic list> =
+    // The parameters' annotations are read only when nothing else gives their types.
+    let annotated =
+        match expectedInputOpt with
+        | Some _ -> Ok state
+        | None ->
+            args
+            |> List.choose snd
+            |> List.fold (fun result typeExpr -> result |> Result.bind (fun current -> inferTypeOfValues env current typeExpr)) (Ok state)
+    annotated |> Result.bind (fun state -> inferLambdaAfterTypeOfs env state lambda args body expectedInputOpt expectedReturnOpt)
+
+and private inferLambdaAfterTypeOfs (env: TypeEnv) (state: InferState) (lambda: Expression) (args: (Identifier * TypeExpr option) list) (body: Expression) (expectedInputOpt: Ty option) (expectedReturnOpt: Ty option) : Result<TypedExpr * InferState, Diagnostic list> =
     let mutable current = state
     let mutable env' = env
     let argTys =
@@ -1754,9 +1802,14 @@ and inferBlock (env: TypeEnv) (state: InferState) (block: Expression) (statement
                         match fst (extractContextFromTypeExpr typeOpt) with
                         | Some contexts -> ensureContextsExist current name (declarationSpan current DefValue expr) contexts
                         | None -> Ok ()
-                    match ensureAttachedTypeExists current None name (declarationSpan current DefValue expr) |> Result.bind (fun () -> contextsExist) with
+                    let typeOfsInferred =
+                        match typeOpt with
+                        | Some typeExpr -> inferTypeOfValues env' current typeExpr
+                        | None -> Ok current
+                    match ensureAttachedTypeExists current None name (declarationSpan current DefValue expr) |> Result.bind (fun () -> contextsExist) |> Result.bind (fun () -> typeOfsInferred) with
                     | Error err -> errors <- err
-                    | Ok () ->
+                    | Ok inferredState ->
+                        current <- inferredState
                         let contextOpt, declaredTypeExprOpt = extractContextFromTypeExpr typeOpt
                         let envWithCtx, nextState =
                             match contextOpt with
@@ -1824,6 +1877,7 @@ and inferBlock (env: TypeEnv) (state: InferState) (block: Expression) (statement
             | ImportStatement items ->
                 typedStatements <- typedStatements @ [ TypedImportStatement items ]
             | TypeDefStatement(name, modifiers, parameters, body) ->
+                if errors.IsEmpty then errors <- typeOfInTypeDef name body parameters
                 current <- registerTypeDef current name modifiers parameters body
                 typedStatements <- typedStatements @ [ TypedTypeDefStatement(name, modifiers, parameters, body) ]
             | UseStatement binding ->
@@ -1866,6 +1920,8 @@ let rec private annotationVarNames (typeExpr: TypeExpr) : string list =
         | TypeTag(_, payload) -> payload |> Option.map annotationVarNames |> Option.defaultValue []
         | TypeOptional inner | TypeWithContext(_, inner) | TypeConstraint(_, inner, _) | TypeWhere(inner, _) ->
             annotationVarNames inner
+        // The type of a value is not a variable the annotation introduces.
+        | TypeOf _ -> []
     names |> List.distinct
 
 /// The type variables of a def's annotation are rigid: the body has to work for every type they stand for.
@@ -1931,11 +1987,13 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
             state <- declared
             let _, declaredTypeExprOpt = extractContextFromTypeExpr typeOpt
             match declaredTypeExprOpt with
-            | Some declaredExpr ->
+            // An annotation with a `typeof` can only be read once the values it names are in scope, so the def is
+            // pre-bound as an unannotated one is, and its annotation is unified with that once it has been read.
+            | Some declaredExpr when (typeOfValues declaredExpr).IsEmpty ->
                 let ty, st = typeExprToTy state declaredExpr
                 state <- st
                 env <- TypeEnv.declare name symbol (TypeEnv.generalize env ty) env
-            | None ->
+            | _ ->
                 let ty, st = freshVar state
                 state <- st
                 preboundFreshVars <- preboundFreshVars |> Map.add name ty
@@ -1949,9 +2007,15 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
                 match fst (extractContextFromTypeExpr typeOpt) with
                 | Some contexts -> ensureContextsExist state name (declarationSpan state DefValue expr) contexts
                 | None -> Ok ()
-            match ensureAttachedTypeExists state currentModule name (declarationSpan state DefValue expr) |> Result.bind (fun () -> contextsExist) with
+            // A def's own name is not in scope in its annotation: `def x: typeof x` says nothing.
+            let typeOfsInferred =
+                match typeOpt with
+                | Some typeExpr -> inferTypeOfValues (env |> Map.remove name) state typeExpr
+                | None -> Ok state
+            match ensureAttachedTypeExists state currentModule name (declarationSpan state DefValue expr) |> Result.bind (fun () -> contextsExist) |> Result.bind (fun () -> typeOfsInferred) with
             | Error err -> errors <- err
-            | Ok () ->
+            | Ok inferredState ->
+                state <- inferredState
                 let contextOpt, declaredTypeExprOpt = extractContextFromTypeExpr typeOpt
                 let envWithCtx, nextState =
                     match contextOpt with
@@ -2010,6 +2074,11 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
                                 | Some preboundTy -> addConstraintAt expr.Span preboundTy typedExpr.Type next
                                 | None -> next
                             typedExpr.Type, updatedState
+                    // An annotated def pre-bound at a fresh variable (one with a `typeof`) is that annotation.
+                    let finalState =
+                        match expectedDeclaredOpt, preboundFreshVars |> Map.tryFind name with
+                        | Some _, Some preboundTy -> addConstraintAt expr.Span preboundTy declaredTy finalState
+                        | _ -> finalState
                     state <-
                         finalState
                         |> recordSymbolType symbol declaredTy
@@ -2047,6 +2116,7 @@ let inferModuleWithEnv (initialEnv: TypeEnv) (initialState: InferState) (module'
         | Attribute _ -> ()
         | Def (TypeDef(name, modifiers, parameters, body)) ->
             // Registered in the pre-binding pass above.
+            if errors.IsEmpty then errors <- typeOfInTypeDef name body parameters
             items <- items @ [ TypedDef (TypedTypeDef(name, modifiers, parameters, body)) ]
         | Def (ValueDef _) -> ()
 

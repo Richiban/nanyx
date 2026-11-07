@@ -70,3 +70,45 @@ let ``lambda parameters still split at commas`` () =
     | Result.Ok [ Def (ValueDef (_, "f", None, Kind (Lambda ([ ("x", Some (TypeName "int")); ("y", None) ], _)))) ] -> ()
     | Result.Ok other -> failwith $"Unexpected parse: %A{other}"
     | Result.Error err -> failwith $"Parse failed: {err}"
+
+[<Fact>]
+let ``typeof names a value as a type`` () =
+    let annotationOf source =
+        match parseModule source with
+        | Result.Ok [ Def (ValueDef (_, _, Some annotation, _)) ] -> annotation
+        | other -> failwith $"Unexpected parse: %A{other}"
+    let value name = Expression.synthetic (IdentifierExpr name)
+    let defaults = TypeOf (value "defaults")
+    annotationOf "def o: typeof defaults = d" |> should equal defaults
+    // Brackets only group the value.
+    annotationOf "def o: typeof(defaults) = d" |> should equal defaults
+    annotationOf "def o: typeof ( defaults ) = d" |> should equal defaults
+    // A path of fields names the value of a field.
+    annotationOf "def p: typeof config.server.port = p"
+    |> should equal (TypeOf (Expression.synthetic (MemberAccess (Expression.synthetic (MemberAccess (value "config", "server", None)), "port", None))))
+    // It is a type like any other, and binds as tightly as one.
+    annotationOf "def o: typeof x? = o" |> should equal (TypeOptional (TypeOf (value "x")))
+    annotationOf "def f: typeof x -> typeof y = f" |> should equal (TypeFunc (TypeOf (value "x"), TypeOf (value "y")))
+    annotationOf "def l: list(typeof x) = l" |> should equal (TypeApply ("list", [ TypeOf (value "x") ]))
+
+[<Fact>]
+let ``typeof is a keyword only on its own`` () =
+    match parseModule "def t: typeofThing = t" with
+    | Result.Ok [ Def (ValueDef (_, _, Some (TypeName "typeofThing"), _)) ] -> ()
+    | other -> failwith $"Unexpected parse: %A{other}"
+
+[<Fact>]
+let ``typeof in a module block names the block's own value`` () =
+    let source =
+        "module config =\n" +
+        "  def defaults = (port = 80)\n" +
+        "  def custom: typeof defaults = (port = 8080)\n"
+    match parseModule source with
+    | Result.Ok items ->
+        let annotation =
+            items
+            |> List.pick (function
+                | Def (ValueDef (_, "config.custom", Some annotation, _)) -> Some annotation
+                | _ -> None)
+        annotation |> should equal (TypeOf (Expression.synthetic (IdentifierExpr "config.defaults")))
+    | Result.Error err -> failwith $"Parse failed: {err}"

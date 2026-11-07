@@ -77,6 +77,8 @@ type TypeExpr =
     | TypeWithContext of TypeExpr list * TypeExpr
     | TypeConstraint of Identifier * TypeExpr * Expression
     | TypeWhere of TypeExpr * Expression
+    /// `typeof x`: the type of the value `x`, a name or a path of fields such as `config.server`.
+    | TypeOf of Expression
 
 and TypeRecordField =
     | TypeField of Identifier * bool * bool * TypeExpr option * Expression option
@@ -910,8 +912,24 @@ do
             (ws >>. pstring "where" >>. ws >>. expression)
             (fun name baseType predicate -> TypeConstraint(name, baseType, predicate))
 
+    // `typeof x` takes a value, not a type, so its operand is a name or a path of fields (`config.server`) and
+    // never an arbitrary expression. Brackets only group: `typeof(x)` is `typeof x`.
+    let typeOf =
+        let keywordEnd = notFollowedBy (satisfy (fun c -> Char.IsLetterOrDigit c || c = '_'))
+        let path =
+            withSpan (spanned (identifierNoWs |>> IdentifierExpr)) >>= fun (head, headText) ->
+                many (attempt (pstring "." >>. withSpan identifierNoWs)) |>> fun fields ->
+                    fields
+                    |> List.fold (fun ((expr: Expression), text) (field, fieldSpan) ->
+                        let span = SourceSpan.between text fieldSpan
+                        Expression.at span (MemberAccess(expr, field, Some fieldSpan)), span) (head, headText)
+                    |> fst
+        let bracketed = between (pstring "(" >>. ws) (ws >>. pstring ")") path
+        pstring "typeof" >>. keywordEnd >>. wsInline >>. (bracketed <|> path) |>> TypeOf
+
     let typeAtom =
         choice [
+            attempt typeOf
             attempt typeConstraint
             attempt typeTag
             attempt typeApply
@@ -1996,7 +2014,8 @@ let moduleParser: Parser<Module, ParseState> =
 let private qualifyModuleName (prefix: string) (name: string) =
     if String.IsNullOrWhiteSpace prefix then name else $"{prefix}.{name}"
 
-let private rewriteTypeExprInModule (typeMap: Map<string, string>) (typeExpr: TypeExpr) : TypeExpr =
+/// `typeExpr` with the types `typeMap` qualifies renamed, and the value of each `typeof` rewritten by `rewriteValue`.
+let private rewriteTypeExprInModule (typeMap: Map<string, string>) (rewriteValue: Expression -> Expression) (typeExpr: TypeExpr) : TypeExpr =
     let rec rewrite t =
         match t with
         | TypeName name ->
@@ -2024,6 +2043,7 @@ let private rewriteTypeExprInModule (typeMap: Map<string, string>) (typeExpr: Ty
         | TypeWithContext(items, inner) -> TypeWithContext(items |> List.map rewrite, rewrite inner)
         | TypeConstraint(name, baseTy, predicate) -> TypeConstraint(name, rewrite baseTy, predicate)
         | TypeWhere(baseTy, predicate) -> TypeWhere(rewrite baseTy, predicate)
+        | TypeOf value -> TypeOf (rewriteValue value)
     rewrite typeExpr
 
 let private rewriteExpressionInModule (valueMap: Map<string, string>) (typeMap: Map<string, string>) (expr: Expression) : Expression =
@@ -2067,13 +2087,13 @@ let private rewriteExpressionInModule (valueMap: Map<string, string>) (typeMap: 
         | TagExpr(name, payload) -> TagExpr(name, payload |> Option.map rewrite)
         | IfExpr(cond, ifTrue, ifFalse) -> IfExpr(rewrite cond, rewrite ifTrue, rewrite ifFalse)
         | MemberAccess(baseExpr, field, range) -> MemberAccess(rewrite baseExpr, field, range)
-        | ContextMemberAccess(ctxType, field) -> ContextMemberAccess(rewriteTypeExprInModule typeMap ctxType, field)
-        | ContextMemberCall(ctxType, field, args) -> ContextMemberCall(rewriteTypeExprInModule typeMap ctxType, field, args |> List.map rewrite)
+        | ContextMemberAccess(ctxType, field) -> ContextMemberAccess(rewriteType ctxType, field)
+        | ContextMemberCall(ctxType, field, args) -> ContextMemberCall(rewriteType ctxType, field, args |> List.map rewrite)
         | UseIn(binding, body) ->
             let mappedBinding =
                 match binding with
                 | UseValue value -> UseValue (rewrite value)
-                | UseContextInstance(ctxType, value) -> UseContextInstance(rewriteTypeExprInModule typeMap ctxType, rewrite value)
+                | UseContextInstance(ctxType, value) -> UseContextInstance(rewriteType ctxType, rewrite value)
             UseIn(mappedBinding, rewrite body)
         | WorkflowBindExpr(name, value) -> WorkflowBindExpr(name, rewrite value)
         | WorkflowReturnExpr value -> WorkflowReturnExpr (rewrite value)
@@ -2082,18 +2102,19 @@ let private rewriteExpressionInModule (valueMap: Map<string, string>) (typeMap: 
         | LiteralExpr _ -> e.Kind
     and rewriteStatement kind =
         match kind with
-        | DefStatement(isExport, name, typeOpt, valueExpr) -> DefStatement(isExport, name, typeOpt |> Option.map (rewriteTypeExprInModule typeMap), rewrite valueExpr)
+        | DefStatement(isExport, name, typeOpt, valueExpr) -> DefStatement(isExport, name, typeOpt |> Option.map rewriteType, rewrite valueExpr)
         | TypeDefStatement(name, modifiers, typeParams, typeExpr) ->
-            let mappedParams = typeParams |> List.map (fun (paramName, paramTypeOpt) -> paramName, paramTypeOpt |> Option.map (rewriteTypeExprInModule typeMap))
-            TypeDefStatement(name, modifiers, mappedParams, rewriteTypeExprInModule typeMap typeExpr)
+            let mappedParams = typeParams |> List.map (fun (paramName, paramTypeOpt) -> paramName, paramTypeOpt |> Option.map rewriteType)
+            TypeDefStatement(name, modifiers, mappedParams, rewriteType typeExpr)
         | ImportStatement items -> ImportStatement items
         | UseStatement binding ->
             let mapped =
                 match binding with
                 | UseValue boundExpr -> UseValue (rewrite boundExpr)
-                | UseContextInstance(ctxType, boundExpr) -> UseContextInstance(rewriteTypeExprInModule typeMap ctxType, rewrite boundExpr)
+                | UseContextInstance(ctxType, boundExpr) -> UseContextInstance(rewriteType ctxType, rewrite boundExpr)
             UseStatement mapped
         | ExprStatement bodyExpr -> ExprStatement (rewrite bodyExpr)
+    and rewriteType typeExpr = rewriteTypeExprInModule typeMap rewrite typeExpr
     rewrite expr
 
 let rec private expandModuleBlock (prefix: string) (items: TopLevelItem list) : TopLevelItem list =
@@ -2121,6 +2142,8 @@ let rec private expandModuleBlock (prefix: string) (items: TopLevelItem list) : 
         |> Seq.map (fun name -> name, qualifyModuleName prefix name)
         |> Map.ofSeq
 
+    let rewriteType = rewriteTypeExprInModule typeMap (rewriteExpressionInModule valueMap typeMap)
+
     let qualifyDefName (name: string) =
         if name.Contains(".") then
             let dot = name.IndexOf('.')
@@ -2146,10 +2169,10 @@ let rec private expandModuleBlock (prefix: string) (items: TopLevelItem list) : 
         | Attribute name -> [ Attribute name ]
         | Expr expr -> [ Expr (rewriteExpressionInModule valueMap typeMap expr) ]
         | Def (ValueDef(isExport, name, typeOpt, expr)) ->
-            [ Def (ValueDef(isExport, qualifyDefName name, typeOpt |> Option.map (rewriteTypeExprInModule typeMap), rewriteExpressionInModule valueMap typeMap expr)) ]
+            [ Def (ValueDef(isExport, qualifyDefName name, typeOpt |> Option.map rewriteType, rewriteExpressionInModule valueMap typeMap expr)) ]
         | Def (TypeDef(name, modifiers, typeParams, body)) ->
-            let mappedTypeParams = typeParams |> List.map (fun (paramName, paramTypeOpt) -> paramName, paramTypeOpt |> Option.map (rewriteTypeExprInModule typeMap))
-            [ Def (TypeDef(qualifyTypeName name, modifiers, mappedTypeParams, rewriteTypeExprInModule typeMap body)) ])
+            let mappedTypeParams = typeParams |> List.map (fun (paramName, paramTypeOpt) -> paramName, paramTypeOpt |> Option.map rewriteType)
+            [ Def (TypeDef(qualifyTypeName name, modifiers, mappedTypeParams, rewriteType body)) ])
 
 let private expandMidFileModules (items: TopLevelItem list) : TopLevelItem list =
     let rec loop (currentModule: string option) (remaining: TopLevelItem list) (acc: TopLevelItem list) =

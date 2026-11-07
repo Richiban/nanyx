@@ -250,6 +250,7 @@ and private expressionsOfType (typeExpr: TypeExpr) =
     | TypeWithContext (contexts, inner) -> (contexts |> List.collect expressionsOfType) @ expressionsOfType inner
     | TypeConstraint (_, constrained, value) -> expressionsOfType constrained @ expressions value
     | TypeWhere (constrained, value) -> expressionsOfType constrained @ expressions value
+    | TypeOf value -> expressions value
 
 let rec private expressionsOfItem (item: TopLevelItem) =
     match item with
