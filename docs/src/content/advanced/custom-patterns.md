@@ -69,7 +69,7 @@ In the case of partial patterns with multiple choices or output values, the wild
 
 ```nanyx
 pattern string -> #ParseInt(int) | #ParseBool(bool) | _ = { s ->
-  if | int.parse(s) is #some(i) -> #ParseInt(i)
+  if | Int.parse(s) is #some(i) -> #ParseInt(i)
      | bool.parse(s) is #some(b) -> #ParseBool(b)
      | else -> _
 }

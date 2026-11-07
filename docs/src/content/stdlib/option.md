@@ -4,7 +4,7 @@ description: "Working with optional values"
 order: 5
 ---
 
-The `option` module provides helpers for [**option-like** unions](../advanced/option-like-types).
+The `Option` helpers work on [**option-like** unions](../advanced/option-like-types). They are in the [prelude](../tour/modules#modules-in-the-standard-library), so no import is needed.
 
 In Nanyx, any union that includes `#some(a)` is considered option-like. There is no `Option(a)` alias; `#some(a) | #none` is just the most common option-like union, and these helpers are written to preserve all non-`#some` tags, whatever they are.
 
@@ -37,7 +37,7 @@ Chains option-producing operations.
 
 ```nanyx
 def a: (#some(string) | #notFound) = #some("42")
-def b = a \Option.bind(int.parse) -- b: (#some(int) | #notFound | #invalidInt)
+def b = a \Option.bind(Int.parse) -- b: (#some(int) | #notFound | #invalidInt)
 ```
 
 ---

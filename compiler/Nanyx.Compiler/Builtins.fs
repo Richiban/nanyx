@@ -28,6 +28,10 @@ module Intrinsics =
 
     /// Writes a string to standard output, with nothing added.
     let writeStdout = prefix + "write_stdout"
+    /// Writes a string to standard error, with nothing added.
+    let writeStderr = prefix + "write_stderr"
+    /// The next byte of standard input, or -1 at its end (or when it cannot be read).
+    let readStdinByte = prefix + "read_stdin_byte"
     /// The number of bytes in a string.
     let stringLength = prefix + "string_length"
     /// The byte at an index of a string, or -1 when the index is out of range.
@@ -42,6 +46,8 @@ module Intrinsics =
     /// Every intrinsic with its type scheme.
     let all : (string * TypeScheme) list =
         [ writeStdout, TypeEnv.mono (TyFunc(stringTy, unitTy))
+          writeStderr, TypeEnv.mono (TyFunc(stringTy, unitTy))
+          readStdinByte, TypeEnv.mono (TyFunc(unitTy, intTy))
           stringLength, TypeEnv.mono (TyFunc(stringTy, intTy))
           stringByteAt, TypeEnv.mono (TyFunc(tuple [ stringTy; intTy ], intTy))
           stringSlice, TypeEnv.mono (TyFunc(tuple [ stringTy; intTy; intTy ], stringTy))
@@ -81,11 +87,15 @@ module StandardLibrary =
         | ModuleImport name when name.StartsWith importPrefix -> Some (name.Substring importPrefix.Length)
         | _ -> None
 
+    /// The module every other module imports without saying so (`nanyx/prelude`): what is in scope with no imports.
+    let preludeModuleName = "prelude"
+
     let private resourceName (moduleName: string) = $"{packageName}/{moduleName}.nyx"
 
     let private assembly = Assembly.GetExecutingAssembly()
 
-    /// The modules the library ships, in alphabetical order.
+    /// The modules the library ships that a program imports by name, in alphabetical order. The prelude is left
+    /// out, since it is imported automatically.
     let moduleNames : string list =
         assembly.GetManifestResourceNames()
         |> Array.choose (fun name ->
@@ -93,6 +103,7 @@ module StandardLibrary =
                 Some (name.Substring(importPrefix.Length, name.Length - importPrefix.Length - ".nyx".Length))
             else
                 None)
+        |> Array.filter (fun name -> name <> preludeModuleName)
         |> Array.sort
         |> Array.toList
 

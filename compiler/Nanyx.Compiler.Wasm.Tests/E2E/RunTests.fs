@@ -13,29 +13,37 @@ type private RunOutcome =
 
 /// Runs the real CLI (built next to the tests through the project reference) in a child process, so the
 /// program's stdout, the diagnostics on stderr and the exit code are all observed exactly as a user would.
-let private nanyxRun (inputPath: string) : RunOutcome =
+/// `standardInput` is written to the program's stdin, which is then closed.
+let private nanyxRunWithInput (standardInput: string) (inputPath: string) : RunOutcome =
     let cliPath = Path.Combine(AppContext.BaseDirectory, "nanyx.dll")
     if not (File.Exists cliPath) then
         failwith $"The nanyx CLI was not found at {cliPath}"
-    let startInfo = ProcessStartInfo("dotnet", RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false)
+    let startInfo =
+        ProcessStartInfo("dotnet", RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false)
     for argument in [ cliPath; "run"; inputPath ] do
         startInfo.ArgumentList.Add argument
     use proc = Process.Start startInfo
     let stdout = proc.StandardOutput.ReadToEndAsync()
     let stderr = proc.StandardError.ReadToEndAsync()
+    proc.StandardInput.Write standardInput
+    proc.StandardInput.Close()
     proc.WaitForExit()
     { ExitCode = proc.ExitCode
       StandardOutput = stdout.Result
       StandardError = stderr.Result }
 
+let private nanyxRun (inputPath: string) : RunOutcome = nanyxRunWithInput "" inputPath
+
 let private runE2E testName =
     nanyxRun (Path.Combine(__SOURCE_DIRECTORY__, testName, "input.nyx"))
 
-let private runSource (source: string) : RunOutcome =
+let private runSourceWithInput (standardInput: string) (source: string) : RunOutcome =
     let inputPath = Path.Combine(Path.GetTempPath(), $"nanyx-run-{Guid.NewGuid():N}.nyx")
     File.WriteAllText(inputPath, source)
-    try nanyxRun inputPath
+    try nanyxRunWithInput standardInput inputPath
     finally File.Delete inputPath
+
+let private runSource (source: string) : RunOutcome = runSourceWithInput "" source
 
 let private assertRan (expectedOutput: string) (outcome: RunOutcome) =
     Assert.True((outcome.ExitCode = 0), $"Expected exit code 0, got {outcome.ExitCode}. stderr:\n{outcome.StandardError}")
@@ -198,25 +206,25 @@ let ``Run - text upper-cases and prints`` () =
         "import nanyx/console\n" +
         "import nanyx/text\n" +
         "\n" +
-        "println(toUpper(\"hello, nanyx!\"))\n" +
-        "\"shout\" \\toUpper \\println\n"
+        "println(String.uppercase(\"hello, nanyx!\"))\n" +
+        "\"shout\" \\uppercase \\println\n"
     runSource source |> assertRan "HELLO, NANYX!\nSHOUT\n"
 
 [<Fact>]
-let ``Run - text length, toLower, trim, repeat and substring`` () =
+let ``Run - text length, lowercase, trim, repeat and substring`` () =
     let source =
         "import nanyx/console\n" +
         "import nanyx/text\n" +
         "\n" +
-        "dbg(length(\"\"))\n" +
-        "dbg(length(\"hello\"))\n" +
-        "println(toLower(\"Hello, NANYX!\"))\n" +
-        "println(\"[\" ++ trim(\"  padded \") ++ \"]\")\n" +
-        "println(\"[\" ++ trim(\"   \") ++ \"]\")\n" +
-        "println(repeat(\"ab\", 3))\n" +
-        "println(\"[\" ++ repeat(\"ab\", 0) ++ \"]\")\n" +
-        "println(substring(\"nanyx\", 1, 3))\n" +
-        "println(substring(\"nanyx\", 3, 10))\n"
+        "dbg(String.length(\"\"))\n" +
+        "dbg(String.length(\"hello\"))\n" +
+        "println(String.lowercase(\"Hello, NANYX!\"))\n" +
+        "println(\"[\" ++ String.trim(\"  padded \") ++ \"]\")\n" +
+        "println(\"[\" ++ String.trim(\"   \") ++ \"]\")\n" +
+        "println(String.repeat(\"ab\", 3))\n" +
+        "println(\"[\" ++ String.repeat(\"ab\", 0) ++ \"]\")\n" +
+        "println(String.substring(\"nanyx\", 1, 3))\n" +
+        "println(String.substring(\"nanyx\", 3, 10))\n"
     runSource source |> assertRan "dbg: 0\ndbg: 5\nhello, nanyx!\n[padded]\n[]\nababab\n[]\nany\nyx\n"
 
 [<Fact>]
@@ -226,14 +234,14 @@ let ``Run - text startsWith, endsWith and contains`` () =
         "import nanyx/text\n" +
         "\n" +
         "def show: bool -> () = { b -> println(if b then \"yes\" else \"no\") }\n" +
-        "show(startsWith(\"nanyx\", \"nan\"))\n" +
-        "show(startsWith(\"nanyx\", \"nyx\"))\n" +
-        "show(startsWith(\"nan\", \"nanyx\"))\n" +
-        "show(endsWith(\"nanyx\", \"nyx\"))\n" +
-        "show(endsWith(\"nanyx\", \"nan\"))\n" +
-        "show(contains(\"hello world\", \"o w\"))\n" +
-        "show(contains(\"hello world\", \"xyz\"))\n" +
-        "show(contains(\"hello\", \"\"))\n"
+        "show(String.startsWith(\"nanyx\", \"nan\"))\n" +
+        "show(String.startsWith(\"nanyx\", \"nyx\"))\n" +
+        "show(String.startsWith(\"nan\", \"nanyx\"))\n" +
+        "show(String.endsWith(\"nanyx\", \"nyx\"))\n" +
+        "show(String.endsWith(\"nanyx\", \"nan\"))\n" +
+        "show(String.contains(\"hello world\", \"o w\"))\n" +
+        "show(String.contains(\"hello world\", \"xyz\"))\n" +
+        "show(String.contains(\"hello\", \"\"))\n"
     runSource source |> assertRan "yes\nno\nno\nyes\nno\nyes\nno\nyes\n"
 
 [<Fact>]
@@ -250,17 +258,17 @@ let ``Run - text indexOf, lastIndexOf and count`` () =
         "\n" +
         "@entry\n" +
         "def main = {\n" +
-        "  show(indexOf(\"hello\", \"ll\"))\n" +
-        "  show(indexOf(\"abcabc\", \"c\"))\n" +
-        "  show(indexOf(\"hello\", \"xyz\"))\n" +
-        "  show(indexOf(\"lo\", \"hello\"))\n" +
-        "  show(indexOf(\"hello\", \"\"))\n" +
-        "  show(lastIndexOf(\"abcabc\", \"bc\"))\n" +
-        "  show(lastIndexOf(\"abc\", \"\"))\n" +
-        "  show(lastIndexOf(\"ab\", \"abc\"))\n" +
-        "  dbg(count(\"banana\", \"an\"))\n" +
-        "  dbg(count(\"aaaa\", \"aa\"))\n" +
-        "  dbg(count(\"abc\", \"\"))\n" +
+        "  show(String.indexOf(\"hello\", \"ll\"))\n" +
+        "  show(String.indexOf(\"abcabc\", \"c\"))\n" +
+        "  show(String.indexOf(\"hello\", \"xyz\"))\n" +
+        "  show(String.indexOf(\"lo\", \"hello\"))\n" +
+        "  show(String.indexOf(\"hello\", \"\"))\n" +
+        "  show(String.lastIndexOf(\"abcabc\", \"bc\"))\n" +
+        "  show(String.lastIndexOf(\"abc\", \"\"))\n" +
+        "  show(String.lastIndexOf(\"ab\", \"abc\"))\n" +
+        "  dbg(String.count(\"banana\", \"an\"))\n" +
+        "  dbg(String.count(\"aaaa\", \"aa\"))\n" +
+        "  dbg(String.count(\"abc\", \"\"))\n" +
         "}\n"
     runSource source
     |> assertRan (
@@ -274,15 +282,15 @@ let ``Run - text replace, removePrefix, removeSuffix, padStart and padEnd`` () =
         "import nanyx/console\n" +
         "import nanyx/text\n" +
         "\n" +
-        "println(replace(\"hello world\", \"o\", \"0\"))\n" +
-        "println(replace(\"a-b-c\", \"-\", \" - \"))\n" +
-        "println(replace(\"abc\", \"\", \"x\"))\n" +
-        "println(removePrefix(\"nanyx\", \"nan\"))\n" +
-        "println(removePrefix(\"nanyx\", \"nyx\"))\n" +
-        "println(removeSuffix(\"nanyx\", \"nyx\"))\n" +
-        "println(padStart(\"7\", 3, \"0\"))\n" +
-        "println(padEnd(\"ab\", 5, \"xy\"))\n" +
-        "println(padStart(\"long\", 2, \"0\"))\n"
+        "println(String.replace(\"hello world\", \"o\", \"0\"))\n" +
+        "println(String.replace(\"a-b-c\", \"-\", \" - \"))\n" +
+        "println(String.replace(\"abc\", \"\", \"x\"))\n" +
+        "println(String.removePrefix(\"nanyx\", \"nan\"))\n" +
+        "println(String.removePrefix(\"nanyx\", \"nyx\"))\n" +
+        "println(String.removeSuffix(\"nanyx\", \"nyx\"))\n" +
+        "println(String.padStart(\"7\", 3, \"0\"))\n" +
+        "println(String.padEnd(\"ab\", 5, \"xy\"))\n" +
+        "println(String.padStart(\"long\", 2, \"0\"))\n"
     runSource source |> assertRan "hell0 w0rld\na - b - c\nabc\nyx\nnanyx\nna\n007\nabxyx\nlong\n"
 
 [<Fact>]
@@ -292,12 +300,12 @@ let ``Run - text trimStart, trimEnd, isEmpty and isBlank`` () =
         "import nanyx/text\n" +
         "\n" +
         "def show: bool -> () = { b -> println(if b then \"yes\" else \"no\") }\n" +
-        "println(\"[\" ++ trimStart(\" \t x \") ++ \"]\")\n" +
-        "println(\"[\" ++ trimEnd(\" x \r\n\") ++ \"]\")\n" +
-        "show(isEmpty(\"\"))\n" +
-        "show(isEmpty(\" \"))\n" +
-        "show(isBlank(\" \t\n\"))\n" +
-        "show(isBlank(\" x \"))\n"
+        "println(\"[\" ++ String.trimStart(\" \t x \") ++ \"]\")\n" +
+        "println(\"[\" ++ String.trimEnd(\" x \r\n\") ++ \"]\")\n" +
+        "show(String.isEmpty(\"\"))\n" +
+        "show(String.isEmpty(\" \"))\n" +
+        "show(String.isBlank(\" \t\n\"))\n" +
+        "show(String.isBlank(\" x \"))\n"
     runSource source |> assertRan "[x ]\n[ x]\nyes\nno\nyes\nno\n"
 
 [<Fact>]
@@ -306,11 +314,11 @@ let ``Run - text lines and words`` () =
         "import nanyx/console\n" +
         "import nanyx/text\n" +
         "\n" +
-        "println(join(lines(\"a\nb\r\nc\n\"), \"|\"))\n" +
-        "println(join(lines(\"a\n\nb\"), \"|\"))\n" +
-        "dbg(length(concat(lines(\"\"))))\n" +
-        "println(join(words(\"  one two\tthree\n\"), \"|\"))\n" +
-        "dbg(length(concat(words(\"   \"))))\n"
+        "println(String.join(String.lines(\"a\nb\r\nc\n\"), \"|\"))\n" +
+        "println(String.join(String.lines(\"a\n\nb\"), \"|\"))\n" +
+        "dbg(String.length(String.concat(String.lines(\"\"))))\n" +
+        "println(String.join(String.words(\"  one two\tthree\n\"), \"|\"))\n" +
+        "dbg(String.length(String.concat(String.words(\"   \"))))\n"
     runSource source |> assertRan "a|b|c\na||b\ndbg: 0\none|two|three\ndbg: 0\n"
 
 [<Fact>]
@@ -319,13 +327,13 @@ let ``Run - text split, join and concat`` () =
         "import nanyx/console\n" +
         "import nanyx/text\n" +
         "\n" +
-        "def parts = split(\"a,b,,c\", \",\")\n" +
-        "println(join(parts, \" | \"))\n" +
-        "println(join(split(\"no separators\", \"-\"), \"+\"))\n" +
-        "println(join(split(\"a--b\", \"--\"), \"/\"))\n" +
-        "println(\"[\" ++ join([], \", \") ++ \"]\")\n" +
-        "println(concat([\"Hello\", \", \", \"World\"]))\n" +
-        "println(join(split(\"x\", \"\"), \"?\"))\n"
+        "def parts = String.split(\"a,b,,c\", \",\")\n" +
+        "println(String.join(parts, \" | \"))\n" +
+        "println(String.join(String.split(\"no separators\", \"-\"), \"+\"))\n" +
+        "println(String.join(String.split(\"a--b\", \"--\"), \"/\"))\n" +
+        "println(\"[\" ++ String.join([], \", \") ++ \"]\")\n" +
+        "println(String.concat([\"Hello\", \", \", \"World\"]))\n" +
+        "println(String.join(String.split(\"x\", \"\"), \"?\"))\n"
     runSource source |> assertRan "a | b |  | c\nno separators\na/b\n[]\nHello, World\nx\n"
 
 [<Fact>]
@@ -368,7 +376,7 @@ let ``Run - list spread in expressions`` () =
         "  def xs = [1, ...[2, 3]]\n" +
         "  println(\"{sum(xs)}\")\n" +
         "  def names = [\"b\"]\n" +
-        "  println(join([\"a\", ...names, \"c\", ...[], ...[\"d\"]], \"-\"))\n" +
+        "  println(String.join([\"a\", ...names, \"c\", ...[], ...[\"d\"]], \"-\"))\n" +
         "}\n"
     runSource source |> assertRan "6\na-b-c-d\n"
 
@@ -399,9 +407,9 @@ let ``Run - ++ joins lists`` () =
         "import nanyx/text\n" +
         "\n" +
         "def front = [\"a\", \"b\"]\n" +
-        "println(join(front ++ [\"c\"] ++ [], \"-\"))\n" +
-        "println(join([] ++ front, \"-\"))\n" +
-        "dbg(length(\"ab\" ++ \"cd\" ++ \"e\"))\n"
+        "println(String.join(front ++ [\"c\"] ++ [], \"-\"))\n" +
+        "println(String.join([] ++ front, \"-\"))\n" +
+        "dbg(String.length(\"ab\" ++ \"cd\" ++ \"e\"))\n"
     runSource source |> assertRan "a-b-c\na-b\ndbg: 5\n"
 
 [<Fact>]
@@ -526,7 +534,7 @@ let ``Run - string literals inside interpolation holes`` () =
         "import nanyx/text\n" +
         "\n" +
         "def main = {\n" +
-        "  println(\"len {length(\"abc\")} and {toUpper(\"x\")}\")\n" +
+        "  println(\"len {String.length(\"abc\")} and {String.uppercase(\"x\")}\")\n" +
         "}\n" +
         "\n" +
         "main()\n"
@@ -543,9 +551,9 @@ let ``Run - interpolation holes that allocate or have effects run once`` () =
         "def s = \"b\"\n" +
         "def shout: string -> string = { v ->\n" +
         "  println(\"shouting \" ++ v)\n" +
-        "  toUpper(v)\n" +
+        "  String.uppercase(v)\n" +
         "}\n" +
-        "println(\"a {s ++ \"!\"} c {toUpper(s)} d\")\n" +
+        "println(\"a {s ++ \"!\"} c {String.uppercase(s)} d\")\n" +
         "println(\"[{shout(\"x\")}]\")\n"
     runSource source |> assertRan "a b! c B d\nshouting x\n[X]\n"
 
@@ -1126,3 +1134,150 @@ let ``Run - a proc block gives back whichever failure stopped it`` () =
         "show(run(3))\n" +
         "show(run(7))\n"
     runSource source |> assertRan "found\nnot found\nnil\n"
+
+[<Fact>]
+let ``Run - Int.parse reads decimal integers and rejects anything else`` () =
+    // Negative and large results are left out: a tag's int payload is kept in 16 bits by the backend (#181).
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def show: (#some(int) | #invalidInt) -> () = {\n" +
+        "  | #some(n) -> println(\"#some({n})\")\n" +
+        "  | #invalidInt -> println(\"#invalidInt\")\n" +
+        "}\n" +
+        "\n" +
+        "show(Int.parse(\"42\"))\n" +
+        "show(Int.parse(\"+5\"))\n" +
+        "show(Int.parse(\"007\"))\n" +
+        "show(Int.parse(\"0\"))\n" +
+        "show(Int.parse(\"\"))\n" +
+        "show(Int.parse(\"-\"))\n" +
+        "show(Int.parse(\"4x2\"))\n" +
+        "show(Int.parse(\" 1\"))\n" +
+        "show(\"12\" \\ Int.parse)\n"
+    runSource source |> assertRan "#some(42)\n#some(5)\n#some(7)\n#some(0)\n#invalidInt\n#invalidInt\n#invalidInt\n#invalidInt\n#some(12)\n"
+
+[<Fact>]
+let ``Run - eprint and eprintln write to stderr`` () =
+    let source =
+        "def warn: [Console] string -> () = { message -> eprintln(\"warning: \" ++ message) }\n" +
+        "\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  print(\"out \")\n" +
+        "  eprint(\"err \")\n" +
+        "  flush()\n" +
+        "  warn(\"careful\")\n" +
+        "  println(\"done\")\n" +
+        "}\n"
+    let outcome = runSource source
+    Assert.True((outcome.ExitCode = 0), $"Expected exit code 0, got {outcome.ExitCode}. stderr:\n{outcome.StandardError}")
+    Assert.Equal("out done\n", outcome.StandardOutput)
+    Assert.Equal("err warning: careful\n", outcome.StandardError)
+
+[<Fact>]
+let ``Run - readLine and readToEnd read stdin`` () =
+    let source =
+        "@entry\n" +
+        "def main = {\n" +
+        "  match readLine()\n" +
+        "    | #some(line) -> println(\"first [\" ++ line ++ \"]\")\n" +
+        "    | #error(_) -> println(\"no first\")\n" +
+        "  match readLine()\n" +
+        "    | #some(line) -> println(\"second [\" ++ line ++ \"]\")\n" +
+        "    | #error(_) -> println(\"no second\")\n" +
+        "  match readToEnd()\n" +
+        "    | #some(rest) -> println(\"rest [\" ++ rest ++ \"]\")\n" +
+        "    | #error(_) -> println(\"failed\")\n" +
+        "  match readLine()\n" +
+        "    | #some(line) -> println(\"more [\" ++ line ++ \"]\")\n" +
+        "    | #error(_) -> println(\"end of input\")\n" +
+        "}\n"
+    runSourceWithInput "hello\r\nworld\nthe\nrest" source
+    |> assertRan "first [hello]\nsecond [world]\nrest [the\nrest]\nend of input\n"
+
+[<Fact>]
+let ``Run - the prelude's List functions`` () =
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def show: list(int) -> string = {\n" +
+        "  | [] -> \"[]\"\n" +
+        "  | [y, ...rest] -> \"{y} \" ++ show(rest)\n" +
+        "}\n" +
+        "def xs = [3, 1, 2]\n" +
+        "println(show(xs \\ map({ x -> x * 2 })))\n" +
+        "println(show(xs \\ filter({ x -> x > 1 })))\n" +
+        "println(show(List.reverse(xs)))\n" +
+        "println(show(List.flatten([[1, 2], [3], []])))\n" +
+        "println(show(List.take(xs, 2)) ++ \" | \" ++ show(List.skip(xs, 2)) ++ \" | \" ++ show(List.append(xs, 9)))\n" +
+        "def total: int = List.fold(xs, 0, { acc, x -> acc + x })\n" +
+        "def back: int = List.foldBack([1, 2, 3], 0, { acc, x -> acc - x })\n" +
+        "def count: int = List.length(xs)\n" +
+        "def pairs: int = List.length(List.zip(xs, [\"a\", \"b\"]))\n" +
+        "println(\"{total} {back} {count} {pairs}\")\n" +
+        "println(if List.all(xs, { x -> x > 0 }) then \"all\" else \"not all\")\n" +
+        "println(if List.any(xs, { x -> x > 5 }) then \"any\" else \"none\")\n" +
+        "def found = xs \\ find({ x -> x < 3 })\n" +
+        "def empty: list(int) = []\n" +
+        "def first = List.head(empty)\n" +
+        "@entry\n" +
+        "def main = {\n" +
+        "  match found\n" +
+        "    | #some(n) -> println(\"found {n}\")\n" +
+        "    | #notFound -> println(\"not found\")\n" +
+        "  match first\n" +
+        "    | #some(n) -> println(\"head {n}\")\n" +
+        "    | #emptyList -> println(\"empty\")\n" +
+        "}\n"
+    runSource source
+    |> assertRan (
+        "6 2 4 []\n3 2 []\n2 1 3 []\n1 2 3 []\n3 1 [] | 2 [] | 3 1 2 9 []\n" +
+        "6 -6 3 2\nall\nnone\nfound 1\nempty\n")
+
+[<Fact>]
+let ``Run - nanyx/math abs, min, max, clamp and pow`` () =
+    let source =
+        "import nanyx/console\n" +
+        "import nanyx/math as math\n" +
+        "\n" +
+        "def a = math.abs(-42)\n" +
+        "def b = math.min(3, 7)\n" +
+        "def c = math.max(3, 7)\n" +
+        "def d = math.clamp(120, 0, 100)\n" +
+        "def e = math.clamp(-5, 0, 100)\n" +
+        "def f = math.pow(2, 8)\n" +
+        "def g = math.pow(5, 0)\n" +
+        "println(\"{a} {b} {c} {d} {e} {f} {g}\")\n"
+    runSource source |> assertRan "42 3 7 100 0 256 1\n"
+
+[<Fact>]
+let ``Run - the prelude's proc, Result and Option helpers need no import`` () =
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def half: int -> Result(int, string) = { n -> if n % 2 == 0 then #some(n / 2) else #error(\"odd\") }\n" +
+        "def quarter = { n -> proc {\n" +
+        "  def h = try half(n)\n" +
+        "  return try half(h)\n" +
+        "} }\n" +
+        "\n" +
+        "def show: Result(int, string) -> () = {\n" +
+        "  | #some(n) -> println(\"some {n}\")\n" +
+        "  | #error(e) -> println(\"error {e}\")\n" +
+        "}\n" +
+        "\n" +
+        "show(quarter(8))\n" +
+        "show(quarter(6) \\ Result.mapError({ e -> \"ERR: \" ++ e }))\n" +
+        "show(half(4) \\ map({ n -> n * 10 }))\n" +
+        "def fallback = Result.defaultValue(half(3), 0)\n" +
+        "println(\"{fallback}\")\n" +
+        "def name: #some(string) | #empty = #some(\"abc\")\n" +
+        "def shouted = name \\ Option.map({ s -> s ++ \"!\" })\n" +
+        "match shouted\n" +
+        "  | #some(s) -> println(s)\n" +
+        "  | #empty -> println(\"empty\")\n" +
+        "def seven = Option.defaultValue(#none, 7)\n" +
+        "def three = Option.mapOr(name, 0, { s -> 3 })\n" +
+        "println(\"{seven} {three}\")\n"
+    runSource source |> assertRan "some 2\nerror ERR: odd\nsome 20\n0\nabc!\n7 3\n"

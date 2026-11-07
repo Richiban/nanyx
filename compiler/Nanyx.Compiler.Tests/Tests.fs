@@ -189,12 +189,12 @@ let ``Only the imported definitions a module reaches are inlined`` () =
 
 [<Fact>]
 let ``Only the standard-library definitions a program reaches are inlined`` () =
-    let result = Compiler.compile "import nanyx/text\ndef x = contains(\"abc\", \"b\")"
+    let result = Compiler.compile "import nanyx/text\ndef x = String.contains(\"abc\", \"b\")"
     Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
     let names = valueDefinitionNames result
-    Assert.Contains("contains", names)
-    Assert.DoesNotContain("padStart", names)
-    Assert.DoesNotContain("words", names)
+    Assert.Contains("String.contains", names)
+    Assert.DoesNotContain("String.padStart", names)
+    Assert.DoesNotContain("String.words", names)
 
 [<Fact>]
 let ``Definitions reached through an aliased import are inlined`` () =
@@ -578,6 +578,46 @@ let ``Typecheck pipe resolves attached functions on nominals`` () =
     Assert.Equal(TyPrimitive "string", typed.Types.["s2"])
 
 [<Fact>]
+let ``Typecheck pipe picks the attached function by the name of the value's type`` () =
+    let source =
+        "type Option(a) = #some(a) | #none\n" +
+        "def List.map: (list(a), (a -> b)) -> list(b) = { xs, f -> [] }\n" +
+        "def Option.map: (Option(a), (a -> b)) -> Option(b) = { o, f -> #none }\n" +
+        "def xs: list(int) = [1, 2]\n" +
+        "def o: Option(int) = #some(1)\n" +
+        "def ys = xs \\ map({ x -> x > 1 })\n" +
+        "def p = o \\ map({ x -> \"a\" })"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    let typed = result.Typed.Value
+    Assert.Equal(TyApply("list", [ TyPrimitive "bool" ]), typed.Types.["ys"])
+    match Unifier.unalias typed.Types.["p"] with
+    | TyUnion options -> Assert.Contains(TyTag("some", Some (TyPrimitive "string")), options)
+    | other -> Assert.True(false, $"Unexpected type for p: %A{other}")
+
+[<Fact>]
+let ``Typecheck pipe calls a plain function when the value's type attaches none`` () =
+    let source =
+        "def Int.describe: int -> string = { n -> \"int\" }\n" +
+        "def describe: string -> string = { s -> s }\n" +
+        "def a = \"x\" \\ describe\n" +
+        "def b = 1 \\ describe"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    let typed = result.Typed.Value
+    Assert.Equal(TyPrimitive "string", typed.Types.["a"])
+    Assert.Equal(TyPrimitive "string", typed.Types.["b"])
+
+[<Fact>]
+let ``Typecheck pipe does not find attached functions of a module imported with as`` () =
+    let modules = [ "one.nyx", "module one\nexport def String.shout: string -> string = { s -> s ++ \"!\" }" ]
+    let unqualified = compileImportingAll modules "module main\nimport \"one.nyx\" as t\ndef a = \"x\" \\ shout"
+    Assert.False(unqualified.Diagnostics.IsEmpty)
+    let qualified = compileImportingAll modules "module main\nimport \"one.nyx\" as t\ndef a = \"x\" \\ t.String.shout"
+    Assert.True(qualified.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{qualified.Diagnostics}")
+    Assert.Equal(TyPrimitive "string", qualified.Typed.Value.Types.["a"])
+
+[<Fact>]
 let ``Typecheck supports polymorphic let`` () =
     let source =
         "def id = { x -> x }\n" +
@@ -700,19 +740,19 @@ let ``nanyx/console declares the Console context`` () =
 let ``nanyx/text exports string functions with their types`` () =
     let source =
         "import nanyx/text\n" +
-        "def shout = toUpper(\"hi\")\n" +
-        "def n = length(\"hi\")\n" +
-        "def parts = split(\"a,b\", \",\")\n" +
-        "def joined = join(parts, \"-\")\n" +
-        "def yes = startsWith(\"nanyx\", \"nan\")\n" +
-        "def found = indexOf(\"nanyx\", \"yx\")\n" +
-        "def lastFound = lastIndexOf(\"nanyx\", \"n\")\n" +
-        "def times = count(\"nanyx\", \"n\")\n" +
-        "def replaced = replace(\"nanyx\", \"n\", \"N\")\n" +
-        "def padded = padStart(\"7\", 3, \"0\")\n" +
-        "def blank = isBlank(\" \")\n" +
-        "def allLines = lines(\"a\")\n" +
-        "def allWords = words(\"a b\")"
+        "def shout = String.uppercase(\"hi\")\n" +
+        "def n = String.length(\"hi\")\n" +
+        "def parts = String.split(\"a,b\", \",\")\n" +
+        "def joined = String.join(parts, \"-\")\n" +
+        "def yes = String.startsWith(\"nanyx\", \"nan\")\n" +
+        "def found = String.indexOf(\"nanyx\", \"yx\")\n" +
+        "def lastFound = String.lastIndexOf(\"nanyx\", \"n\")\n" +
+        "def times = String.count(\"nanyx\", \"n\")\n" +
+        "def replaced = String.replace(\"nanyx\", \"n\", \"N\")\n" +
+        "def padded = String.padStart(\"7\", 3, \"0\")\n" +
+        "def blank = String.isBlank(\" \")\n" +
+        "def allLines = String.lines(\"a\")\n" +
+        "def allWords = String.words(\"a b\")"
     let result = Compiler.compile source
     Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
     let types = result.Typed.Value.Types
@@ -733,7 +773,7 @@ let ``nanyx/text exports string functions with their types`` () =
 
 [<Fact>]
 let ``nanyx/text rejects a wrongly typed argument`` () =
-    let result = Compiler.compile "import nanyx/text\n\ndef bad = repeat(\"ab\", \"twice\")"
+    let result = Compiler.compile "import nanyx/text\n\ndef bad = String.repeat(\"ab\", \"twice\")"
     Assert.False(result.Diagnostics.IsEmpty)
 
 [<Fact>]
@@ -752,12 +792,28 @@ let ``Compiler intrinsics are not in scope in user code`` () =
 let ``Standard library import with alias is qualified`` () =
     let source =
         "import nanyx/text as t\n" +
-        "def shout = t.toUpper(\"hi\")"
+        "def shout = t.String.uppercase(\"hi\")"
     let result = Compiler.compile source
     Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
     Assert.Equal(TyPrimitive "string", result.Typed.Value.Types.["shout"])
-    let unqualified = Compiler.compile "import nanyx/text as t\n\ndef shout = toUpper(\"hi\")"
+    let unqualified = Compiler.compile "import nanyx/text as t\n\ndef shout = String.uppercase(\"hi\")"
     Assert.False(unqualified.Diagnostics.IsEmpty)
+
+[<Fact>]
+let ``nanyx/text functions are attached to String`` () =
+    let result = Compiler.compile "import nanyx/text\ndef s = \" a \"\ndef piped = s \\ trim\ndef called = String.trim(s)"
+    Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
+    Assert.Equal(TyPrimitive "string", result.Typed.Value.Types.["piped"])
+    Assert.Equal(TyPrimitive "string", result.Typed.Value.Types.["called"])
+    let bare = Compiler.compile "import nanyx/text\ndef x = trim(\" a \")"
+    Assert.Contains("Unknown function 'trim'", (List.head bare.Diagnostics).Message)
+
+[<Fact>]
+let ``nanyx/text imported with as is only reached qualified from a pipe`` () =
+    let qualified = Compiler.compile "import nanyx/text as t\ndef x = \" a \" \\ t.String.trim"
+    Assert.True(qualified.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{qualified.Diagnostics}")
+    let short = Compiler.compile "import nanyx/text as t\ndef x = \" a \" \\ trim"
+    Assert.False(short.Diagnostics.IsEmpty)
 
 [<Fact>]
 let ``Unknown standard library module is an error`` () =
@@ -1234,6 +1290,97 @@ let ``A proc block collects the failures of each try`` () =
     let partialResult = Compiler.compile partial
     Assert.False(partialResult.Diagnostics.IsEmpty)
     Assert.Contains("notFound", (List.head partialResult.Diagnostics).Message)
+
+[<Fact>]
+let ``The prelude is in scope with no imports`` () =
+    let source =
+        "def f: int -> Result(int, string) = { n -> if n > 5 then #error(\"big\") else #some(n) }\n" +
+        "def run = { x -> proc {\n" +
+        "  def a = try f(x)\n" +
+        "  return a + 1\n" +
+        "} }\n" +
+        "def name: #some(string) | #empty = #some(\"abc\")\n" +
+        "def called = Option.map(name, { s -> 1 })\n" +
+        "def piped = name \\ Option.map({ s -> 1 })\n" +
+        "def mapped = f(1) \\ Result.mapError({ e -> 0 })"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, sprintf "%A" result.Diagnostics)
+    let typeOf name = Unifier.tyToString result.Typed.Value.Types.[name]
+    Assert.Equal("#some(int) | #empty", typeOf "called")
+    Assert.Equal("#some(int) | #empty", typeOf "piped")
+    Assert.Equal("Result(int, int)", typeOf "mapped")
+
+[<Fact>]
+let ``A pipe finds the prelude's Result helpers by the Result alias`` () =
+    let source =
+        "def r: Result(int, string) = #error(\"x\")\n" +
+        "def mapped = r \\ mapError({ e -> 0 })\n" +
+        "def fallback = r \\ defaultValue(3)"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, sprintf "%A" result.Diagnostics)
+    Assert.Equal("Result(int, int)", Unifier.tyToString result.Typed.Value.Types.["mapped"])
+    Assert.Equal(TyPrimitive "int", result.Typed.Value.Types.["fallback"])
+
+[<Fact>]
+let ``Int.parse is in the prelude`` () =
+    let result = Compiler.compile "def n = Int.parse(\"42\")\ndef piped = \"7\" \\ Int.parse"
+    Assert.True(result.Diagnostics.IsEmpty, sprintf "%A" result.Diagnostics)
+    Assert.Equal("#some(int) | #invalidInt", Unifier.tyToString result.Typed.Value.Types.["n"])
+    Assert.Equal("#some(int) | #invalidInt", Unifier.tyToString result.Typed.Value.Types.["piped"])
+
+[<Fact>]
+let ``The prelude's List functions are found by a pipe on a list`` () =
+    let source =
+        "def xs = [3, 1, 2]\n" +
+        "def doubled = xs \\ map({ x -> x * 2 })\n" +
+        "def names = xs \\ map({ x -> \"n\" })\n" +
+        "def big = xs \\ filter({ x -> x > 1 })\n" +
+        "def first = xs \\ head\n" +
+        "def total = List.fold(xs, 0, { acc, x -> acc + x })\n" +
+        "def pairs = List.zip(xs, names)"
+    let result = Compiler.compile source
+    Assert.True(result.Diagnostics.IsEmpty, sprintf "%A" result.Diagnostics)
+    let typeOf name = Unifier.tyToString result.Typed.Value.Types.[name]
+    Assert.Equal("list(int)", typeOf "doubled")
+    Assert.Equal("list(string)", typeOf "names")
+    Assert.Equal("list(int)", typeOf "big")
+    Assert.Equal("#some(int) | #emptyList", typeOf "first")
+    Assert.Equal("int", typeOf "total")
+    Assert.Equal("list((int, string))", typeOf "pairs")
+
+[<Fact>]
+let ``nanyx/math exports int functions with their types`` () =
+    let result =
+        Compiler.compile (
+            "import nanyx/math as math\n" +
+            "def a = math.abs(-3)\n" +
+            "def b = math.min(1, 2)\n" +
+            "def c = math.max(1, 2)\n" +
+            "def d = math.clamp(5, 0, 3)\n" +
+            "def e = math.pow(2, 3)")
+    Assert.True(result.Diagnostics.IsEmpty, sprintf "%A" result.Diagnostics)
+    for name in [ "a"; "b"; "c"; "d"; "e" ] do
+        Assert.Equal(TyPrimitive "int", result.Typed.Value.Types.[name])
+
+[<Fact>]
+let ``A module's own definition wins over the prelude's`` () =
+    let result = Compiler.compile "def proc = 5\ndef x = proc + 1"
+    Assert.True(result.Diagnostics.IsEmpty, sprintf "%A" result.Diagnostics)
+    Assert.Equal(TyPrimitive "int", result.Typed.Value.Types.["x"])
+
+[<Fact>]
+let ``An import's definition wins over the prelude's without being ambiguous`` () =
+    let modules = [ "mod.nyx", "module mod\nexport def proc = 5" ]
+    let result = compileImportingAll modules "module main\nimport \"mod.nyx\"\ndef x = proc + 1"
+    Assert.True(result.Diagnostics.IsEmpty, sprintf "%A" result.Diagnostics)
+    Assert.Equal(TyPrimitive "int", result.Typed.Value.Types.["x"])
+
+[<Fact>]
+let ``The prelude is not listed among the standard-library modules to import`` () =
+    let result = Compiler.compile "import nanyx/nope"
+    let message = (List.head result.Diagnostics).Message
+    Assert.Contains("nanyx/text", message)
+    Assert.DoesNotContain("nanyx/prelude", message)
 
 [<Fact>]
 let ``A try nested in an expression of a proc block is bound before its statement`` () =
@@ -2111,9 +2258,11 @@ let ``Names refer to top-level definitions declared later`` () =
 let ``Every declaration is a symbol, referred to or not`` () =
     let result = Compiler.compile "def f = { used, unused -> used }\ndef g = 1\n"
     let typed = result.Typed.Value
+    // The prelude's exports are symbols too, declared in its own file.
     let declared =
         typed.Symbols
         |> Map.values
+        |> Seq.filter (fun symbol -> symbol.Declaration.File = "")
         |> Seq.map (fun symbol -> symbol.Name, symbol.Kind)
         |> Set.ofSeq
     Assert.Equal<Set<string * SymbolKind>>(
@@ -2144,8 +2293,8 @@ let ``Imported names refer to the imported definition and the import`` () =
         check "module main\nimport \"mod.nyx\" as m1\ndef value = m1.foo" "m1.foo" "m1"
         check "module main\nimport \"mod.nyx\"\ndef value = foo" "foo" "mod.nyx"
         // A standard-library definition is declared in the library's own module.
-        let source = "import nanyx/text as t\ndef shout = t.toUpper(\"hi\")"
-        let toUpper = (symbolAt (fun typed -> typed.References) (Compiler.compile source) (offsetOf source "t.toUpper" 0 2)).Value
+        let source = "import nanyx/text as t\ndef shout = t.String.uppercase(\"hi\")"
+        let toUpper = (symbolAt (fun typed -> typed.References) (Compiler.compile source) (offsetOf source "t.String.uppercase" 0 2)).Value
         Assert.Equal("nanyx/text.nyx", toUpper.Declaration.File))
 
 // Type hints: the inferred types shown for declarations that do not write theirs.

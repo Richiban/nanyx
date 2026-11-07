@@ -1,33 +1,7 @@
 module result
 
--- nanyx/result: working with results, values of type `#some(a) | #error(e)`.
+-- nanyx/result: kept so that existing `import nanyx/result` lines still compile.
 --
--- `proc` is the result workflow: inside `proc { ... }`, `try x` continues with the payload of
--- `#some`, and gives back any `#error` as is without running the rest of the block, and
--- `return x` wraps the value in `#some`.
---
---   def total = proc {
---     def customer = try getCustomer(5)
---     def order = try getLastOrder(customer)
---     return order.total
---   }
---
--- A workflow builder is a record of keyword members. A block written after the builder's name
--- has each `try x` (and each `try x` nested inside an expression) turned into a call to the
--- builder's `try` member, with the rest of the block as its continuation, and each `return x`
--- into a call to its `return` member.
---
--- Every tag other than `#some` is a failure, not only `#error`, and the block collects them: a
--- `try` on a `#some(string) | #nil` and another on a `#some(int) | #notFound` make the block a
--- `#some(...) | #nil | #notFound`. (Two failures with the same tag must agree on its payload:
--- `#error(#a)` and `#error(#b)` do not combine into `#error(#a | #b)`.)
-export def proc: (
-  try: ((#some(a) | r), (a -> (#some(b) | r))) -> (#some(b) | r)
-  return: a -> (#some(a) | r)
-) = (
-  try = {
-    | #some(value), continue -> continue(value)
-    | failure, _ -> failure
-  }
-  return = { value -> #some(value) }
-)
+-- Everything it used to define, the `proc` workflow included, is now in the prelude
+-- (`nanyx/prelude`), which every module sees without importing it: `proc`, the `Result(a, e)`
+-- type, and the `Result.*` helpers.

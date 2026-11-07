@@ -4,7 +4,7 @@ description: "String manipulation functions"
 order: 4
 ---
 
-The `string` module provides functions for working with UTF-8 strings.
+The `string` module provides functions for working with UTF-8 strings. Import it as `nanyx/text`.
 
 These functions are [attached definitions](../advanced/attached-definitions) on `String`, so when the receiver is known to be a string they can be used without qualification: `s \split(on = ",")`, `s.length`, `s.startsWith("nan")`.
 
@@ -151,6 +151,117 @@ Removes leading and trailing whitespace.
 ```nanyx
 String.trim("  hello  ")
 -- "hello"
+```
+
+---
+
+# trimStart, trimEnd
+
+```nanyx
+String.trimStart: string -> string
+String.trimEnd: string -> string
+```
+
+Remove only the leading, or only the trailing, whitespace.
+
+---
+
+# lastIndexOf
+
+```nanyx
+String.lastIndexOf: (string, string) -> #some(int) | #notFound
+```
+
+```nanyx
+String.lastIndexOf("abcabc", "bc")
+-- #some(4)
+```
+
+---
+
+# count
+
+```nanyx
+String.count: (string, string) -> int
+```
+
+The number of non-overlapping occurrences.
+
+```nanyx
+String.count("banana", "an")
+-- 2
+```
+
+---
+
+# removePrefix, removeSuffix
+
+```nanyx
+String.removePrefix: (string, string) -> string
+String.removeSuffix: (string, string) -> string
+```
+
+The string without the prefix (or suffix), or unchanged when it doesn't have it.
+
+```nanyx
+String.removePrefix("nanyx", "nan")
+-- "yx"
+```
+
+---
+
+# isEmpty, isBlank
+
+```nanyx
+String.isEmpty: string -> bool
+String.isBlank: string -> bool
+```
+
+`isBlank` is also true for a string of only whitespace.
+
+---
+
+# repeat
+
+```nanyx
+String.repeat: (string, int) -> string
+```
+
+```nanyx
+String.repeat("ab", 3)
+-- "ababab"
+```
+
+---
+
+# padStart, padEnd
+
+```nanyx
+String.padStart: (string, width: int, fill: string) -> string
+String.padEnd: (string, width: int, fill: string) -> string
+```
+
+Repeat `fill` in front of (or after) the string until it is `width` long. A longer string is unchanged.
+
+```nanyx
+String.padStart("7", 3, "0")
+-- "007"
+```
+
+---
+
+# lines, words
+
+```nanyx
+String.lines: string -> list(string)
+String.words: string -> list(string)
+```
+
+`lines` splits on line breaks (a final one doesn't start another line); `words` gives the runs of non-whitespace.
+
+```nanyx
+String.words("  one two\tthree ")
+-- ["one", "two", "three"]
 ```
 
 ---
