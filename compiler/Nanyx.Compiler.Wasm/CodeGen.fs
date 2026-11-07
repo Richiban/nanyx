@@ -2665,7 +2665,7 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
             failwith $"Context member {memberName} from {typeExprToKey ctxType} not found in scope. Available: {env.ContextMembers |> Map.toList |> List.map fst}"
     | Pipe(value, funcName, rangeOpt, args) ->
         // Pipe x \f(a, b) is the call f(x, a, b), with everything a call gets (contexts, intrinsics, ...).
-        transpileExpression env { expr with Kind = FunctionCall(funcName, rangeOpt, value :: flattenCallArgs args) }
+        transpileExpression env { expr with Kind = FunctionCall(funcName, rangeOpt, pipeCallArguments value args) }
     | Lambda(args, body) when args.IsEmpty ->
         transpileExpression env body
     | Block statements ->
@@ -2908,7 +2908,7 @@ module private LambdaLifting =
             rebuild (FunctionCall(to', range, [ Expression.from expr (TupleExpr (Expression.from expr (IdentifierExpr envParameter) :: (flatten args |> List.map recur))) ]))
         | FunctionCall(name, range, args) -> rebuild (FunctionCall(name, range, args |> List.map recur))
         | Pipe(value, name, range, args) when name = from ->
-            rebuild (FunctionCall(to', range, [ Expression.from expr (TupleExpr (Expression.from expr (IdentifierExpr envParameter) :: recur value :: (flatten args |> List.map recur))) ]))
+            recur (rebuild (FunctionCall(name, range, pipeCallArguments value args)))
         | Pipe(value, name, range, args) -> rebuild (Pipe(recur value, name, range, args |> List.map recur))
         | Lambda(args, body) -> rebuild (Lambda(args, recur body))
         | BinaryOp(op, left, right) -> rebuild (BinaryOp(op, recur left, recur right))
