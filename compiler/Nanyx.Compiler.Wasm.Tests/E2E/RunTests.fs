@@ -223,6 +223,20 @@ let ``Run - a pipe passes its value in front of several arguments`` () =
     runSource source |> assertRan "123\n1123\n"
 
 [<Fact>]
+let ``Run - a function takes positional and named arguments together, called or piped into`` () =
+    let source =
+        "import nanyx/console\n" +
+        "\n" +
+        "def stepped: (int, step: int) -> int = { a, step -> a * 10 + step }\n" +
+        "def digits: (int, int, last: int) -> int = { a, b, last -> a * 100 + b * 10 + last }\n" +
+        "\n" +
+        "println(\"{stepped(1, step = 2)}\")\n" +
+        "println(\"{1 \\stepped(step = 2)}\")\n" +
+        "println(\"{digits(1, 2, last = 3)}\")\n" +
+        "println(\"{1 \\digits(2, last = 3)}\")\n"
+    runSource source |> assertRan "12\n12\n123\n123\n"
+
+[<Fact>]
 let ``Run - text length, lowercase, trim, repeat and substring`` () =
     let source =
         "import nanyx/console\n" +

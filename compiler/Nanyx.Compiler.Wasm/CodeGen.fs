@@ -21,6 +21,8 @@ type private FunctionTable =
 type private TranspileEnv =
     { KnownFunctions: Set<string>
       FunctionArities: Map<string, int>
+      /// The parameter names of every top-level function, which a record argument's named fields are matched to.
+      FunctionParameters: Map<string, string list>
       FunctionContextRequirements: Map<string, string list>
       /// The simple result type ("string", "int" or "bool") of the functions whose annotation or inferred type says.
       FunctionReturnTypes: Map<string, string>
@@ -2570,6 +2572,21 @@ let rec private transpileExpression (env: TranspileEnv) (expr: Expression) : str
                     | _ ->
                         // Not a known record, just pass it
                         flatArgs |> List.map (transpileExpression env)
+                | [Kind (RecordExpr fields)] when expectedArity > 1 && fields.Length = expectedArity ->
+                    // `f(a, step = 2)`: each parameter takes the field of its name, or else the positional field
+                    // in its place, as inference matches them.
+                    let positional = fields |> List.choose (function PositionalField e -> Some e | NamedField _ -> None)
+                    let named = fields |> List.choose (function NamedField(n, e) -> Some (n, e) | PositionalField _ -> None) |> Map.ofList
+                    let parameters = env.FunctionParameters |> Map.tryFind name |> Option.defaultValue []
+                    parameters
+                    |> List.mapi (fun index parameter ->
+                        match named |> Map.tryFind parameter with
+                        | Some e -> e
+                        | None ->
+                            match positional |> List.tryItem index with
+                            | Some e -> e
+                            | None -> failwith $"No argument for parameter {parameter} of {name}")
+                    |> List.map (transpileExpression env)
                 | _ when expectedArity = 1 && flatArgs.Length > 1 ->
                     // `f(a, b)` and `f((a, b))` parse alike; a one-parameter callee takes the whole tuple.
                     [ transpileExpression env (Expression.from expr (TupleExpr flatArgs)) ]
@@ -3339,6 +3356,13 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
             name, fnParams.Length)
         |> Map.ofList
 
+    let functionParameters =
+        defs
+        |> List.map (fun (name, _, expr) ->
+            let fnParams, _ = defBodyAndParameters expr
+            name, fnParams |> List.map fst)
+        |> Map.ofList
+
     // Calculate context requirements for each function based on TypeWithContext annotations
     // For parameterized contexts like ToString(a), generate qualified keys like "ToString_a_toString"
     // For simple contexts like Println, keep simple member names like "println"
@@ -3612,6 +3636,7 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
             let env =
                 { KnownFunctions = knownFunctions
                   FunctionArities = functionArities
+                  FunctionParameters = functionParameters
                   FunctionContextRequirements = functionContextRequirements
                   FunctionReturnTypes = functionReturnTypes
                   Locals = locals
@@ -3780,6 +3805,7 @@ let private transpileModuleToWatCore (module': Module) (typedFunctionBodies: Map
             let env =
                 { KnownFunctions = knownFunctions
                   FunctionArities = functionArities
+                  FunctionParameters = functionParameters
                   FunctionContextRequirements = functionContextRequirements
                   FunctionReturnTypes = functionReturnTypes
                   Locals = localMap
