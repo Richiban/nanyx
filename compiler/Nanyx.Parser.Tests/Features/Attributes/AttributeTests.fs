@@ -16,7 +16,7 @@ let ``Parse attribute feature files`` () =
 [<Fact>]
 let ``An attribute line precedes the definition it annotates`` () =
     match parseModule "@entry\ndef main = { 1 }" with
-    | Result.Ok [ Attribute "entry"; Def (ValueDef(false, "main", None, _)) ] -> ()
+    | Result.Ok [ Kind (Attribute "entry"); Kind (Def (ValueDef(false, "main", None, _))) ] -> ()
     | other -> failwith $"Unexpected parse result: %A{other}"
 
 [<Fact>]

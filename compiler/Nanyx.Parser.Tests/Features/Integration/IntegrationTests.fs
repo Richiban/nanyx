@@ -14,27 +14,27 @@ let ``Parse comprehensive.nyx file`` () =
     | Result.Ok module' ->
         module' |> List.length |> should be (greaterThan 5)
         match module'.[0] with
-        | ModuleDecl name -> name |> should equal "Comprehensive"
+        | Kind (ModuleDecl name) -> name |> should equal "Comprehensive"
         | _ -> failwith "Expected ModuleDecl"
 
         let hasLiteral =
             module' |> List.exists (fun item ->
                 match item with
-                | Def (ValueDef (_, _, _, Kind (LiteralExpr _))) -> true
+                | Kind (Def (ValueDef (_, _, _, Kind (LiteralExpr _)))) -> true
                 | _ -> false
             )
 
         let hasFunctionCall =
             module' |> List.exists (fun item ->
                 match item with
-                | Def (ValueDef (_, _, _, Kind (FunctionCall _))) -> true
+                | Kind (Def (ValueDef (_, _, _, Kind (FunctionCall _)))) -> true
                 | _ -> false
             )
 
         let hasLambda =
             module' |> List.exists (fun item ->
                 match item with
-                | Def (ValueDef (_, _, _, Kind (Lambda _))) -> true
+                | Kind (Def (ValueDef (_, _, _, Kind (Lambda _)))) -> true
                 | _ -> false
             )
 

@@ -14,7 +14,7 @@ let private parse (source: string) =
 let private valueOf name (module': Module) =
     module'
     |> List.tryPick (function
-        | Def (ValueDef (_, n, _, value)) when n = name -> Some value
+        | Kind (Def (ValueDef (_, n, _, value))) when n = name -> Some value
         | _ -> None)
     |> Option.defaultWith (fun () -> failwith $"No def {name} in %A{module'}")
 
@@ -253,7 +253,7 @@ and private expressionsOfType (typeExpr: TypeExpr) =
     | TypeOf value -> expressions value
 
 let rec private expressionsOfItem (item: TopLevelItem) =
-    match item with
+    match item.Kind with
     | ModuleDecl _
     | Import _
     | Attribute _ -> []
@@ -320,7 +320,7 @@ let private typesOfStatement (statement: Statement) =
 
 /// The type expressions a top-level item is written with, and those of the items in a module block.
 let rec private typesOfItem (item: TopLevelItem) =
-    match item with
+    match item.Kind with
     | Def (ValueDef (_, _, typeOpt, _)) -> Option.toList typeOpt
     | Def (TypeDef (_, _, parameters, body)) -> parameterTypes parameters @ [ body ]
     | ModuleBlock (_, items) -> items |> List.collect typesOfItem
@@ -353,9 +353,16 @@ let rec private typesWithin (typeExpr: TypeExpr) : TypeExpr list =
         | TypeWhere (inner, _) -> typesWithin inner
         | TypeWithContext (contexts, inner) -> (contexts |> List.collect typesWithin) @ typesWithin inner
 
-/// Checks that every expression, pattern, statement and type expression parsed from `source` has a span within it
-/// that starts and ends on a non-whitespace character, whose line and column agree with its offset. Returns how many
-/// nodes it checked.
+/// `item` and the items of the module block it is, if it is one.
+let rec private itemsWithin (item: TopLevelItem) : TopLevelItem list =
+    item ::
+        match item.Kind with
+        | ModuleBlock (_, items) -> items |> List.collect itemsWithin
+        | _ -> []
+
+/// Checks that every top-level item, expression, pattern, statement and type expression parsed from `source` has a
+/// span within it that starts and ends on a non-whitespace character, whose line and column agree with its offset.
+/// Returns how many nodes it checked.
 let private checkAllSpans (file: string) (rawSource: string) =
     // Spans are offsets into the source as the parser normalises it.
     let source = rawSource.Replace("\r\n", "\n").Replace("\r", "\n").TrimEnd()
@@ -391,7 +398,10 @@ let private checkAllSpans (file: string) (rawSource: string) =
         check statement.Span (fun () -> $"{file}: %A{statement.Span} of statement %A{statement.Kind}")
     for typeExpr in types do
         check typeExpr.Span (fun () -> $"{file}: %A{typeExpr.Span} of type %A{typeExpr.Kind}")
-    expressions.Length + patterns.Length + statements.Length + types.Length
+    let items = module' |> List.collect itemsWithin
+    for item in items do
+        check item.Span (fun () -> $"{file}: %A{item.Span} of item %A{item.Kind}")
+    items.Length + expressions.Length + patterns.Length + statements.Length + types.Length
 
 [<Fact>]
 let ``an operator over parentheses or a lone spread spans the delimiters, and what is inside keeps its own span`` () =
@@ -623,7 +633,7 @@ let ``statements are equal wherever they were written`` () =
 let private annotationOf name (module': Module) =
     module'
     |> List.tryPick (function
-        | Def (ValueDef (_, n, Some annotation, _)) when n = name -> Some annotation
+        | Kind (Def (ValueDef (_, n, Some annotation, _))) when n = name -> Some annotation
         | _ -> None)
     |> Option.defaultWith (fun () -> failwith $"No annotated def {name} in %A{module'}")
 
@@ -676,7 +686,7 @@ let ``each type expression spans its text, and nested types span theirs`` () =
     | other -> failwith $"Expected a type with contexts, got %A{other}"
     // A union written with a leading bar starts at its first member.
     match List.last module' with
-    | Def (TypeDef ("Shape", _, _, shape)) -> textOf source shape.Span |> should equal "#circle(r: float)\n  | #square(side: float)"
+    | Kind (Def (TypeDef ("Shape", _, _, shape))) -> textOf source shape.Span |> should equal "#circle(r: float)\n  | #square(side: float)"
     | other -> failwith $"Expected the Shape type, got %A{other}"
 
 [<Fact>]
@@ -699,6 +709,61 @@ let ``type expressions are equal wherever they were written`` () =
     let first = parse "def f: (int, string) -> list(a)? = f" |> annotationOf "f"
     let second = parse "def f:   ( int,  string ) ->  list( a )? = f" |> annotationOf "f"
     first.Span |> should not' (equal second.Span)
+    first |> should equal second
+    hash first |> should equal (hash second)
+    compare first second |> should equal 0
+
+/// The source text of each item `source` parses to.
+let private itemTexts (source: string) = parse source |> List.map (fun item -> textOf source item.Span)
+
+[<Fact>]
+let ``each top-level item spans its text, without a comment after it`` () =
+    let source =
+        "module shapes\n" +
+        "import (nanyx/console as c \"./other.nyx\")\n" +
+        "@entry\n" +
+        "export def area: float -> float = { r -> r * r } -- squared\n" +
+        "type Point = (x: int, y: int) -- a point\n" +
+        "context Show(a) = (show: a -> string)\n" +
+        "print(area(2.0)) -- once\n" +
+        "def total =\n  def x = 1\n  x + 1\n"
+    itemTexts source
+    |> should equal [ "module shapes"
+                      "import (nanyx/console as c \"./other.nyx\")"
+                      "@entry"
+                      "export def area: float -> float = { r -> r * r }"
+                      "type Point = (x: int, y: int)"
+                      "context Show(a) = (show: a -> string)"
+                      "print(area(2.0))"
+                      "def total =\n  def x = 1\n  x + 1" ]
+    let def = (parse source).[3]
+    def.Span.StartLine |> should equal 3
+    def.Span.StartColumn |> should equal 0
+
+[<Fact>]
+let ``each def a top-level destructuring def stands for spans the whole def`` () =
+    let source = "def (a, b) = pair -- both\ndef c = a"
+    itemTexts source |> should equal [ "def (a, b) = pair"; "def (a, b) = pair"; "def (a, b) = pair"; "def c = a" ]
+
+[<Fact>]
+let ``the items of a module block keep their own spans, and the module it becomes spans the block`` () =
+    let source = "module app\nmodule geometry =\n  type Point = (x: int, y: int)\n  def origin = Point(0, 0)\n  -- the end of the block\ndef p = geometry.origin"
+    let module' = parse source
+    module' |> List.map (fun item -> textOf source item.Span)
+    |> should equal [ "module app"
+                      "module geometry =\n  type Point = (x: int, y: int)\n  def origin = Point(0, 0)"
+                      "type Point = (x: int, y: int)"
+                      "def origin = Point(0, 0)"
+                      "def p = geometry.origin" ]
+    match module'.[1].Kind with
+    | ModuleDecl "app.geometry" -> ()
+    | other -> failwith $"Expected the block's module declaration, got %A{other}"
+
+[<Fact>]
+let ``top-level items are equal wherever they were written`` () =
+    let first = parse "def x = 1\n@entry\ndef main = { x }"
+    let second = parse "\n\ndef x =   1\n\n@entry\ndef main =  { x }"
+    first.[0].Span |> should not' (equal second.[0].Span)
     first |> should equal second
     hash first |> should equal (hash second)
     compare first second |> should equal 0

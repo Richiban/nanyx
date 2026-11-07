@@ -14,7 +14,7 @@ let ``Parse block with two literals`` () =
     | Result.Ok module' ->
         module' |> should haveLength 1
         match module'.[0] with
-        | Def (ValueDef (_, name, _, Kind (Block statements))) ->
+        | Kind (Def (ValueDef (_, name, _, Kind (Block statements)))) ->
             name |> should equal "test"
             statements |> should haveLength 2
             match statements.[0] with
@@ -35,7 +35,7 @@ let ``Parse sample-block.nyx file`` () =
     | Result.Ok module' ->
         module' |> List.length |> should be (greaterThan 2)
         match module'.[0] with
-        | ModuleDecl name -> name |> should equal "BlockTest"
+        | Kind (ModuleDecl name) -> name |> should equal "BlockTest"
         | _ -> failwith "Expected ModuleDecl"
     | Result.Error err -> failwith $"Parse failed: {err}"
 
@@ -48,7 +48,7 @@ let ``Parse sibling blocks`` () =
     | Result.Ok module' ->
         module' |> should haveLength 2
         match module'.[0], module'.[1] with
-        | Def (ValueDef (_, firstName, _, Kind (Block firstStatements))), Def (ValueDef (_, secondName, _, Kind (Block secondStatements))) ->
+        | Kind (Def (ValueDef (_, firstName, _, Kind (Block firstStatements)))), Kind (Def (ValueDef (_, secondName, _, Kind (Block secondStatements)))) ->
             firstName |> should equal "first"
             secondName |> should equal "second"
             firstStatements |> should haveLength 2

@@ -34,16 +34,16 @@ only then design the public contract that Nanyx-authored analyzers will be writt
 
 ## Where the compiler is today
 
-- **Spans cover expressions, patterns, statements and type expressions**
-  ([#96](https://github.com/nanyx-lang/nanyx/issues/96)). Every expression, pattern, statement, type expression and
-  import has a `SourceSpan`, all but imports have a `NodeId`, and declarations' names are kept beside the tree
-  (below). Top-level items have none yet.
+- **Every syntax node has a span** ([#96](https://github.com/nanyx-lang/nanyx/issues/96)). Every top-level item,
+  expression, pattern, statement, type expression and import has a `SourceSpan`, and all but imports have a
+  `NodeId`. The names a declaration declares are not nodes, so their spans are kept beside the tree (below).
 - **Diagnostics are structured** ([#97](https://github.com/nanyx-lang/nanyx/issues/97)). `Diagnostic` is the
   record in [section 2](#2-structured-diagnostics), every compiler error has a code from the table in
   `Diagnostics.fs`, and each is created with the span of the node it is about, in that node's file, so a
   diagnostic in an imported module is reported there. Type constraints carry the span of the expression or
-  pattern that made them, which is where unification reports a failure. A diagnostic about a node without a span (a field
-  name, an annotation, an attribute) is reported at the nearest node with one until #96 gives it its own.
+  pattern that made them, which is where unification reports a failure. An attribute's errors are reported at the attribute.
+  A diagnostic about something that has no node of its own (a field name, a declared name) is reported at the
+  nearest node, and one about an annotation still is too, though annotations now have spans of their own.
   The compiler emits only `Critical` and `Error`.
 - **The type checker sees desugared code.** `desugar` turns workflow binds and `return` into calls to the
   keyword function and `pure` before inference, and `applyAttributes` replaces `@entry` with a synthesized call.
@@ -52,9 +52,9 @@ only then design the public contract that Nanyx-authored analyzers will be writt
   `TypeEnv` carries the symbol it declares, so inference records which symbol every identifier, call, pipe target
   and qualified name resolved to (`TypedModule.Symbols`, `References`, and `ImportReferences` for the import a
   name came through). Values, parameters, pattern variables and imports are symbols; type names and context
-  members are not yet, though type expressions now have nodes to record them against. Declarations have no nodes either, so the parser
-  keeps their spans beside the tree (`DeclaredNames`) until [#96](https://github.com/nanyx-lang/nanyx/issues/96)
-  gives them their own.
+  members are not yet, though type expressions now have nodes to record them against. A declaration is a node (a def, a
+  parameter list, a pattern), but the names it declares are not, so the parser keeps their spans beside the tree
+  (`DeclaredNames`), keyed by the node that declares them.
 - **The typed tree is a placeholder.** `TypedExpr` wraps the untyped `Expression` with a type and some optional
   children, and is turned back into syntax (`moduleFromTypedItems`) for the backend.
 

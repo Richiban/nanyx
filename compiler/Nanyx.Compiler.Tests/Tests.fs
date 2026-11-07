@@ -166,7 +166,7 @@ let ``An error in a module imported along two paths is reported once`` () =
 let private valueDefinitionNames (result: CompileResult) =
     result.Typed.Value.Module
     |> List.choose (function
-        | Def (ValueDef(_, name, _, _)) -> Some name
+        | Kind (Def (ValueDef(_, name, _, _))) -> Some name
         | _ -> None)
     |> Set.ofList
 
@@ -721,9 +721,9 @@ let ``Standard library import is resolved without a file`` () =
         let result = Compiler.compileFile mainPath
         Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
         // The module is compiled together with the program: the backend sees its definitions, not the import.
-        let hasImport = result.Typed.Value.Module |> List.exists (function Import _ -> true | _ -> false)
+        let hasImport = result.Typed.Value.Module |> List.exists (function Kind (Import _) -> true | _ -> false)
         Assert.False(hasImport)
-        let hasPrintln = result.Typed.Value.Module |> List.exists (function Def (ValueDef(_, "println", _, _)) -> true | _ -> false)
+        let hasPrintln = result.Typed.Value.Module |> List.exists (function Kind (Def (ValueDef(_, "println", _, _))) -> true | _ -> false)
         Assert.True(hasPrintln))
 
 [<Fact>]
@@ -850,22 +850,26 @@ let ``Entry attribute appends a call to the entry point`` () =
     Assert.True(result.Diagnostics.IsEmpty, $"Unexpected diagnostics: %A{result.Diagnostics}")
     let entryCalls =
         result.Typed.Value.Module
-        |> List.filter (function Expr (Kind (FunctionCall("main", _, []))) -> true | _ -> false)
+        |> List.filter (function Kind (Expr (Kind (FunctionCall("main", _, [])))) -> true | _ -> false)
     Assert.Equal(1, entryCalls.Length)
-    let hasAttribute = result.Typed.Value.Module |> List.exists (function Attribute _ -> true | _ -> false)
+    let hasAttribute = result.Typed.Value.Module |> List.exists (function Kind (Attribute _) -> true | _ -> false)
     Assert.False(hasAttribute)
 
 [<Fact>]
-let ``Unknown attribute is an error`` () =
-    let result = Compiler.compile "@inline\ndef f = { 1 }"
-    let message = result.Diagnostics |> List.head |> fun diag -> diag.Message
-    Assert.Contains("Unknown attribute '@inline'", message)
+let ``Unknown attribute is an error, reported at the attribute`` () =
+    let result = Compiler.compile "def g = 2\n@inline\ndef f = { 1 }"
+    let diagnostic = result.Diagnostics |> List.head
+    Assert.Contains("Unknown attribute '@inline'", diagnostic.Message)
+    let span = diagnostic.Span.Value
+    Assert.Equal((10, 17, 1, 0), (span.Start, span.End, span.StartLine, span.StartColumn))
 
 [<Fact>]
-let ``Entry attribute must precede a definition`` () =
+let ``Entry attribute must precede a definition, and is reported at the attribute`` () =
     let result = Compiler.compile "@entry\n1 + 1"
-    let message = result.Diagnostics |> List.head |> fun diag -> diag.Message
-    Assert.Contains("must be followed by a definition", message)
+    let diagnostic = result.Diagnostics |> List.head
+    Assert.Contains("must be followed by a definition", diagnostic.Message)
+    let span = diagnostic.Span.Value
+    Assert.Equal((0, 6), (span.Start, span.End))
 
 [<Fact>]
 let ``Typecheck rejects missing context members`` () =
@@ -1195,7 +1199,7 @@ let ``Desugar workflow bind and return`` () =
         let desugared = Compiler.desugar ast
         // `async { ... }` is its block, each keyword calling the builder's member through a local of its own.
         match desugared with
-        | [Def (ValueDef(_, "result", _, Kind (Block [Kind (ExprStatement expr)])))] ->
+        | [Kind (Def (ValueDef(_, "result", _, Kind (Block [Kind (ExprStatement expr)]))))] ->
             match expr.Kind with
             | Block [
                 Kind (DefStatement(_, awaitLocal, None, Kind (MemberAccess(Kind (IdentifierExpr "async"), "await", _))))
@@ -1221,7 +1225,7 @@ let ``Desugar workflow implicit return`` () =
     | Result.Ok ast ->
         let desugared = Compiler.desugar ast
         match desugared with
-        | [Def (ValueDef(_, "result", _, Kind (FunctionCall("async", _, [Kind (Lambda([], Kind (Block [Kind (ExprStatement (Kind (LiteralExpr (IntLit 1))))])))]))))] ->
+        | [Kind (Def (ValueDef(_, "result", _, Kind (FunctionCall("async", _, [Kind (Lambda([], Kind (Block [Kind (ExprStatement (Kind (LiteralExpr (IntLit 1))))])))])))))] ->
             Assert.True(true)
         | other -> Assert.True(false, $"Unexpected desugared module: %A{other}")
 
@@ -1409,7 +1413,7 @@ let ``A try nested in an expression of a proc block is bound before its statemen
                 argument :: boundCalls rest
             | Lambda(_, body) -> boundCalls body
             | _ -> []
-        match Compiler.desugar ast |> List.tryPick (function Def (ValueDef(_, "run", _, body)) -> Some body | _ -> None) with
+        match Compiler.desugar ast |> List.tryPick (function Kind (Def (ValueDef(_, "run", _, body))) -> Some body | _ -> None) with
         | Some body ->
             let arguments = boundCalls body |> List.map (fun argument -> argument.Kind)
             match arguments with
